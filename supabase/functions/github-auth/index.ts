@@ -37,7 +37,7 @@ Deno.serve(async (req) => {
     const ghUrl = new URL("https://github.com/login/oauth/authorize");
     ghUrl.searchParams.set("client_id", GITHUB_CLIENT_ID);
     ghUrl.searchParams.set("redirect_uri", callbackUrl);
-    ghUrl.searchParams.set("scope", "read:user user:email copilot github_copilot_chat");
+    ghUrl.searchParams.set("scope", requestedScope);
     ghUrl.searchParams.set("state", origin);
     return new Response(null, { status: 302, headers: { Location: ghUrl.toString() } });
   }
