@@ -89,12 +89,10 @@ export default function Settings() {
                   size="sm"
                   variant="outline"
                   className="mt-2 gap-1.5 text-xs border-cyber-amber/30"
-                  onClick={() =>
-                    supabase.auth.signInWithOAuth({
-                      provider: "github",
-                      options: { scopes: "read:user copilot" },
-                    })
-                  }
+                  onClick={() => {
+                    const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/github-auth?redirect_uri=${encodeURIComponent(window.location.origin)}`;
+                    window.location.href = url;
+                  }}
                 >
                   <RefreshCw className="h-3 w-3" /> Re-authenticate
                 </Button>
