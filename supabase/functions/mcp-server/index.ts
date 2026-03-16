@@ -111,6 +111,21 @@ async function scrapeUrl(url: string): Promise<{ markdown: string; title: string
   return { markdown: htmlToMarkdown(html), title };
 }
 
+// ========== Resolve Google News redirect ==========
+async function resolveRedirect(url: string): Promise<string> {
+  try {
+    const res = await fetch(url, {
+      method: "HEAD",
+      redirect: "follow",
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; RSS/2.0)" },
+      signal: AbortSignal.timeout(5000),
+    });
+    return res.url || url;
+  } catch {
+    return url;
+  }
+}
+
 // ========== Web Search (RSS-based) ==========
 async function searchWeb(query: string, maxResults: number): Promise<Array<{ title: string; url: string; snippet: string }>> {
   const encoded = encodeURIComponent(query);
@@ -120,61 +135,85 @@ async function searchWeb(query: string, maxResults: number): Promise<Array<{ tit
     `https://www.bing.com/news/search?q=${encoded}&format=rss`,
   ];
 
-  for (const url of sources) {
+  for (const feedUrl of sources) {
     try {
-      console.log("[search] Trying RSS source:", url);
-      const res = await fetch(url, {
+      console.log("[search] Trying RSS source:", feedUrl);
+      const res = await fetch(feedUrl, {
         headers: { "User-Agent": "Mozilla/5.0 (compatible; RSS/2.0)" },
         signal: AbortSignal.timeout(10000),
       });
       if (!res.ok) { console.log("[search] RSS returned", res.status); continue; }
       const xml = await res.text();
-      console.log("[search] RSS XML length:", xml.length, "preview:", xml.slice(0, 1000));
+      console.log("[search] RSS XML length:", xml.length);
 
-      const items: Array<{ title: string; url: string; snippet: string }> = [];
-      const seen = new Set<string>();
+      // Parse all items first
+      const rawItems: Array<{ title: string; rawLink: string; rawDesc: string }> = [];
       const itemRegex = /<item>([\s\S]*?)<\/item>/gi;
       let m;
-      while ((m = itemRegex.exec(xml)) !== null && items.length < maxResults) {
+      while ((m = itemRegex.exec(xml)) !== null && rawItems.length < maxResults) {
         const item = m[1];
         const titleMatch = item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>|<title>(.*?)<\/title>/i);
-        const linkMatch = item.match(/<link>(.*?)<\/link>|<guid>(https?[^<]+)<\/guid>/i);
+        // Extract link - handle CDATA and newlines around link content
+        const linkMatch = item.match(/<link\s*\/?>\s*<!\[CDATA\[(.*?)\]\]>|<link>(.*?)<\/link>|<link\s*\/?>([^<\s]+)/i);
+        const guidMatch = item.match(/<guid[^>]*>(https?:\/\/[^<]+)<\/guid>/i);
         const descMatch = item.match(/<description><!\[CDATA\[([\s\S]*?)\]\]><\/description>|<description>([\s\S]*?)<\/description>/i);
-        // Google News RSS has <source url="actual-url"> with the real article URL
-        const sourceMatch = item.match(/<source[^>]+url="(https?:\/\/[^"]+)"/i);
 
-        if (titleMatch && linkMatch) {
-          const title = (titleMatch[1] || titleMatch[2] || "").trim();
-          const rawLink = (linkMatch[1] || linkMatch[2] || "").trim();
-          // Prefer <source url="..."> (actual article URL) over Google redirect link
-          const linkUrl = sourceMatch ? sourceMatch[1] : rawLink;
+        const title = (titleMatch?.[1] || titleMatch?.[2] || "").trim();
+        const rawLink = (linkMatch?.[1] || linkMatch?.[2] || linkMatch?.[3] || guidMatch?.[1] || "").trim();
 
-          // Clean snippet: decode entities, strip HTML, trim
-          let snippet = (descMatch?.[1] || descMatch?.[2] || "");
-          snippet = snippet
-            .replace(/&lt;/g, "<")
-            .replace(/&gt;/g, ">")
-            .replace(/&amp;/g, "&")
-            .replace(/&quot;/g, '"')
-            .replace(/&#39;/g, "'")
-            .replace(/&nbsp;/g, " ")
-            .replace(/<[^>]+>/g, "")
-            .trim()
-            .slice(0, 200);
-          // If snippet is mostly garbage (too short or just whitespace), use empty
-          if (snippet.length < 10) snippet = "";
-
-          if (linkUrl && !seen.has(linkUrl) && title) {
-            seen.add(linkUrl);
-            items.push({ title, url: linkUrl, snippet });
-          }
+        if (title && rawLink) {
+          rawItems.push({ title, rawLink, rawDesc: descMatch?.[1] || descMatch?.[2] || "" });
         }
       }
 
-      console.log("[search] RSS found", items.length, "results from", url);
-      if (items.length > 0) return items;
+      if (rawItems.length === 0) continue;
+
+      // Resolve redirects in parallel for Google News URLs
+      const items = await Promise.all(rawItems.map(async ({ title, rawLink, rawDesc }) => {
+        let finalUrl = rawLink;
+        if (rawLink.includes("news.google.com")) {
+          finalUrl = await resolveRedirect(rawLink);
+        }
+
+        // Clean snippet: decode entities, strip HTML
+        let snippet = rawDesc
+          .replace(/&lt;/g, "<")
+          .replace(/&gt;/g, ">")
+          .replace(/&amp;/g, "&")
+          .replace(/&quot;/g, '"')
+          .replace(/&#39;/g, "'")
+          .replace(/&nbsp;/g, " ")
+          .replace(/<[^>]+>/g, "")
+          .trim();
+
+        // Remove lines that just repeat the title or are source attribution
+        const titleLower = title.toLowerCase();
+        snippet = snippet.split("\n")
+          .filter(line => {
+            const l = line.trim().toLowerCase();
+            return l.length > 15 && !titleLower.includes(l) && !l.includes(titleLower);
+          })
+          .join(" ")
+          .trim()
+          .slice(0, 200);
+
+        if (snippet.length < 15) snippet = "";
+
+        return { title, url: finalUrl, snippet };
+      }));
+
+      // Deduplicate by URL
+      const seen = new Set<string>();
+      const deduped = items.filter(item => {
+        if (seen.has(item.url)) return false;
+        seen.add(item.url);
+        return true;
+      });
+
+      console.log("[search] RSS found", deduped.length, "results from", feedUrl);
+      if (deduped.length > 0) return deduped;
     } catch (e) {
-      console.log("[search] RSS failed:", url, e instanceof Error ? e.message : "unknown");
+      console.log("[search] RSS failed:", feedUrl, e instanceof Error ? e.message : "unknown");
     }
   }
 
