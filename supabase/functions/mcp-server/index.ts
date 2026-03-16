@@ -8,20 +8,32 @@ const tokenCache = new Map<string, { token: string; expiresAt: number }>();
 async function getGithubPat(authHeader: string | null): Promise<string | null> {
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
   const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY");
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !authHeader) return null;
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !authHeader) {
+    console.log("[PAT] Missing env or auth:", { hasUrl: !!SUPABASE_URL, hasKey: !!SUPABASE_ANON_KEY, hasAuth: !!authHeader });
+    return null;
+  }
 
   try {
     const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
       global: { headers: { Authorization: authHeader } },
       auth: { autoRefreshToken: false, persistSession: false },
     });
-    const { data } = await supabase
+
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    console.log("[PAT] Auth user:", user?.id ?? "none", "error:", userError?.message ?? "none");
+    if (!user) return null;
+
+    const { data, error } = await supabase
       .from("settings")
       .select("value")
       .eq("key", "github_pat")
+      .eq("user_id", user.id)
       .maybeSingle();
+
+    console.log("[PAT] Query result:", { hasData: !!data, valuePrefix: data?.value ? data.value.slice(0, 8) + "..." : "null", error: error?.message ?? "none" });
     return data?.value ?? null;
-  } catch {
+  } catch (e) {
+    console.error("[PAT] Error:", e instanceof Error ? e.message : "unknown");
     return null;
   }
 }
