@@ -27,6 +27,9 @@ async function getCopilotToken(githubToken: string): Promise<string> {
   return data.token;
 }
 
+// Module-level store for current request's GitHub token
+let currentGithubToken: string | null = null;
+
 // ========== HTML → Markdown ==========
 function htmlToMarkdown(html: string): string {
   let md = html;
@@ -139,7 +142,6 @@ async function searchDDG(query: string, maxResults: number): Promise<Array<{ tit
     });
   }
 
-  // Fallback: broader pattern
   if (results.length === 0) {
     const broadRegex = /<a[^>]+href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
     while ((m = broadRegex.exec(html)) !== null && results.length < maxResults) {
@@ -155,86 +157,81 @@ async function searchDDG(query: string, maxResults: number): Promise<Array<{ tit
 
 // ========== MCP Server ==========
 const app = new Hono();
-
 const mcpServer = new McpServer({
   name: "personal-firecrawl",
   version: "1.0.0",
 });
 
 // 1. search
-mcpServer.tool({
-  name: "search",
-  description: "Search the web using DuckDuckGo",
-  inputSchema: {
-    type: "object",
+mcpServer.tool(
+  "search",
+  "Search the web using DuckDuckGo",
+  {
+    type: "object" as const,
     properties: {
       query: { type: "string", description: "Search query" },
       maxResults: { type: "number", description: "Max results (default 10)" },
     },
     required: ["query"],
   },
-  handler: async ({ query, maxResults = 10 }) => {
-    const results = await searchDDG(query as string, maxResults as number);
-    return {
-      content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
-    };
-  },
-});
+  async ({ query, maxResults }) => {
+    const results = await searchDDG(query as string, (maxResults as number) || 10);
+    return { content: [{ type: "text" as const, text: JSON.stringify(results, null, 2) }] };
+  }
+);
 
 // 2. scrape
-mcpServer.tool({
-  name: "scrape",
-  description: "Fetch a URL and convert HTML to Markdown",
-  inputSchema: {
-    type: "object",
+mcpServer.tool(
+  "scrape",
+  "Fetch a URL and convert HTML to Markdown",
+  {
+    type: "object" as const,
     properties: {
       url: { type: "string", description: "URL to scrape" },
     },
     required: ["url"],
   },
-  handler: async ({ url }) => {
+  async ({ url }) => {
     const { markdown, title } = await scrapeUrl(url as string);
-    return {
-      content: [{ type: "text", text: `# ${title}\n\n${markdown}` }],
-    };
-  },
-});
+    return { content: [{ type: "text" as const, text: `# ${title}\n\n${markdown}` }] };
+  }
+);
 
 // 3. scrape_js
-mcpServer.tool({
-  name: "scrape_js",
-  description: "Scrape a JS-rendered page via Railway renderer",
-  inputSchema: {
-    type: "object",
+mcpServer.tool(
+  "scrape_js",
+  "Scrape a JS-rendered page via Railway renderer",
+  {
+    type: "object" as const,
     properties: {
       url: { type: "string", description: "URL to scrape" },
       waitFor: { type: "number", description: "Wait ms for JS (default 3000)" },
     },
     required: ["url"],
   },
-  handler: async ({ url, waitFor = 3000 }) => {
+  async ({ url, waitFor }) => {
     const rendererUrl = Deno.env.get("RAILWAY_RENDERER_URL");
     if (!rendererUrl) {
-      return { content: [{ type: "text", text: "Error: RAILWAY_RENDERER_URL not configured. Set it in Settings." }], isError: true };
+      return { content: [{ type: "text" as const, text: "Error: RAILWAY_RENDERER_URL not configured. Set it in Settings." }], isError: true };
     }
     const secret = Deno.env.get("RAILWAY_SECRET") || "";
     const res = await fetch(`${rendererUrl}/render`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Secret": secret },
-      body: JSON.stringify({ url, waitFor }),
+      body: JSON.stringify({ url, waitFor: waitFor || 3000 }),
     });
     if (!res.ok) throw new Error(`Renderer returned ${res.status}`);
     const { html } = await res.json();
-    return { content: [{ type: "text", text: htmlToMarkdown(html) }] };
-  },
-});
+    return { content: [{ type: "text" as const, text: htmlToMarkdown(html) }] };
+  }
+);
 
 // 4. crawl
-mcpServer.tool({
-  name: "crawl",
-  description: "BFS crawl a website staying on the same domain",
-  inputSchema: {
-    type: "object",
+mcpServer.tool(
+  "crawl",
+  "BFS crawl a website staying on the same domain",
+  {
+    type: "object" as const,
     properties: {
       url: { type: "string", description: "Starting URL" },
       maxPages: { type: "number", description: "Max pages (default 10)" },
@@ -242,12 +239,13 @@ mcpServer.tool({
     },
     required: ["url"],
   },
-  handler: async ({ url, maxPages = 10, extractContent = false }) => {
+  async ({ url, maxPages, extractContent }) => {
     const visited = new Set<string>();
     const queue: string[] = [url as string];
     const results: Array<{ url: string; title?: string; markdown?: string }> = [];
+    const limit = (maxPages as number) || 10;
 
-    while (queue.length > 0 && visited.size < (maxPages as number)) {
+    while (queue.length > 0 && visited.size < limit) {
       const current = queue.shift()!;
       if (visited.has(current)) continue;
       visited.add(current);
@@ -266,8 +264,8 @@ mcpServer.tool({
         if (extractContent) entry.markdown = htmlToMarkdown(html);
         results.push(entry);
 
-        const links = extractLinks(html, current);
-        for (const link of links) {
+        const foundLinks = extractLinks(html, current);
+        for (const link of foundLinks) {
           if (!visited.has(link)) queue.push(link);
         }
       } catch {
@@ -275,27 +273,28 @@ mcpServer.tool({
       }
     }
 
-    return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
-  },
-});
+    return { content: [{ type: "text" as const, text: JSON.stringify(results, null, 2) }] };
+  }
+);
 
 // 5. map
-mcpServer.tool({
-  name: "map",
-  description: "Fast URL-only crawl to map all links on a domain",
-  inputSchema: {
-    type: "object",
+mcpServer.tool(
+  "map",
+  "Fast URL-only crawl to map all links on a domain",
+  {
+    type: "object" as const,
     properties: {
       url: { type: "string", description: "Starting URL" },
       maxPages: { type: "number", description: "Max pages (default 50)" },
     },
     required: ["url"],
   },
-  handler: async ({ url, maxPages = 50 }) => {
+  async ({ url, maxPages }) => {
     const visited = new Set<string>();
     const queue: string[] = [url as string];
+    const limit = (maxPages as number) || 50;
 
-    while (queue.length > 0 && visited.size < (maxPages as number)) {
+    while (queue.length > 0 && visited.size < limit) {
       const current = queue.shift()!;
       if (visited.has(current)) continue;
       visited.add(current);
@@ -307,8 +306,8 @@ mcpServer.tool({
         });
         if (!res.ok) continue;
         const html = await res.text();
-        const links = extractLinks(html, current);
-        for (const link of links) {
+        const foundLinks = extractLinks(html, current);
+        for (const link of foundLinks) {
           if (!visited.has(link)) queue.push(link);
         }
       } catch {
@@ -316,16 +315,16 @@ mcpServer.tool({
       }
     }
 
-    return { content: [{ type: "text", text: JSON.stringify([...visited], null, 2) }] };
-  },
-});
+    return { content: [{ type: "text" as const, text: JSON.stringify([...visited], null, 2) }] };
+  }
+);
 
 // 6. extract
-mcpServer.tool({
-  name: "extract",
-  description: "Scrape URL and use AI (Claude Haiku 4.5 via Copilot) to extract structured data",
-  inputSchema: {
-    type: "object",
+mcpServer.tool(
+  "extract",
+  "Scrape URL and use AI (Claude Haiku via Copilot) to extract structured data",
+  {
+    type: "object" as const,
     properties: {
       url: { type: "string", description: "URL to extract from" },
       prompt: { type: "string", description: "What to extract" },
@@ -333,16 +332,15 @@ mcpServer.tool({
     },
     required: ["url", "prompt"],
   },
-  handler: async ({ url, prompt, schema }, { request }) => {
-    const githubToken = request?.headers?.get?.("X-GitHub-Token");
-    if (!githubToken) {
-      return { content: [{ type: "text", text: "Error: X-GitHub-Token header required for extract tool." }], isError: true };
+  async ({ url, prompt, schema }) => {
+    if (!currentGithubToken) {
+      return { content: [{ type: "text" as const, text: "Error: X-GitHub-Token header required for extract tool." }], isError: true };
     }
 
     const { markdown } = await scrapeUrl(url as string);
     const truncated = markdown.slice(0, 12000);
 
-    const copilotToken = await getCopilotToken(githubToken);
+    const copilotToken = await getCopilotToken(currentGithubToken);
 
     const systemPrompt = schema
       ? `Extract the requested data from the web page content. Return valid JSON matching this schema: ${schema}`
@@ -367,21 +365,21 @@ mcpServer.tool({
 
     if (!aiRes.ok) {
       const err = await aiRes.text();
-      return { content: [{ type: "text", text: `Copilot API error ${aiRes.status}: ${err}` }], isError: true };
+      return { content: [{ type: "text" as const, text: `Copilot API error ${aiRes.status}: ${err}` }], isError: true };
     }
 
     const aiData = await aiRes.json();
     const answer = aiData.choices?.[0]?.message?.content ?? "No response";
-    return { content: [{ type: "text", text: answer }] };
-  },
-});
+    return { content: [{ type: "text" as const, text: answer }] };
+  }
+);
 
 // 7. screenshot
-mcpServer.tool({
-  name: "screenshot",
-  description: "Take a screenshot via Railway renderer",
-  inputSchema: {
-    type: "object",
+mcpServer.tool(
+  "screenshot",
+  "Take a screenshot via Railway renderer",
+  {
+    type: "object" as const,
     properties: {
       url: { type: "string", description: "URL to screenshot" },
       width: { type: "number", description: "Width (default 1280)" },
@@ -389,37 +387,37 @@ mcpServer.tool({
     },
     required: ["url"],
   },
-  handler: async ({ url, width = 1280, height = 720 }) => {
+  async ({ url, width, height }) => {
     const rendererUrl = Deno.env.get("RAILWAY_RENDERER_URL");
     if (!rendererUrl) {
-      return { content: [{ type: "text", text: "Error: RAILWAY_RENDERER_URL not configured." }], isError: true };
+      return { content: [{ type: "text" as const, text: "Error: RAILWAY_RENDERER_URL not configured." }], isError: true };
     }
     const secret = Deno.env.get("RAILWAY_SECRET") || "";
     const res = await fetch(`${rendererUrl}/screenshot`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Secret": secret },
-      body: JSON.stringify({ url, width, height }),
+      body: JSON.stringify({ url, width: width || 1280, height: height || 720 }),
     });
     if (!res.ok) throw new Error(`Renderer returned ${res.status}`);
     const { image } = await res.json();
-    return { content: [{ type: "image", data: image, mimeType: "image/png" }] };
-  },
-});
+    return { content: [{ type: "image" as const, data: image, mimeType: "image/png" }] };
+  }
+);
 
 // 8. search_and_scrape
-mcpServer.tool({
-  name: "search_and_scrape",
-  description: "Search then scrape top results",
-  inputSchema: {
-    type: "object",
+mcpServer.tool(
+  "search_and_scrape",
+  "Search then scrape top results",
+  {
+    type: "object" as const,
     properties: {
       query: { type: "string", description: "Search query" },
       maxResults: { type: "number", description: "Results to scrape (default 3)" },
     },
     required: ["query"],
   },
-  handler: async ({ query, maxResults = 3 }) => {
-    const results = await searchDDG(query as string, maxResults as number);
+  async ({ query, maxResults }) => {
+    const results = await searchDDG(query as string, (maxResults as number) || 3);
     const scraped: string[] = [];
 
     for (const r of results) {
@@ -431,38 +429,38 @@ mcpServer.tool({
       }
     }
 
-    return { content: [{ type: "text", text: scraped.join("\n\n") }] };
-  },
-});
+    return { content: [{ type: "text" as const, text: scraped.join("\n\n") }] };
+  }
+);
 
 // 9. html_to_markdown
-mcpServer.tool({
-  name: "html_to_markdown",
-  description: "Convert HTML string to Markdown",
-  inputSchema: {
-    type: "object",
+mcpServer.tool(
+  "html_to_markdown",
+  "Convert HTML string to Markdown",
+  {
+    type: "object" as const,
     properties: {
       html: { type: "string", description: "HTML to convert" },
     },
     required: ["html"],
   },
-  handler: async ({ html }) => {
-    return { content: [{ type: "text", text: htmlToMarkdown(html as string) }] };
-  },
-});
+  async ({ html }) => {
+    return { content: [{ type: "text" as const, text: htmlToMarkdown(html as string) }] };
+  }
+);
 
 // 10. batch_scrape
-mcpServer.tool({
-  name: "batch_scrape",
-  description: "Scrape multiple URLs in parallel",
-  inputSchema: {
-    type: "object",
+mcpServer.tool(
+  "batch_scrape",
+  "Scrape multiple URLs in parallel",
+  {
+    type: "object" as const,
     properties: {
       urls: { type: "string", description: "Comma-separated URLs" },
     },
     required: ["urls"],
   },
-  handler: async ({ urls }) => {
+  async ({ urls }) => {
     const urlList = (urls as string).split(",").map((u) => u.trim()).filter(Boolean);
     const results = await Promise.all(
       urlList.map(async (url) => {
@@ -474,28 +472,45 @@ mcpServer.tool({
         }
       })
     );
-    return { content: [{ type: "text", text: results.join("\n\n---\n\n") }] };
-  },
-});
+    return { content: [{ type: "text" as const, text: results.join("\n\n---\n\n") }] };
+  }
+);
 
 // ========== Transport ==========
 const transport = new StreamableHttpTransport();
 
-app.all("/*", async (c) => {
-  // CORS
-  if (c.req.method === "OPTIONS") {
-    return new Response(null, {
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-github-token, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
-        "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-      },
-    });
-  }
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-github-token, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+  "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+};
+
+// Health check GET handler
+app.get("/*", (c) => {
+  return c.json(
+    {
+      status: "ok",
+      server: "personal-firecrawl",
+      version: "1.0.0",
+      tools: 10,
+    },
+    200,
+    corsHeaders
+  );
+});
+
+// CORS preflight
+app.options("/*", (c) => {
+  return new Response(null, { headers: corsHeaders });
+});
+
+// MCP POST handler
+app.post("/*", async (c) => {
+  // Capture GitHub token from header for use in extract tool
+  currentGithubToken = c.req.header("x-github-token") || null;
 
   const response = await transport.handleRequest(c.req.raw, mcpServer);
 
-  // Add CORS to response
   const headers = new Headers(response.headers);
   headers.set("Access-Control-Allow-Origin", "*");
 

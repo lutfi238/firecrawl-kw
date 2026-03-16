@@ -83,21 +83,8 @@ export function useMCPServer() {
   const pingServer = useCallback(async (): Promise<boolean> => {
     try {
       const res = await fetch(MCP_ENDPOINT, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json, text/event-stream",
-        },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "initialize",
-          params: {
-            protocolVersion: "2025-03-26",
-            capabilities: {},
-            clientInfo: { name: "firecrawl-dashboard", version: "1.0.0" },
-          },
-        }),
+        method: "GET",
+        headers: { Accept: "application/json" },
       });
       return res.ok;
     } catch {
