@@ -117,44 +117,42 @@ async function searchDDG(query: string, maxResults: number): Promise<Array<{ tit
     headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
   });
   const html = await res.text();
+
+  // Log raw HTML for debugging
+  console.log("[searchDDG] Raw HTML length:", html.length);
+  console.log("[searchDDG] HTML preview (first 3000 chars):", html.slice(0, 3000));
+
   const results: Array<{ title: string; url: string; snippet: string }> = [];
+  const seen = new Set<string>();
 
-  // Match <a ... class="result-link" ... href="URL"> or <a ... href="URL" ... class="result-link">
-  const linkRegex = /<a[^>]*class="result-link"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>|<a[^>]*href="([^"]+)"[^>]*class="result-link"[^>]*>([\s\S]*?)<\/a>/gi;
-  const snippetRegex = /<td[^>]*class="result-snippet"[^>]*>([\s\S]*?)<\/td>/gi;
-
-  const links: Array<{ url: string; title: string }> = [];
+  // Grab ALL external links with text >= 5 chars, excluding duckduckgo.com URLs
+  const linkRegex = /href="(https?:\/\/(?!.*duckduckgo\.com)[^"]+)"[^>]*>([^<]{5,})<\/a>/gi;
   let m;
   while ((m = linkRegex.exec(html)) !== null) {
-    const url = m[1] || m[3];
-    const title = (m[2] || m[4] || "").replace(/<[^>]+>/g, "").trim();
-    if (url && title) links.push({ url, title });
+    const url = m[1].trim();
+    const title = m[2].trim();
+
+    // Skip "more info" links and empty titles
+    if (!title || title.toLowerCase() === "more info") continue;
+    // Deduplicate by URL
+    if (seen.has(url)) continue;
+    seen.add(url);
+
+    results.push({ title, url, snippet: "" });
+    if (results.length >= maxResults) break;
   }
 
+  // Try to attach snippets from result-snippet cells
+  const snippetRegex = /<td[^>]*class="result-snippet"[^>]*>([\s\S]*?)<\/td>/gi;
   const snippets: string[] = [];
   while ((m = snippetRegex.exec(html)) !== null) {
     snippets.push(m[1].replace(/<[^>]+>/g, "").trim());
   }
-
-  for (let i = 0; i < Math.min(links.length, maxResults); i++) {
-    results.push({
-      title: links[i].title,
-      url: links[i].url,
-      snippet: snippets[i] || "",
-    });
+  for (let i = 0; i < Math.min(results.length, snippets.length); i++) {
+    results[i].snippet = snippets[i];
   }
 
-  if (results.length === 0) {
-    // Fallback: grab any external links
-    const broadRegex = /<a[^>]+href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
-    while ((m = broadRegex.exec(html)) !== null && results.length < maxResults) {
-      const url = m[1];
-      if (!url.includes("duckduckgo.com")) {
-        results.push({ title: m[2].replace(/<[^>]+>/g, "").trim(), url, snippet: "" });
-      }
-    }
-  }
-
+  console.log("[searchDDG] Found", results.length, "results for query:", query);
   return results;
 }
 
