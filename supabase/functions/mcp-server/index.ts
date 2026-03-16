@@ -8,20 +8,32 @@ const tokenCache = new Map<string, { token: string; expiresAt: number }>();
 async function getGithubPat(authHeader: string | null): Promise<string | null> {
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
   const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY");
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !authHeader) return null;
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !authHeader) {
+    console.log("[PAT] Missing env or auth:", { hasUrl: !!SUPABASE_URL, hasKey: !!SUPABASE_ANON_KEY, hasAuth: !!authHeader });
+    return null;
+  }
 
   try {
     const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
       global: { headers: { Authorization: authHeader } },
       auth: { autoRefreshToken: false, persistSession: false },
     });
-    const { data } = await supabase
+
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    console.log("[PAT] Auth user:", user?.id ?? "none", "error:", userError?.message ?? "none");
+    if (!user) return null;
+
+    const { data, error } = await supabase
       .from("settings")
       .select("value")
       .eq("key", "github_pat")
+      .eq("user_id", user.id)
       .maybeSingle();
+
+    console.log("[PAT] Query result:", { hasData: !!data, valuePrefix: data?.value ? data.value.slice(0, 8) + "..." : "null", error: error?.message ?? "none" });
     return data?.value ?? null;
-  } catch {
+  } catch (e) {
+    console.error("[PAT] Error:", e instanceof Error ? e.message : "unknown");
     return null;
   }
 }
@@ -29,8 +41,11 @@ async function getGithubPat(authHeader: string | null): Promise<string | null> {
 async function getCopilotToken(githubToken: string): Promise<string> {
   const cached = tokenCache.get(githubToken);
   if (cached && Date.now() < cached.expiresAt) {
+    console.log("[Copilot] Using cached token");
     return cached.token;
   }
+
+  console.log("[Copilot] Exchanging token prefix:", githubToken.slice(0, 8), "len:", githubToken.length);
 
   const res = await fetch("https://api.github.com/copilot_internal/v2/token", {
     headers: {
@@ -43,11 +58,14 @@ async function getCopilotToken(githubToken: string): Promise<string> {
     },
   });
 
+  const responseBody = await res.text();
+  console.log("[Copilot] Response status:", res.status, "body:", responseBody.slice(0, 500));
+
   if (!res.ok) {
-    throw new Error(`Failed to exchange GitHub token for Copilot token: ${res.status}`);
+    throw new Error(`Copilot token exchange failed: ${res.status} - ${responseBody.slice(0, 200)}`);
   }
 
-  const data = await res.json();
+  const data = JSON.parse(responseBody);
   const expiresAt = new Date(data.expires_at).getTime() - 60_000;
   tokenCache.set(githubToken, { token: data.token, expiresAt });
   return data.token;
@@ -385,6 +403,7 @@ app.post("/*", async (c) => {
           // Try PAT from settings table first, then fall back to OAuth token header
           const pat = await getGithubPat(currentAuthHeader);
           const tokenForCopilot = pat || currentGithubToken;
+          console.log("[extract] PAT found:", !!pat, "OAuth token:", !!currentGithubToken, "using:", pat ? "PAT" : "OAuth");
           if (!tokenForCopilot) {
             result = { content: [{ type: "text", text: "Error: GitHub PAT not configured. Go to Settings and add your GitHub Personal Access Token with 'copilot' scope." }], isError: true };
           } else {
