@@ -26,10 +26,16 @@ export function useMCPServer() {
           params: { name: toolName, arguments: args },
         };
 
+        // Get current session token for auth
+        const { data: { session } } = await supabase.auth.getSession();
         const headers: Record<string, string> = {
           "Content-Type": "application/json",
           Accept: "application/json, text/event-stream",
+          apikey: SUPABASE_ANON_KEY,
         };
+        if (session?.access_token) {
+          headers["Authorization"] = `Bearer ${session.access_token}`;
+        }
         if (githubToken) {
           headers["X-GitHub-Token"] = githubToken;
         }
