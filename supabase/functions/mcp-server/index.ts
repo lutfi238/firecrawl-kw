@@ -1,9 +1,6 @@
 import { Hono } from "hono";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-// ========== Copilot Token Cache ==========
-const tokenCache = new Map<string, { token: string; expiresAt: number }>();
-
 // ========== Get GitHub PAT from settings table ==========
 async function getGithubPat(authHeader: string | null): Promise<string | null> {
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
@@ -36,39 +33,6 @@ async function getGithubPat(authHeader: string | null): Promise<string | null> {
     console.error("[PAT] Error:", e instanceof Error ? e.message : "unknown");
     return null;
   }
-}
-
-async function getCopilotToken(githubToken: string): Promise<string> {
-  const cached = tokenCache.get(githubToken);
-  if (cached && Date.now() < cached.expiresAt) {
-    console.log("[Copilot] Using cached token");
-    return cached.token;
-  }
-
-  console.log("[Copilot] Exchanging token prefix:", githubToken.slice(0, 8), "len:", githubToken.length);
-
-  const res = await fetch("https://api.github.com/copilot_internal/v2/token", {
-    headers: {
-      Authorization: `token ${githubToken}`,
-      "User-Agent": "GitHubCopilot/1.155.0",
-      Accept: "application/json",
-      "Editor-Version": "vscode/1.85.0",
-      "Editor-Plugin-Version": "copilot-chat/0.11.1",
-      "Openai-Organization": "github-copilot",
-    },
-  });
-
-  const responseBody = await res.text();
-  console.log("[Copilot] Response status:", res.status, "body:", responseBody.slice(0, 500));
-
-  if (!res.ok) {
-    throw new Error(`Copilot token exchange failed: ${res.status} - ${responseBody.slice(0, 200)}`);
-  }
-
-  const data = JSON.parse(responseBody);
-  const expiresAt = new Date(data.expires_at).getTime() - 60_000;
-  tokenCache.set(githubToken, { token: data.token, expiresAt });
-  return data.token;
 }
 
 // Module-level store for current request's auth header and GitHub PAT
