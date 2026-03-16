@@ -362,7 +362,7 @@ app.post("/*", async (c) => {
           break;
         }
         case "search_and_scrape": {
-          const searchResults = await searchDDG(args.query, args.maxResults || 3);
+          const searchResults = await searchWeb(args.query, args.maxResults || 3);
           const scraped: string[] = [];
           for (const r of searchResults) {
             try {
