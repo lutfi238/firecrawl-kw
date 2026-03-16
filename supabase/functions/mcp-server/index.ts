@@ -12,7 +12,11 @@ async function getCopilotToken(githubToken: string): Promise<string> {
   const res = await fetch("https://api.github.com/copilot_internal/v2/token", {
     headers: {
       Authorization: `token ${githubToken}`,
-      "User-Agent": "firecrawl-mcp/1.0",
+      "User-Agent": "GitHubCopilot/1.155.0",
+      Accept: "application/json",
+      "Editor-Version": "vscode/1.85.0",
+      "Editor-Plugin-Version": "copilot-chat/0.11.1",
+      "Openai-Organization": "github-copilot",
     },
   });
 
