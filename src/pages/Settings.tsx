@@ -18,6 +18,8 @@ export default function Settings() {
   const { clearLogs } = useRequestLogs();
   const [railwayUrl, setRailwayUrl] = useState("");
   const [railwaySecret, setRailwaySecret] = useState("");
+  const [githubPat, setGithubPat] = useState("");
+  const [savingPat, setSavingPat] = useState(false);
   const [testingRailway, setTestingRailway] = useState(false);
   const [railwayStatus, setRailwayStatus] = useState<"online" | "offline" | null>(null);
 
@@ -28,7 +30,19 @@ export default function Settings() {
   useState(() => {
     if (settings.railway_url) setRailwayUrl(settings.railway_url);
     if (settings.railway_secret) setRailwaySecret(settings.railway_secret);
+    if (settings.github_pat) setGithubPat(settings.github_pat);
   });
+
+  const handleSavePat = async () => {
+    setSavingPat(true);
+    try {
+      await upsert.mutateAsync({ key: "github_pat", value: githubPat });
+      toast.success("GitHub PAT saved");
+    } catch {
+      toast.error("Failed to save PAT");
+    }
+    setSavingPat(false);
+  };
 
   const handleSaveRailway = async () => {
     try {
