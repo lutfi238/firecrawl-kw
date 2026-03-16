@@ -230,11 +230,40 @@ export default function Settings() {
 
       {/* AI Provider */}
       <GlassCard>
-        <h2 className="text-xs font-mono uppercase tracking-widest text-muted-foreground mb-4 font-semibold">AI Provider (Extract Tool)</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xs font-mono uppercase tracking-widest text-muted-foreground font-semibold flex items-center gap-2">
+            <Sparkles className="h-3.5 w-3.5 text-primary" />
+            AI Provider (Extract Tool)
+          </h2>
+          {settings.ai_provider && (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/40 bg-primary/10 px-2.5 py-0.5 text-xs font-mono font-semibold text-primary shadow-[0_0_8px_hsl(var(--primary)/0.25)]">
+              {AI_PROVIDERS.find((p) => p.label === settings.ai_provider)?.icon ?? "🔌"}{" "}
+              {settings.ai_provider}
+            </span>
+          )}
+        </div>
         <p className="text-xs text-muted-foreground mb-4">
-          Any OpenAI-compatible API. Examples: Groq (<code className="text-primary">https://api.groq.com/openai/v1</code>), DeepSeek, OpenRouter, OpenAI.
+          Select a provider or choose "OpenAI Compatible" to enter a custom endpoint.
         </p>
         <div className="space-y-3">
+          <div>
+            <Label className="text-xs font-mono text-muted-foreground">Provider</Label>
+            <Select value={aiProvider} onValueChange={handleSelectProvider}>
+              <SelectTrigger className="font-mono text-sm bg-background/50 border-primary/30 focus:ring-primary/50 shadow-[0_0_6px_hsl(var(--primary)/0.1)]">
+                <SelectValue placeholder="Select provider…" />
+              </SelectTrigger>
+              <SelectContent className="max-h-64 bg-card border-primary/20">
+                {AI_PROVIDERS.map((p) => (
+                  <SelectItem key={p.label} value={p.label} className="font-mono text-sm">
+                    <span className="flex items-center gap-2">
+                      <span>{p.icon}</span>
+                      <span>{p.label}</span>
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
           <div>
             <Label className="text-xs font-mono text-muted-foreground">Base URL</Label>
             <Input
@@ -269,10 +298,10 @@ export default function Settings() {
               size="sm"
               onClick={handleSaveAi}
               disabled={!aiApiKey || savingAi}
-              className="text-xs font-mono border-border gap-1.5"
+              className="text-xs font-mono border-primary/30 gap-1.5 hover:bg-primary/10 hover:border-primary/50"
             >
               {savingAi ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />}
-              Save
+              Save Provider Settings
             </Button>
             {settings.ai_api_key && <StatusBadge status="success" label="CONFIGURED" />}
           </div>
