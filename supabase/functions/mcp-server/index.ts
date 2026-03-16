@@ -269,6 +269,7 @@ app.options("/*", (c) => {
 // MCP POST handler - manual JSON-RPC dispatch
 app.post("/*", async (c) => {
   currentGithubToken = c.req.header("x-github-token") || null;
+  currentAuthHeader = c.req.header("authorization") || null;
 
   try {
     const body = await c.req.json();
