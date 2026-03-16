@@ -53,7 +53,8 @@ async function getCopilotToken(githubToken: string): Promise<string> {
   return data.token;
 }
 
-// Module-level store for current request's GitHub token
+// Module-level store for current request's auth header and GitHub PAT
+let currentAuthHeader: string | null = null;
 let currentGithubToken: string | null = null;
 
 // ========== HTML → Markdown ==========
