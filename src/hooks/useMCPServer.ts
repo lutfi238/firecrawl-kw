@@ -1,8 +1,10 @@
 import { useState, useCallback } from "react";
 import { useAuthStore } from "@/stores/authStore";
+import { supabase } from "@/integrations/supabase/client";
 import type { JsonRpcResponse, ToolCallResult } from "@/types/mcp";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 const MCP_ENDPOINT = `${SUPABASE_URL}/functions/v1/mcp-server`;
 
 export function useMCPServer() {
