@@ -45,52 +45,54 @@ async function handleOAuthCallback() {
   }
 }
 
+/** Load GitHub token in background (non-blocking) */
+async function loadGithubToken(userId: string): Promise<string | null> {
+  try {
+    const { data } = await supabase
+      .from("settings")
+      .select("value")
+      .eq("key", "github_token")
+      .eq("user_id", userId)
+      .maybeSingle();
+    return data?.value ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function AuthListener() {
-  const { setSession, setLoading } = useAuthStore();
+  const { setSession } = useAuthStore();
 
   useEffect(() => {
-    // Handle OAuth callback first
+    // Fire-and-forget — don't block session loading
     handleOAuthCallback();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
+      (_event, session) => {
         const user = session?.user ?? null;
-
-        // Load GitHub token from settings table instead of provider_token
-        let githubToken: string | null = null;
+        // Show UI immediately with null token, then load token in background
+        setSession(user, null);
         if (user) {
-          const { data } = await supabase
-            .from("settings")
-            .select("value")
-            .eq("key", "github_token")
-            .eq("user_id", user.id)
-            .maybeSingle();
-          githubToken = data?.value ?? null;
+          loadGithubToken(user.id).then((token) => {
+            if (token) setSession(user, token);
+          });
         }
-
-        setSession(user, githubToken);
       }
     );
 
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
+    // Initial session check
+    supabase.auth.getSession().then(({ data: { session } }) => {
       const user = session?.user ?? null;
-
-      let githubToken: string | null = null;
+      setSession(user, null);
       if (user) {
-        const { data } = await supabase
-          .from("settings")
-          .select("value")
-          .eq("key", "github_token")
-          .eq("user_id", user.id)
-          .maybeSingle();
-        githubToken = data?.value ?? null;
+        loadGithubToken(user.id).then((token) => {
+          if (token) setSession(user, token);
+        });
       }
-
-      setSession(user, githubToken);
     });
 
     return () => subscription.unsubscribe();
-  }, [setSession, setLoading]);
+  }, [setSession]);
 
   return null;
 }
