@@ -18,7 +18,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   if (!isAuthenticated) {
     const handleLogin = () => {
       const origin = window.top?.location.origin || window.location.origin;
-      const authUrl = `${SUPABASE_URL}/functions/v1/github-auth?redirect_uri=${encodeURIComponent(origin)}`;
+      const authUrl = `${SUPABASE_URL}/functions/v1/github-auth?redirect_uri=${encodeURIComponent(origin)}&scope=${encodeURIComponent("read:user user:email copilot github_copilot_chat")}`;
       // Use window.top to break out of iframe (Lovable preview)
       if (window.top && window.top !== window) {
         window.top.location.href = authUrl;

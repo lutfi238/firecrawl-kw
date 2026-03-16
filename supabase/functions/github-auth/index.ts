@@ -15,6 +15,7 @@ Deno.serve(async (req) => {
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state"); // frontend origin
   const redirectUri = url.searchParams.get("redirect_uri"); // frontend origin on initial call
+  const requestedScope = url.searchParams.get("scope")?.trim() || "read:user user:email copilot github_copilot_chat";
 
   const GITHUB_CLIENT_ID = Deno.env.get("GITHUB_CLIENT_ID");
   const GITHUB_CLIENT_SECRET = Deno.env.get("GITHUB_CLIENT_SECRET");
@@ -36,7 +37,7 @@ Deno.serve(async (req) => {
     const ghUrl = new URL("https://github.com/login/oauth/authorize");
     ghUrl.searchParams.set("client_id", GITHUB_CLIENT_ID);
     ghUrl.searchParams.set("redirect_uri", callbackUrl);
-    ghUrl.searchParams.set("scope", "read:user user:email copilot");
+    ghUrl.searchParams.set("scope", requestedScope);
     ghUrl.searchParams.set("state", origin);
     return new Response(null, { status: 302, headers: { Location: ghUrl.toString() } });
   }

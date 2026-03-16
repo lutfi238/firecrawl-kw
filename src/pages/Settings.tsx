@@ -90,20 +90,31 @@ export default function Settings() {
               </div>
             </div>
           )}
-          <Button
-            size="sm"
-            variant="outline"
-            className="gap-1.5 text-xs border-border w-fit"
-            onClick={() => {
-              const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/github-auth?redirect_uri=${encodeURIComponent(window.location.origin)}`;
-              window.location.href = url;
-            }}
-          >
-            <RefreshCw className="h-3 w-3" /> Re-authenticate with GitHub
-          </Button>
-          <p className="text-xs text-muted-foreground">
-            Re-login to refresh your GitHub token with Copilot scopes.
-          </p>
+          <div className="mt-4 rounded-lg border border-primary/30 bg-primary/10 p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="space-y-1">
+                <p className="text-sm font-semibold">Re-authenticate GitHub</p>
+                <p className="text-xs text-muted-foreground">
+                  Refresh your GitHub token with Copilot and chat scopes.
+                </p>
+              </div>
+              <Button
+                size="sm"
+                className="gap-1.5 w-full sm:w-auto"
+                onClick={() => {
+                  const origin = window.top?.location.origin || window.location.origin;
+                  const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/github-auth?redirect_uri=${encodeURIComponent(origin)}&scope=${encodeURIComponent("read:user user:email copilot github_copilot_chat")}`;
+                  if (window.top && window.top !== window) {
+                    window.top.location.href = url;
+                  } else {
+                    window.location.href = url;
+                  }
+                }}
+              >
+                <RefreshCw className="h-3 w-3" /> Re-authenticate GitHub
+              </Button>
+            </div>
+          </div>
         </div>
       </GlassCard>
 
