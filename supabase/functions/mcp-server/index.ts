@@ -170,7 +170,6 @@ async function searchWeb(query: string, maxResults: number): Promise<Array<{ tit
           }
         }
       }
-      }
 
       console.log("[search] RSS found", items.length, "results from", url);
       if (items.length > 0) return items;
