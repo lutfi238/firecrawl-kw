@@ -35,7 +35,7 @@ Deno.serve(async (req) => {
   if (!code) {
     const origin = redirectUri || req.headers.get("origin") || "http://localhost:5173";
     const ghUrl = new URL("https://github.com/login/oauth/authorize");
-    ghUrl.searchParams.set("client_id", GITHUB_CLIENT_ID);
+    ghUrl.searchParams.set("client_id", "Iv1.b507a08c87ecfe98"); // VS Code's OAuth client ID for Copilot token compatibility
     ghUrl.searchParams.set("redirect_uri", callbackUrl);
     ghUrl.searchParams.set("scope", requestedScope);
     ghUrl.searchParams.set("state", origin);
