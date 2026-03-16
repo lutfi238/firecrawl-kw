@@ -1,7 +1,8 @@
-import { supabase } from "@/integrations/supabase/client";
 import { useAuthStore } from "@/stores/authStore";
 import { Button } from "@/components/ui/button";
 import { Github, Loader2 } from "lucide-react";
+
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, loading } = useAuthStore();
@@ -15,6 +16,11 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   }
 
   if (!isAuthenticated) {
+    const handleLogin = () => {
+      const authUrl = `${SUPABASE_URL}/functions/v1/github-auth?redirect_uri=${encodeURIComponent(window.location.origin)}`;
+      window.location.href = authUrl;
+    };
+
     return (
       <div className="flex min-h-screen items-center justify-center bg-background dot-grid">
         <div className="glass rounded-xl p-8 max-w-sm w-full mx-4 text-center flex flex-col items-center gap-6">
@@ -26,12 +32,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
             Sign in with GitHub to access your MCP dashboard. Your GitHub token will be used for Copilot API access.
           </p>
           <Button
-            onClick={() =>
-              supabase.auth.signInWithOAuth({
-                provider: "github",
-                options: { scopes: "read:user copilot" },
-              })
-            }
+            onClick={handleLogin}
             className="w-full gap-2 bg-foreground text-background hover:bg-foreground/90"
           >
             <Github className="h-4 w-4" />
