@@ -403,6 +403,7 @@ app.post("/*", async (c) => {
           // Try PAT from settings table first, then fall back to OAuth token header
           const pat = await getGithubPat(currentAuthHeader);
           const tokenForCopilot = pat || currentGithubToken;
+          console.log("[extract] PAT found:", !!pat, "OAuth token:", !!currentGithubToken, "using:", pat ? "PAT" : "OAuth");
           if (!tokenForCopilot) {
             result = { content: [{ type: "text", text: "Error: GitHub PAT not configured. Go to Settings and add your GitHub Personal Access Token with 'copilot' scope." }], isError: true };
           } else {
