@@ -175,29 +175,22 @@ async function searchWeb(query: string, maxResults: number): Promise<Array<{ tit
           finalUrl = await resolveRedirect(rawLink);
         }
 
-        // Clean snippet: decode entities, strip HTML
-        let snippet = rawDesc
-          .replace(/&lt;/g, "<")
-          .replace(/&gt;/g, ">")
-          .replace(/&amp;/g, "&")
-          .replace(/&quot;/g, '"')
-          .replace(/&#39;/g, "'")
-          .replace(/&nbsp;/g, " ")
-          .replace(/<[^>]+>/g, "")
-          .trim();
-
-        // Remove lines that just repeat the title or are source attribution
-        const titleLower = title.toLowerCase();
-        snippet = snippet.split("\n")
-          .filter(line => {
-            const l = line.trim().toLowerCase();
-            return l.length > 15 && !titleLower.includes(l) && !l.includes(titleLower);
-          })
-          .join(" ")
-          .trim()
-          .slice(0, 200);
-
-        if (snippet.length < 15) snippet = "";
+        // Google News descriptions just repeat title + source — not useful
+        // Only use snippet if it contains real descriptive text beyond the title
+        let snippet = "";
+        if (rawDesc) {
+          const cleaned = rawDesc
+            .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&")
+            .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, " ")
+            .replace(/<[^>]+>/g, "").trim();
+          // Check if the cleaned text is substantially different from the title
+          const titleLower = title.toLowerCase();
+          const cleanedLower = cleaned.toLowerCase();
+          const isDifferent = !cleanedLower.includes(titleLower) && !titleLower.includes(cleanedLower);
+          if (isDifferent && cleaned.length > 30) {
+            snippet = cleaned.slice(0, 200);
+          }
+        }
 
         return { title, url: finalUrl, snippet };
       }));
