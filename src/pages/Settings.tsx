@@ -1,0 +1,175 @@
+import { useState } from "react";
+import { useAuthStore } from "@/stores/authStore";
+import { useSettings } from "@/hooks/useSettings";
+import { useRequestLogs } from "@/hooks/useRequestLogs";
+import { supabase } from "@/integrations/supabase/client";
+import { GlassCard } from "@/components/GlassCard";
+import { StatusBadge } from "@/components/StatusBadge";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Github, RefreshCw, Trash2, CheckCircle, AlertCircle, Loader2 } from "lucide-react";
+import { toast } from "sonner";
+
+export default function Settings() {
+  const { user, githubToken } = useAuthStore();
+  const { settings, upsert } = useSettings();
+  const { clearLogs } = useRequestLogs();
+  const [railwayUrl, setRailwayUrl] = useState("");
+  const [railwaySecret, setRailwaySecret] = useState("");
+  const [testingRailway, setTestingRailway] = useState(false);
+  const [railwayStatus, setRailwayStatus] = useState<"online" | "offline" | null>(null);
+
+  const avatarUrl = user?.user_metadata?.avatar_url;
+  const username = user?.user_metadata?.user_name ?? user?.email?.split("@")[0] ?? "User";
+
+  // Initialize from settings
+  useState(() => {
+    if (settings.railway_url) setRailwayUrl(settings.railway_url);
+    if (settings.railway_secret) setRailwaySecret(settings.railway_secret);
+  });
+
+  const handleSaveRailway = async () => {
+    try {
+      await upsert.mutateAsync({ key: "railway_url", value: railwayUrl });
+      await upsert.mutateAsync({ key: "railway_secret", value: railwaySecret });
+      toast.success("Railway config saved");
+    } catch {
+      toast.error("Failed to save");
+    }
+  };
+
+  const handleTestRailway = async () => {
+    setTestingRailway(true);
+    setRailwayStatus(null);
+    try {
+      const res = await fetch(`${railwayUrl}/health`);
+      setRailwayStatus(res.ok ? "online" : "offline");
+    } catch {
+      setRailwayStatus("offline");
+    }
+    setTestingRailway(false);
+  };
+
+  return (
+    <div className="space-y-6 max-w-2xl">
+      <h1 className="font-display text-xl font-bold tracking-wider text-gradient-cyber">SETTINGS</h1>
+
+      {/* GitHub OAuth Status */}
+      <GlassCard>
+        <h2 className="text-xs font-mono uppercase tracking-widest text-muted-foreground mb-4 font-semibold">GitHub Authentication</h2>
+        <div className="flex items-center gap-4">
+          <Avatar className="h-12 w-12">
+            <AvatarImage src={avatarUrl} />
+            <AvatarFallback className="bg-muted font-mono">{username[0]?.toUpperCase()}</AvatarFallback>
+          </Avatar>
+          <div className="flex-1">
+            <p className="font-medium text-sm">{username}</p>
+            <div className="flex items-center gap-2 mt-1">
+              <StatusBadge status="online" label="CONNECTED" />
+              {githubToken ? (
+                <StatusBadge status="success" label="COPILOT READY" />
+              ) : (
+                <StatusBadge status="error" label="NO TOKEN" />
+              )}
+            </div>
+          </div>
+        </div>
+        {!githubToken && (
+          <div className="mt-4 rounded-md border border-cyber-amber/30 bg-cyber-amber/5 p-3">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="h-4 w-4 text-cyber-amber mt-0.5" />
+              <div>
+                <p className="text-xs text-cyber-amber font-medium">GitHub token not available</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Re-authenticate to grant Copilot API access. The token is only available immediately after login.
+                </p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="mt-2 gap-1.5 text-xs border-cyber-amber/30"
+                  onClick={() =>
+                    supabase.auth.signInWithOAuth({
+                      provider: "github",
+                      options: { scopes: "read:user copilot" },
+                    })
+                  }
+                >
+                  <RefreshCw className="h-3 w-3" /> Re-authenticate
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+      </GlassCard>
+
+      {/* Railway Config */}
+      <GlassCard>
+        <h2 className="text-xs font-mono uppercase tracking-widest text-muted-foreground mb-4 font-semibold">Railway Renderer</h2>
+        <p className="text-xs text-muted-foreground mb-4">
+          Optional Playwright renderer for JS-rendered scraping and screenshots. Deploy the renderer to Railway and paste the URL here.
+        </p>
+        <div className="space-y-3">
+          <div>
+            <Label className="text-xs font-mono text-muted-foreground">Renderer URL</Label>
+            <Input
+              value={railwayUrl}
+              onChange={(e) => setRailwayUrl(e.target.value)}
+              placeholder="https://your-renderer.railway.app"
+              className="font-mono text-sm bg-background/50 border-border"
+            />
+          </div>
+          <div>
+            <Label className="text-xs font-mono text-muted-foreground">Secret</Label>
+            <Input
+              type="password"
+              value={railwaySecret}
+              onChange={(e) => setRailwaySecret(e.target.value)}
+              placeholder="Optional shared secret"
+              className="font-mono text-sm bg-background/50 border-border"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={handleSaveRailway} className="text-xs font-mono border-border gap-1.5">
+              Save
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleTestRailway}
+              disabled={!railwayUrl || testingRailway}
+              className="text-xs font-mono border-border gap-1.5"
+            >
+              {testingRailway ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+              Test
+            </Button>
+            {railwayStatus && <StatusBadge status={railwayStatus} />}
+          </div>
+        </div>
+      </GlassCard>
+
+      {/* Danger Zone */}
+      <GlassCard className="border-destructive/30">
+        <h2 className="text-xs font-mono uppercase tracking-widest text-destructive mb-4 font-semibold">Danger Zone</h2>
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm">Clear all request logs</p>
+            <p className="text-xs text-muted-foreground">This action cannot be undone.</p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              clearLogs.mutate();
+              toast.success("Logs cleared");
+            }}
+            className="gap-1.5 text-xs font-mono border-destructive/50 text-destructive hover:bg-destructive/10"
+          >
+            <Trash2 className="h-3 w-3" /> Clear Logs
+          </Button>
+        </div>
+      </GlassCard>
+    </div>
+  );
+}
