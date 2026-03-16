@@ -1,7 +1,30 @@
 import { Hono } from "hono";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 // ========== Copilot Token Cache ==========
 const tokenCache = new Map<string, { token: string; expiresAt: number }>();
+
+// ========== Get GitHub PAT from settings table ==========
+async function getGithubPat(authHeader: string | null): Promise<string | null> {
+  const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+  const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY");
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !authHeader) return null;
+
+  try {
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      global: { headers: { Authorization: authHeader } },
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+    const { data } = await supabase
+      .from("settings")
+      .select("value")
+      .eq("key", "github_pat")
+      .maybeSingle();
+    return data?.value ?? null;
+  } catch {
+    return null;
+  }
+}
 
 async function getCopilotToken(githubToken: string): Promise<string> {
   const cached = tokenCache.get(githubToken);
