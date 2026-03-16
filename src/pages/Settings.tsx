@@ -22,6 +22,10 @@ export default function Settings() {
   const [savingPat, setSavingPat] = useState(false);
   const [testingRailway, setTestingRailway] = useState(false);
   const [railwayStatus, setRailwayStatus] = useState<"online" | "offline" | null>(null);
+  const [aiBaseUrl, setAiBaseUrl] = useState("https://api.openai.com/v1");
+  const [aiApiKey, setAiApiKey] = useState("");
+  const [aiModel, setAiModel] = useState("gpt-4o-mini");
+  const [savingAi, setSavingAi] = useState(false);
 
   const avatarUrl = user?.user_metadata?.avatar_url;
   const username = user?.user_metadata?.user_name ?? user?.email?.split("@")[0] ?? "User";
