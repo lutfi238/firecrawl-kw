@@ -114,18 +114,21 @@ async function scrapeUrl(url: string): Promise<{ markdown: string; title: string
 // ========== Search DDG ==========
 async function searchDDG(query: string, maxResults: number): Promise<Array<{ title: string; url: string; snippet: string }>> {
   const res = await fetch(`https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`, {
-    headers: { "User-Agent": "Mozilla/5.0 (compatible; FirecrawlMCP/1.0)" },
+    headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
   });
   const html = await res.text();
   const results: Array<{ title: string; url: string; snippet: string }> = [];
 
-  const linkRegex = /<a[^>]+rel="nofollow"[^>]+href="([^"]+)"[^>]*class="result-link"[^>]*>([\s\S]*?)<\/a>/gi;
-  const snippetRegex = /<td class="result-snippet">([\s\S]*?)<\/td>/gi;
+  // Match <a ... class="result-link" ... href="URL"> or <a ... href="URL" ... class="result-link">
+  const linkRegex = /<a[^>]*class="result-link"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>|<a[^>]*href="([^"]+)"[^>]*class="result-link"[^>]*>([\s\S]*?)<\/a>/gi;
+  const snippetRegex = /<td[^>]*class="result-snippet"[^>]*>([\s\S]*?)<\/td>/gi;
 
   const links: Array<{ url: string; title: string }> = [];
   let m;
   while ((m = linkRegex.exec(html)) !== null) {
-    links.push({ url: m[1], title: m[2].replace(/<[^>]+>/g, "").trim() });
+    const url = m[1] || m[3];
+    const title = (m[2] || m[4] || "").replace(/<[^>]+>/g, "").trim();
+    if (url && title) links.push({ url, title });
   }
 
   const snippets: string[] = [];
@@ -142,6 +145,7 @@ async function searchDDG(query: string, maxResults: number): Promise<Array<{ tit
   }
 
   if (results.length === 0) {
+    // Fallback: grab any external links
     const broadRegex = /<a[^>]+href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
     while ((m = broadRegex.exec(html)) !== null && results.length < maxResults) {
       const url = m[1];

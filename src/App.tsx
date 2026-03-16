@@ -63,6 +63,7 @@ function AuthListener() {
             .from("settings")
             .select("value")
             .eq("key", "github_token")
+            .eq("user_id", user.id)
             .maybeSingle();
           githubToken = data?.value ?? null;
         }
@@ -80,6 +81,7 @@ function AuthListener() {
           .from("settings")
           .select("value")
           .eq("key", "github_token")
+          .eq("user_id", user.id)
           .maybeSingle();
         githubToken = data?.value ?? null;
       }
