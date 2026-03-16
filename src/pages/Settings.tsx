@@ -51,6 +51,19 @@ export default function Settings() {
     setSavingPat(false);
   };
 
+  const handleSaveAi = async () => {
+    setSavingAi(true);
+    try {
+      await upsert.mutateAsync({ key: "ai_base_url", value: aiBaseUrl });
+      await upsert.mutateAsync({ key: "ai_api_key", value: aiApiKey });
+      await upsert.mutateAsync({ key: "ai_model", value: aiModel });
+      toast.success("AI provider config saved");
+    } catch {
+      toast.error("Failed to save AI config");
+    }
+    setSavingAi(false);
+  };
+
   const handleSaveRailway = async () => {
     try {
       await upsert.mutateAsync({ key: "railway_url", value: railwayUrl });
