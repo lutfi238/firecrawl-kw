@@ -41,8 +41,11 @@ async function getGithubPat(authHeader: string | null): Promise<string | null> {
 async function getCopilotToken(githubToken: string): Promise<string> {
   const cached = tokenCache.get(githubToken);
   if (cached && Date.now() < cached.expiresAt) {
+    console.log("[Copilot] Using cached token");
     return cached.token;
   }
+
+  console.log("[Copilot] Exchanging token prefix:", githubToken.slice(0, 8), "len:", githubToken.length);
 
   const res = await fetch("https://api.github.com/copilot_internal/v2/token", {
     headers: {
@@ -55,11 +58,14 @@ async function getCopilotToken(githubToken: string): Promise<string> {
     },
   });
 
+  const responseBody = await res.text();
+  console.log("[Copilot] Response status:", res.status, "body:", responseBody.slice(0, 500));
+
   if (!res.ok) {
-    throw new Error(`Failed to exchange GitHub token for Copilot token: ${res.status}`);
+    throw new Error(`Copilot token exchange failed: ${res.status} - ${responseBody.slice(0, 200)}`);
   }
 
-  const data = await res.json();
+  const data = JSON.parse(responseBody);
   const expiresAt = new Date(data.expires_at).getTime() - 60_000;
   tokenCache.set(githubToken, { token: data.token, expiresAt });
   return data.token;
