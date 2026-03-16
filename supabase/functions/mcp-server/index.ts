@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { McpServer, StreamableHttpTransport } from "mcp-lite";
 
 // ========== Copilot Token Cache ==========
 const tokenCache = new Map<string, { token: string; expiresAt: number }>();

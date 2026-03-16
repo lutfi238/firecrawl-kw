@@ -68,6 +68,7 @@ export function useMCPServer() {
         return data.result as ToolCallResult;
       } catch (err) {
         const message = err instanceof Error ? err.message : "Unknown error";
+        console.error("[MCP callTool] Error:", message, err);
         setError(message);
         return {
           content: [{ type: "text", text: `Error: ${message}` }],
