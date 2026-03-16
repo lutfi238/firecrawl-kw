@@ -1,9 +1,6 @@
 import { Hono } from "hono";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-// ========== Copilot Token Cache ==========
-const tokenCache = new Map<string, { token: string; expiresAt: number }>();
-
 // ========== Get GitHub PAT from settings table ==========
 async function getGithubPat(authHeader: string | null): Promise<string | null> {
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
@@ -36,39 +33,6 @@ async function getGithubPat(authHeader: string | null): Promise<string | null> {
     console.error("[PAT] Error:", e instanceof Error ? e.message : "unknown");
     return null;
   }
-}
-
-async function getCopilotToken(githubToken: string): Promise<string> {
-  const cached = tokenCache.get(githubToken);
-  if (cached && Date.now() < cached.expiresAt) {
-    console.log("[Copilot] Using cached token");
-    return cached.token;
-  }
-
-  console.log("[Copilot] Exchanging token prefix:", githubToken.slice(0, 8), "len:", githubToken.length);
-
-  const res = await fetch("https://api.github.com/copilot_internal/v2/token", {
-    headers: {
-      Authorization: `token ${githubToken}`,
-      "User-Agent": "GitHubCopilot/1.155.0",
-      Accept: "application/json",
-      "Editor-Version": "vscode/1.85.0",
-      "Editor-Plugin-Version": "copilot-chat/0.11.1",
-      "Openai-Organization": "github-copilot",
-    },
-  });
-
-  const responseBody = await res.text();
-  console.log("[Copilot] Response status:", res.status, "body:", responseBody.slice(0, 500));
-
-  if (!res.ok) {
-    throw new Error(`Copilot token exchange failed: ${res.status} - ${responseBody.slice(0, 200)}`);
-  }
-
-  const data = JSON.parse(responseBody);
-  const expiresAt = new Date(data.expires_at).getTime() - 60_000;
-  tokenCache.set(githubToken, { token: data.token, expiresAt });
-  return data.token;
 }
 
 // Module-level store for current request's auth header and GitHub PAT
@@ -400,29 +364,36 @@ app.post("/*", async (c) => {
           break;
         }
         case "extract": {
-          // Try PAT from settings table first, then fall back to OAuth token header
           const pat = await getGithubPat(currentAuthHeader);
-          const tokenForCopilot = pat || currentGithubToken;
-          console.log("[extract] PAT found:", !!pat, "OAuth token:", !!currentGithubToken, "using:", pat ? "PAT" : "OAuth");
-          if (!tokenForCopilot) {
+          console.log("[extract] PAT found:", !!pat);
+          if (!pat) {
             result = { content: [{ type: "text", text: "Error: GitHub PAT not configured. Go to Settings and add your GitHub Personal Access Token with 'copilot' scope." }], isError: true };
           } else {
             const { markdown } = await scrapeUrl(args.url);
             const truncated = markdown.slice(0, 12000);
-            const copilotToken = await getCopilotToken(tokenForCopilot);
             const systemPrompt = args.schema
               ? `Extract the requested data from the web page content. Return valid JSON matching this schema: ${args.schema}`
               : "Extract the requested data from the web page content. Return structured JSON.";
+            console.log("[extract] Calling Copilot API with PAT directly");
             const aiRes = await fetch("https://api.githubcopilot.com/chat/completions", {
               method: "POST",
-              headers: { Authorization: `Bearer ${copilotToken}`, "Content-Type": "application/json", "Copilot-Integration-Id": "vscode-chat" },
-              body: JSON.stringify({ model: "claude-3.5-haiku", messages: [{ role: "system", content: systemPrompt }, { role: "user", content: `${args.prompt}\n\n---PAGE CONTENT---\n${truncated}` }], max_tokens: 4096 }),
+              headers: {
+                Authorization: `Bearer ${pat}`,
+                "Content-Type": "application/json",
+                "User-Agent": "GitHubCopilot/1.155.0",
+                "Editor-Version": "vscode/1.85.0",
+                "Editor-Plugin-Version": "copilot-chat/0.11.1",
+                "Copilot-Integration-Id": "vscode-chat",
+                "OpenAI-Intent": "conversation-panel",
+              },
+              body: JSON.stringify({ model: "claude-haiku-4-5", messages: [{ role: "system", content: systemPrompt }, { role: "user", content: `${args.prompt}\n\n---PAGE CONTENT---\n${truncated}` }], max_tokens: 4096 }),
             });
+            const aiBody = await aiRes.text();
+            console.log("[extract] Copilot response:", aiRes.status, aiBody.slice(0, 500));
             if (!aiRes.ok) {
-              const err = await aiRes.text();
-              result = { content: [{ type: "text", text: `Copilot API error ${aiRes.status}: ${err}` }], isError: true };
+              result = { content: [{ type: "text", text: `Copilot API error ${aiRes.status}: ${aiBody.slice(0, 300)}` }], isError: true };
             } else {
-              const aiData = await aiRes.json();
+              const aiData = JSON.parse(aiBody);
               const answer = aiData.choices?.[0]?.message?.content ?? "No response";
               result = { content: [{ type: "text", text: answer }] };
             }
