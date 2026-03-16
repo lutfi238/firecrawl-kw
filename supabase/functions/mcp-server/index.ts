@@ -1,7 +1,30 @@
 import { Hono } from "hono";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 // ========== Copilot Token Cache ==========
 const tokenCache = new Map<string, { token: string; expiresAt: number }>();
+
+// ========== Get GitHub PAT from settings table ==========
+async function getGithubPat(authHeader: string | null): Promise<string | null> {
+  const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+  const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY");
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !authHeader) return null;
+
+  try {
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      global: { headers: { Authorization: authHeader } },
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+    const { data } = await supabase
+      .from("settings")
+      .select("value")
+      .eq("key", "github_pat")
+      .maybeSingle();
+    return data?.value ?? null;
+  } catch {
+    return null;
+  }
+}
 
 async function getCopilotToken(githubToken: string): Promise<string> {
   const cached = tokenCache.get(githubToken);
@@ -30,7 +53,8 @@ async function getCopilotToken(githubToken: string): Promise<string> {
   return data.token;
 }
 
-// Module-level store for current request's GitHub token
+// Module-level store for current request's auth header and GitHub PAT
+let currentAuthHeader: string | null = null;
 let currentGithubToken: string | null = null;
 
 // ========== HTML → Markdown ==========
@@ -245,6 +269,7 @@ app.options("/*", (c) => {
 // MCP POST handler - manual JSON-RPC dispatch
 app.post("/*", async (c) => {
   currentGithubToken = c.req.header("x-github-token") || null;
+  currentAuthHeader = c.req.header("authorization") || null;
 
   try {
     const body = await c.req.json();
@@ -357,12 +382,15 @@ app.post("/*", async (c) => {
           break;
         }
         case "extract": {
-          if (!currentGithubToken) {
-            result = { content: [{ type: "text", text: "Error: X-GitHub-Token header required for extract tool." }], isError: true };
+          // Try PAT from settings table first, then fall back to OAuth token header
+          const pat = await getGithubPat(currentAuthHeader);
+          const tokenForCopilot = pat || currentGithubToken;
+          if (!tokenForCopilot) {
+            result = { content: [{ type: "text", text: "Error: GitHub PAT not configured. Go to Settings and add your GitHub Personal Access Token with 'copilot' scope." }], isError: true };
           } else {
             const { markdown } = await scrapeUrl(args.url);
             const truncated = markdown.slice(0, 12000);
-            const copilotToken = await getCopilotToken(currentGithubToken);
+            const copilotToken = await getCopilotToken(tokenForCopilot);
             const systemPrompt = args.schema
               ? `Extract the requested data from the web page content. Return valid JSON matching this schema: ${args.schema}`
               : "Extract the requested data from the web page content. Return structured JSON.";

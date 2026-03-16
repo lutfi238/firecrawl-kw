@@ -1,8 +1,10 @@
 import { useState, useCallback } from "react";
 import { useAuthStore } from "@/stores/authStore";
+import { supabase } from "@/integrations/supabase/client";
 import type { JsonRpcResponse, ToolCallResult } from "@/types/mcp";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 const MCP_ENDPOINT = `${SUPABASE_URL}/functions/v1/mcp-server`;
 
 export function useMCPServer() {
@@ -24,10 +26,16 @@ export function useMCPServer() {
           params: { name: toolName, arguments: args },
         };
 
+        // Get current session token for auth
+        const { data: { session } } = await supabase.auth.getSession();
         const headers: Record<string, string> = {
           "Content-Type": "application/json",
           Accept: "application/json, text/event-stream",
+          apikey: SUPABASE_ANON_KEY,
         };
+        if (session?.access_token) {
+          headers["Authorization"] = `Bearer ${session.access_token}`;
+        }
         if (githubToken) {
           headers["X-GitHub-Token"] = githubToken;
         }
