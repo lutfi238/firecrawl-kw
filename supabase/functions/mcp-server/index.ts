@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { McpServer, StreamableHttpTransport } from "mcp-lite";
 
 // ========== Copilot Token Cache ==========
 const tokenCache = new Map<string, { token: string; expiresAt: number }>();
@@ -155,329 +154,9 @@ async function searchDDG(query: string, maxResults: number): Promise<Array<{ tit
   return results;
 }
 
-// ========== MCP Server ==========
+// ========== Hono App ==========
 const app = new Hono();
-const mcpServer = new McpServer({
-  name: "personal-firecrawl",
-  version: "1.0.0",
-});
 
-// 1. search
-mcpServer.tool(
-  "search",
-  "Search the web using DuckDuckGo",
-  {
-    type: "object" as const,
-    properties: {
-      query: { type: "string", description: "Search query" },
-      maxResults: { type: "number", description: "Max results (default 10)" },
-    },
-    required: ["query"],
-  },
-  async ({ query, maxResults }) => {
-    const results = await searchDDG(query as string, (maxResults as number) || 10);
-    return { content: [{ type: "text" as const, text: JSON.stringify(results, null, 2) }] };
-  }
-);
-
-// 2. scrape
-mcpServer.tool(
-  "scrape",
-  "Fetch a URL and convert HTML to Markdown",
-  {
-    type: "object" as const,
-    properties: {
-      url: { type: "string", description: "URL to scrape" },
-    },
-    required: ["url"],
-  },
-  async ({ url }) => {
-    const { markdown, title } = await scrapeUrl(url as string);
-    return { content: [{ type: "text" as const, text: `# ${title}\n\n${markdown}` }] };
-  }
-);
-
-// 3. scrape_js
-mcpServer.tool(
-  "scrape_js",
-  "Scrape a JS-rendered page via Railway renderer",
-  {
-    type: "object" as const,
-    properties: {
-      url: { type: "string", description: "URL to scrape" },
-      waitFor: { type: "number", description: "Wait ms for JS (default 3000)" },
-    },
-    required: ["url"],
-  },
-  async ({ url, waitFor }) => {
-    const rendererUrl = Deno.env.get("RAILWAY_RENDERER_URL");
-    if (!rendererUrl) {
-      return { content: [{ type: "text" as const, text: "Error: RAILWAY_RENDERER_URL not configured. Set it in Settings." }], isError: true };
-    }
-    const secret = Deno.env.get("RAILWAY_SECRET") || "";
-    const res = await fetch(`${rendererUrl}/render`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Secret": secret },
-      body: JSON.stringify({ url, waitFor: waitFor || 3000 }),
-    });
-    if (!res.ok) throw new Error(`Renderer returned ${res.status}`);
-    const { html } = await res.json();
-    return { content: [{ type: "text" as const, text: htmlToMarkdown(html) }] };
-  }
-);
-
-// 4. crawl
-mcpServer.tool(
-  "crawl",
-  "BFS crawl a website staying on the same domain",
-  {
-    type: "object" as const,
-    properties: {
-      url: { type: "string", description: "Starting URL" },
-      maxPages: { type: "number", description: "Max pages (default 10)" },
-      extractContent: { type: "boolean", description: "Extract markdown per page" },
-    },
-    required: ["url"],
-  },
-  async ({ url, maxPages, extractContent }) => {
-    const visited = new Set<string>();
-    const queue: string[] = [url as string];
-    const results: Array<{ url: string; title?: string; markdown?: string }> = [];
-    const limit = (maxPages as number) || 10;
-
-    while (queue.length > 0 && visited.size < limit) {
-      const current = queue.shift()!;
-      if (visited.has(current)) continue;
-      visited.add(current);
-
-      try {
-        const res = await fetch(current, {
-          headers: { "User-Agent": "Mozilla/5.0 (compatible; FirecrawlMCP/1.0)" },
-          redirect: "follow",
-        });
-        if (!res.ok) continue;
-        const html = await res.text();
-        const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-        const title = titleMatch ? titleMatch[1].trim() : current;
-
-        const entry: { url: string; title?: string; markdown?: string } = { url: current, title };
-        if (extractContent) entry.markdown = htmlToMarkdown(html);
-        results.push(entry);
-
-        const foundLinks = extractLinks(html, current);
-        for (const link of foundLinks) {
-          if (!visited.has(link)) queue.push(link);
-        }
-      } catch {
-        // skip failed pages
-      }
-    }
-
-    return { content: [{ type: "text" as const, text: JSON.stringify(results, null, 2) }] };
-  }
-);
-
-// 5. map
-mcpServer.tool(
-  "map",
-  "Fast URL-only crawl to map all links on a domain",
-  {
-    type: "object" as const,
-    properties: {
-      url: { type: "string", description: "Starting URL" },
-      maxPages: { type: "number", description: "Max pages (default 50)" },
-    },
-    required: ["url"],
-  },
-  async ({ url, maxPages }) => {
-    const visited = new Set<string>();
-    const queue: string[] = [url as string];
-    const limit = (maxPages as number) || 50;
-
-    while (queue.length > 0 && visited.size < limit) {
-      const current = queue.shift()!;
-      if (visited.has(current)) continue;
-      visited.add(current);
-
-      try {
-        const res = await fetch(current, {
-          headers: { "User-Agent": "Mozilla/5.0 (compatible; FirecrawlMCP/1.0)" },
-          redirect: "follow",
-        });
-        if (!res.ok) continue;
-        const html = await res.text();
-        const foundLinks = extractLinks(html, current);
-        for (const link of foundLinks) {
-          if (!visited.has(link)) queue.push(link);
-        }
-      } catch {
-        // skip
-      }
-    }
-
-    return { content: [{ type: "text" as const, text: JSON.stringify([...visited], null, 2) }] };
-  }
-);
-
-// 6. extract
-mcpServer.tool(
-  "extract",
-  "Scrape URL and use AI (Claude Haiku via Copilot) to extract structured data",
-  {
-    type: "object" as const,
-    properties: {
-      url: { type: "string", description: "URL to extract from" },
-      prompt: { type: "string", description: "What to extract" },
-      schema: { type: "string", description: "Optional JSON schema" },
-    },
-    required: ["url", "prompt"],
-  },
-  async ({ url, prompt, schema }) => {
-    if (!currentGithubToken) {
-      return { content: [{ type: "text" as const, text: "Error: X-GitHub-Token header required for extract tool." }], isError: true };
-    }
-
-    const { markdown } = await scrapeUrl(url as string);
-    const truncated = markdown.slice(0, 12000);
-
-    const copilotToken = await getCopilotToken(currentGithubToken);
-
-    const systemPrompt = schema
-      ? `Extract the requested data from the web page content. Return valid JSON matching this schema: ${schema}`
-      : "Extract the requested data from the web page content. Return structured JSON.";
-
-    const aiRes = await fetch("https://api.githubcopilot.com/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${copilotToken}`,
-        "Content-Type": "application/json",
-        "Copilot-Integration-Id": "vscode-chat",
-      },
-      body: JSON.stringify({
-        model: "claude-3.5-haiku",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: `${prompt}\n\n---PAGE CONTENT---\n${truncated}` },
-        ],
-        max_tokens: 4096,
-      }),
-    });
-
-    if (!aiRes.ok) {
-      const err = await aiRes.text();
-      return { content: [{ type: "text" as const, text: `Copilot API error ${aiRes.status}: ${err}` }], isError: true };
-    }
-
-    const aiData = await aiRes.json();
-    const answer = aiData.choices?.[0]?.message?.content ?? "No response";
-    return { content: [{ type: "text" as const, text: answer }] };
-  }
-);
-
-// 7. screenshot
-mcpServer.tool(
-  "screenshot",
-  "Take a screenshot via Railway renderer",
-  {
-    type: "object" as const,
-    properties: {
-      url: { type: "string", description: "URL to screenshot" },
-      width: { type: "number", description: "Width (default 1280)" },
-      height: { type: "number", description: "Height (default 720)" },
-    },
-    required: ["url"],
-  },
-  async ({ url, width, height }) => {
-    const rendererUrl = Deno.env.get("RAILWAY_RENDERER_URL");
-    if (!rendererUrl) {
-      return { content: [{ type: "text" as const, text: "Error: RAILWAY_RENDERER_URL not configured." }], isError: true };
-    }
-    const secret = Deno.env.get("RAILWAY_SECRET") || "";
-    const res = await fetch(`${rendererUrl}/screenshot`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Secret": secret },
-      body: JSON.stringify({ url, width: width || 1280, height: height || 720 }),
-    });
-    if (!res.ok) throw new Error(`Renderer returned ${res.status}`);
-    const { image } = await res.json();
-    return { content: [{ type: "image" as const, data: image, mimeType: "image/png" }] };
-  }
-);
-
-// 8. search_and_scrape
-mcpServer.tool(
-  "search_and_scrape",
-  "Search then scrape top results",
-  {
-    type: "object" as const,
-    properties: {
-      query: { type: "string", description: "Search query" },
-      maxResults: { type: "number", description: "Results to scrape (default 3)" },
-    },
-    required: ["query"],
-  },
-  async ({ query, maxResults }) => {
-    const results = await searchDDG(query as string, (maxResults as number) || 3);
-    const scraped: string[] = [];
-
-    for (const r of results) {
-      try {
-        const { markdown, title } = await scrapeUrl(r.url);
-        scraped.push(`# ${title}\nURL: ${r.url}\n\n${markdown.slice(0, 4000)}\n\n---`);
-      } catch {
-        scraped.push(`# ${r.title}\nURL: ${r.url}\nFailed to scrape.\n\n---`);
-      }
-    }
-
-    return { content: [{ type: "text" as const, text: scraped.join("\n\n") }] };
-  }
-);
-
-// 9. html_to_markdown
-mcpServer.tool(
-  "html_to_markdown",
-  "Convert HTML string to Markdown",
-  {
-    type: "object" as const,
-    properties: {
-      html: { type: "string", description: "HTML to convert" },
-    },
-    required: ["html"],
-  },
-  async ({ html }) => {
-    return { content: [{ type: "text" as const, text: htmlToMarkdown(html as string) }] };
-  }
-);
-
-// 10. batch_scrape
-mcpServer.tool(
-  "batch_scrape",
-  "Scrape multiple URLs in parallel",
-  {
-    type: "object" as const,
-    properties: {
-      urls: { type: "string", description: "Comma-separated URLs" },
-    },
-    required: ["urls"],
-  },
-  async ({ urls }) => {
-    const urlList = (urls as string).split(",").map((u) => u.trim()).filter(Boolean);
-    const results = await Promise.all(
-      urlList.map(async (url) => {
-        try {
-          const { markdown, title } = await scrapeUrl(url);
-          return `# ${title}\nURL: ${url}\n\n${markdown.slice(0, 4000)}`;
-        } catch (e) {
-          return `# Error\nURL: ${url}\nFailed: ${e instanceof Error ? e.message : "unknown"}`;
-        }
-      })
-    );
-    return { content: [{ type: "text" as const, text: results.join("\n\n---\n\n") }] };
-  }
-);
-
-// ========== Transport ==========
-const transport = new StreamableHttpTransport();
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -488,12 +167,7 @@ const corsHeaders = {
 // Health check GET handler
 app.get("/*", (c) => {
   return c.json(
-    {
-      status: "ok",
-      server: "personal-firecrawl",
-      version: "1.0.0",
-      tools: 10,
-    },
+    { status: "ok", server: "personal-firecrawl", version: "1.0.0", tools: 10 },
     200,
     corsHeaders
   );
@@ -504,21 +178,209 @@ app.options("/*", (c) => {
   return new Response(null, { headers: corsHeaders });
 });
 
-// MCP POST handler
+// MCP POST handler - manual JSON-RPC dispatch
 app.post("/*", async (c) => {
-  // Capture GitHub token from header for use in extract tool
   currentGithubToken = c.req.header("x-github-token") || null;
 
-  const response = await transport.handleRequest(c.req.raw, mcpServer);
+  try {
+    const body = await c.req.json();
+    const { jsonrpc, id, method, params } = body;
 
-  const headers = new Headers(response.headers);
-  headers.set("Access-Control-Allow-Origin", "*");
+    if (method === "initialize") {
+      return c.json({
+        jsonrpc: "2.0",
+        id,
+        result: {
+          protocolVersion: "2024-11-05",
+          capabilities: { tools: { listChanged: false } },
+          serverInfo: { name: "personal-firecrawl", version: "1.0.0" },
+        },
+      }, 200, corsHeaders);
+    }
 
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers,
-  });
+    if (method === "tools/list") {
+      const toolDefs = [
+        { name: "search", description: "Search the web using DuckDuckGo", inputSchema: { type: "object", properties: { query: { type: "string" }, maxResults: { type: "number" } }, required: ["query"] } },
+        { name: "scrape", description: "Fetch a URL and convert HTML to Markdown", inputSchema: { type: "object", properties: { url: { type: "string" } }, required: ["url"] } },
+        { name: "scrape_js", description: "Scrape a JS-rendered page via Railway renderer", inputSchema: { type: "object", properties: { url: { type: "string" }, waitFor: { type: "number" } }, required: ["url"] } },
+        { name: "crawl", description: "BFS crawl a website staying on the same domain", inputSchema: { type: "object", properties: { url: { type: "string" }, maxPages: { type: "number" }, extractContent: { type: "boolean" } }, required: ["url"] } },
+        { name: "map", description: "Fast URL-only crawl to map all links on a domain", inputSchema: { type: "object", properties: { url: { type: "string" }, maxPages: { type: "number" } }, required: ["url"] } },
+        { name: "extract", description: "Scrape URL and use AI to extract structured data", inputSchema: { type: "object", properties: { url: { type: "string" }, prompt: { type: "string" }, schema: { type: "string" } }, required: ["url", "prompt"] } },
+        { name: "screenshot", description: "Take a screenshot via Railway renderer", inputSchema: { type: "object", properties: { url: { type: "string" }, width: { type: "number" }, height: { type: "number" } }, required: ["url"] } },
+        { name: "search_and_scrape", description: "Search then scrape top results", inputSchema: { type: "object", properties: { query: { type: "string" }, maxResults: { type: "number" } }, required: ["query"] } },
+        { name: "html_to_markdown", description: "Convert HTML string to Markdown", inputSchema: { type: "object", properties: { html: { type: "string" } }, required: ["html"] } },
+        { name: "batch_scrape", description: "Scrape multiple URLs in parallel", inputSchema: { type: "object", properties: { urls: { type: "string" } }, required: ["urls"] } },
+      ];
+      return c.json({ jsonrpc: "2.0", id, result: { tools: toolDefs } }, 200, corsHeaders);
+    }
+
+    if (method === "tools/call") {
+      const { name, arguments: args } = params;
+      let result;
+
+      switch (name) {
+        case "search": {
+          const results = await searchDDG(args.query, args.maxResults || 10);
+          result = { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
+          break;
+        }
+        case "scrape": {
+          const { markdown, title } = await scrapeUrl(args.url);
+          result = { content: [{ type: "text", text: `# ${title}\n\n${markdown}` }] };
+          break;
+        }
+        case "scrape_js": {
+          const rendererUrl = Deno.env.get("RAILWAY_RENDERER_URL");
+          if (!rendererUrl) {
+            result = { content: [{ type: "text", text: "Error: RAILWAY_RENDERER_URL not configured." }], isError: true };
+          } else {
+            const secret = Deno.env.get("RAILWAY_SECRET") || "";
+            const res = await fetch(`${rendererUrl}/render`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "X-Secret": secret },
+              body: JSON.stringify({ url: args.url, waitFor: args.waitFor || 3000 }),
+            });
+            if (!res.ok) throw new Error(`Renderer returned ${res.status}`);
+            const { html } = await res.json();
+            result = { content: [{ type: "text", text: htmlToMarkdown(html) }] };
+          }
+          break;
+        }
+        case "crawl": {
+          const visited = new Set<string>();
+          const queue: string[] = [args.url];
+          const results: Array<{ url: string; title?: string; markdown?: string }> = [];
+          const limit = args.maxPages || 10;
+          while (queue.length > 0 && visited.size < limit) {
+            const current = queue.shift()!;
+            if (visited.has(current)) continue;
+            visited.add(current);
+            try {
+              const res = await fetch(current, { headers: { "User-Agent": "Mozilla/5.0 (compatible; FirecrawlMCP/1.0)" }, redirect: "follow" });
+              if (!res.ok) continue;
+              const html = await res.text();
+              const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+              const title = titleMatch ? titleMatch[1].trim() : current;
+              const entry: { url: string; title?: string; markdown?: string } = { url: current, title };
+              if (args.extractContent) entry.markdown = htmlToMarkdown(html);
+              results.push(entry);
+              for (const link of extractLinks(html, current)) {
+                if (!visited.has(link)) queue.push(link);
+              }
+            } catch { /* skip */ }
+          }
+          result = { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
+          break;
+        }
+        case "map": {
+          const visited = new Set<string>();
+          const queue: string[] = [args.url];
+          const limit = args.maxPages || 50;
+          while (queue.length > 0 && visited.size < limit) {
+            const current = queue.shift()!;
+            if (visited.has(current)) continue;
+            visited.add(current);
+            try {
+              const res = await fetch(current, { headers: { "User-Agent": "Mozilla/5.0 (compatible; FirecrawlMCP/1.0)" }, redirect: "follow" });
+              if (!res.ok) continue;
+              const html = await res.text();
+              for (const link of extractLinks(html, current)) {
+                if (!visited.has(link)) queue.push(link);
+              }
+            } catch { /* skip */ }
+          }
+          result = { content: [{ type: "text", text: JSON.stringify([...visited], null, 2) }] };
+          break;
+        }
+        case "extract": {
+          if (!currentGithubToken) {
+            result = { content: [{ type: "text", text: "Error: X-GitHub-Token header required for extract tool." }], isError: true };
+          } else {
+            const { markdown } = await scrapeUrl(args.url);
+            const truncated = markdown.slice(0, 12000);
+            const copilotToken = await getCopilotToken(currentGithubToken);
+            const systemPrompt = args.schema
+              ? `Extract the requested data from the web page content. Return valid JSON matching this schema: ${args.schema}`
+              : "Extract the requested data from the web page content. Return structured JSON.";
+            const aiRes = await fetch("https://api.githubcopilot.com/chat/completions", {
+              method: "POST",
+              headers: { Authorization: `Bearer ${copilotToken}`, "Content-Type": "application/json", "Copilot-Integration-Id": "vscode-chat" },
+              body: JSON.stringify({ model: "claude-3.5-haiku", messages: [{ role: "system", content: systemPrompt }, { role: "user", content: `${args.prompt}\n\n---PAGE CONTENT---\n${truncated}` }], max_tokens: 4096 }),
+            });
+            if (!aiRes.ok) {
+              const err = await aiRes.text();
+              result = { content: [{ type: "text", text: `Copilot API error ${aiRes.status}: ${err}` }], isError: true };
+            } else {
+              const aiData = await aiRes.json();
+              const answer = aiData.choices?.[0]?.message?.content ?? "No response";
+              result = { content: [{ type: "text", text: answer }] };
+            }
+          }
+          break;
+        }
+        case "screenshot": {
+          const rendererUrl = Deno.env.get("RAILWAY_RENDERER_URL");
+          if (!rendererUrl) {
+            result = { content: [{ type: "text", text: "Error: RAILWAY_RENDERER_URL not configured." }], isError: true };
+          } else {
+            const secret = Deno.env.get("RAILWAY_SECRET") || "";
+            const res = await fetch(`${rendererUrl}/screenshot`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "X-Secret": secret },
+              body: JSON.stringify({ url: args.url, width: args.width || 1280, height: args.height || 720 }),
+            });
+            if (!res.ok) throw new Error(`Renderer returned ${res.status}`);
+            const { image } = await res.json();
+            result = { content: [{ type: "image", data: image, mimeType: "image/png" }] };
+          }
+          break;
+        }
+        case "search_and_scrape": {
+          const searchResults = await searchDDG(args.query, args.maxResults || 3);
+          const scraped: string[] = [];
+          for (const r of searchResults) {
+            try {
+              const { markdown, title } = await scrapeUrl(r.url);
+              scraped.push(`# ${title}\nURL: ${r.url}\n\n${markdown.slice(0, 4000)}\n\n---`);
+            } catch {
+              scraped.push(`# ${r.title}\nURL: ${r.url}\nFailed to scrape.\n\n---`);
+            }
+          }
+          result = { content: [{ type: "text", text: scraped.join("\n\n") }] };
+          break;
+        }
+        case "html_to_markdown": {
+          result = { content: [{ type: "text", text: htmlToMarkdown(args.html) }] };
+          break;
+        }
+        case "batch_scrape": {
+          const urlList = (args.urls as string).split(",").map((u: string) => u.trim()).filter(Boolean);
+          const batchResults = await Promise.all(
+            urlList.map(async (url: string) => {
+              try {
+                const { markdown, title } = await scrapeUrl(url);
+                return `# ${title}\nURL: ${url}\n\n${markdown.slice(0, 4000)}`;
+              } catch (e) {
+                return `# Error\nURL: ${url}\nFailed: ${e instanceof Error ? e.message : "unknown"}`;
+              }
+            })
+          );
+          result = { content: [{ type: "text", text: batchResults.join("\n\n---\n\n") }] };
+          break;
+        }
+        default:
+          return c.json({ jsonrpc: "2.0", id, error: { code: -32601, message: `Unknown tool: ${name}` } }, 200, corsHeaders);
+      }
+
+      return c.json({ jsonrpc: "2.0", id, result }, 200, corsHeaders);
+    }
+
+    return c.json({ jsonrpc: "2.0", id, error: { code: -32601, message: `Unknown method: ${method}` } }, 200, corsHeaders);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Internal server error";
+    console.error("MCP error:", message);
+    return c.json({ jsonrpc: "2.0", id: null, error: { code: -32603, message } }, 200, corsHeaders);
+  }
 });
 
 Deno.serve(app.fetch);

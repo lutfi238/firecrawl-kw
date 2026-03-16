@@ -1,6 +1,5 @@
 {
   "imports": {
-    "mcp-lite": "npm:mcp-lite@^0.10.0",
     "hono": "jsr:@hono/hono@^4"
   }
 }
