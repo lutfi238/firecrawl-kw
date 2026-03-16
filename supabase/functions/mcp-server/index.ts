@@ -111,49 +111,73 @@ async function scrapeUrl(url: string): Promise<{ markdown: string; title: string
   return { markdown: htmlToMarkdown(html), title };
 }
 
-// ========== Search DDG ==========
-async function searchDDG(query: string, maxResults: number): Promise<Array<{ title: string; url: string; snippet: string }>> {
-  const res = await fetch(`https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`, {
-    headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
-  });
-  const html = await res.text();
+// ========== Web Search (SearXNG + Bing fallback) ==========
+const SEARXNG_INSTANCES = [
+  "https://searx.be",
+  "https://search.bus-hit.me",
+  "https://searxng.site",
+];
 
-  // Log raw HTML for debugging
-  console.log("[searchDDG] Raw HTML length:", html.length);
-  console.log("[searchDDG] HTML preview (first 3000 chars):", html.slice(0, 3000));
+async function searchWeb(query: string, maxResults: number): Promise<Array<{ title: string; url: string; snippet: string }>> {
+  // Try SearXNG instances first (JSON API)
+  for (const instance of SEARXNG_INSTANCES) {
+    try {
+      const url = `${instance}/search?q=${encodeURIComponent(query)}&format=json&categories=general`;
+      console.log("[search] Trying SearXNG:", url);
+      const res = await fetch(url, {
+        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", "Accept": "application/json" },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) { console.log("[search] SearXNG returned", res.status); continue; }
+      const data = await res.json();
+      if (!data.results || !Array.isArray(data.results) || data.results.length === 0) { console.log("[search] SearXNG returned no results"); continue; }
 
-  const results: Array<{ title: string; url: string; snippet: string }> = [];
-  const seen = new Set<string>();
+      const host = new URL(instance).hostname;
+      const results = data.results
+        .filter((r: any) => r.url && r.title && !r.url.includes(host))
+        .slice(0, maxResults)
+        .map((r: any) => ({ title: r.title, url: r.url, snippet: r.content || "" }));
 
-  // Grab ALL external links with text >= 5 chars, excluding duckduckgo.com URLs
-  const linkRegex = /href="(https?:\/\/(?!.*duckduckgo\.com)[^"]+)"[^>]*>([^<]{5,})<\/a>/gi;
-  let m;
-  while ((m = linkRegex.exec(html)) !== null) {
-    const url = m[1].trim();
-    const title = m[2].trim();
-
-    // Skip "more info" links and empty titles
-    if (!title || title.toLowerCase() === "more info") continue;
-    // Deduplicate by URL
-    if (seen.has(url)) continue;
-    seen.add(url);
-
-    results.push({ title, url, snippet: "" });
-    if (results.length >= maxResults) break;
+      console.log("[search] SearXNG success from", instance, "—", results.length, "results");
+      return results;
+    } catch (e) {
+      console.log("[search] SearXNG failed:", instance, e instanceof Error ? e.message : "unknown");
+    }
   }
 
-  // Try to attach snippets from result-snippet cells
-  const snippetRegex = /<td[^>]*class="result-snippet"[^>]*>([\s\S]*?)<\/td>/gi;
-  const snippets: string[] = [];
-  while ((m = snippetRegex.exec(html)) !== null) {
-    snippets.push(m[1].replace(/<[^>]+>/g, "").trim());
-  }
-  for (let i = 0; i < Math.min(results.length, snippets.length); i++) {
-    results[i].snippet = snippets[i];
-  }
+  // Fallback: Bing HTML scraping
+  console.log("[search] All SearXNG instances failed, trying Bing...");
+  try {
+    const res = await fetch(`https://www.bing.com/search?q=${encodeURIComponent(query)}&count=${maxResults}`, {
+      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
+      signal: AbortSignal.timeout(10000),
+    });
+    const html = await res.text();
+    console.log("[search] Bing HTML length:", html.length);
 
-  console.log("[searchDDG] Found", results.length, "results for query:", query);
-  return results;
+    const results: Array<{ title: string; url: string; snippet: string }> = [];
+    const seen = new Set<string>();
+    // Parse <li class="b_algo"> blocks
+    const algoRegex = /<li class="b_algo">([\s\S]*?)<\/li>/gi;
+    let block;
+    while ((block = algoRegex.exec(html)) !== null && results.length < maxResults) {
+      const content = block[1];
+      const linkMatch = content.match(/<a[^>]+href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/i);
+      if (!linkMatch) continue;
+      const url = linkMatch[1];
+      if (seen.has(url) || url.includes("bing.com") || url.includes("microsoft.com")) continue;
+      seen.add(url);
+      const title = linkMatch[2].replace(/<[^>]+>/g, "").trim();
+      const snippetMatch = content.match(/<p[^>]*>([\s\S]*?)<\/p>/i);
+      const snippet = snippetMatch ? snippetMatch[1].replace(/<[^>]+>/g, "").trim() : "";
+      if (title.length > 3) results.push({ title, url, snippet });
+    }
+    console.log("[search] Bing found", results.length, "results");
+    return results;
+  } catch (e) {
+    console.error("[search] Bing fallback failed:", e instanceof Error ? e.message : "unknown");
+    return [];
+  }
 }
 
 // ========== Hono App ==========
