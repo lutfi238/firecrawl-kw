@@ -1,14 +1,11 @@
 import { Hono } from "hono";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-// ========== Get GitHub PAT from settings table ==========
-async function getGithubPat(authHeader: string | null): Promise<string | null> {
+// ========== Get AI provider settings from settings table ==========
+async function getAiSettings(authHeader: string | null): Promise<{ baseUrl: string; apiKey: string; model: string } | null> {
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
   const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY");
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !authHeader) {
-    console.log("[PAT] Missing env or auth:", { hasUrl: !!SUPABASE_URL, hasKey: !!SUPABASE_ANON_KEY, hasAuth: !!authHeader });
-    return null;
-  }
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !authHeader) return null;
 
   try {
     const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
@@ -16,21 +13,28 @@ async function getGithubPat(authHeader: string | null): Promise<string | null> {
       auth: { autoRefreshToken: false, persistSession: false },
     });
 
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
-    console.log("[PAT] Auth user:", user?.id ?? "none", "error:", userError?.message ?? "none");
+    const { data: { user } } = await supabase.auth.getUser();
     if (!user) return null;
 
     const { data, error } = await supabase
       .from("settings")
-      .select("value")
-      .eq("key", "github_pat")
+      .select("key, value")
       .eq("user_id", user.id)
-      .maybeSingle();
+      .in("key", ["ai_base_url", "ai_api_key", "ai_model"]);
 
-    console.log("[PAT] Query result:", { hasData: !!data, valuePrefix: data?.value ? data.value.slice(0, 8) + "..." : "null", error: error?.message ?? "none" });
-    return data?.value ?? null;
-  } catch (e) {
-    console.error("[PAT] Error:", e instanceof Error ? e.message : "unknown");
+    if (error || !data) return null;
+
+    const map: Record<string, string> = {};
+    for (const row of data) map[row.key] = row.value ?? "";
+
+    if (!map.ai_api_key) return null;
+
+    return {
+      baseUrl: map.ai_base_url || "https://api.openai.com/v1",
+      apiKey: map.ai_api_key,
+      model: map.ai_model || "gpt-4o-mini",
+    };
+  } catch {
     return null;
   }
 }
