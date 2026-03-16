@@ -139,18 +139,37 @@ async function searchWeb(query: string, maxResults: number): Promise<Array<{ tit
         const item = m[1];
         const titleMatch = item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>|<title>(.*?)<\/title>/i);
         const linkMatch = item.match(/<link>(.*?)<\/link>|<guid>(https?[^<]+)<\/guid>/i);
-        const descMatch = item.match(/<description><!\[CDATA\[(.*?)\]\]><\/description>|<description>(.*?)<\/description>/i);
+        const descMatch = item.match(/<description><!\[CDATA\[([\s\S]*?)\]\]><\/description>|<description>([\s\S]*?)<\/description>/i);
+        // Google News RSS has <source url="actual-url"> with the real article URL
+        const sourceMatch = item.match(/<source[^>]+url="(https?:\/\/[^"]+)"/i);
 
         if (titleMatch && linkMatch) {
           const title = (titleMatch[1] || titleMatch[2] || "").trim();
-          const linkUrl = (linkMatch[1] || linkMatch[2] || "").trim();
-          const snippet = (descMatch?.[1] || descMatch?.[2] || "").replace(/<[^>]+>/g, "").trim().slice(0, 200);
+          const rawLink = (linkMatch[1] || linkMatch[2] || "").trim();
+          // Prefer <source url="..."> (actual article URL) over Google redirect link
+          const linkUrl = sourceMatch ? sourceMatch[1] : rawLink;
+
+          // Clean snippet: decode entities, strip HTML, trim
+          let snippet = (descMatch?.[1] || descMatch?.[2] || "");
+          snippet = snippet
+            .replace(/&lt;/g, "<")
+            .replace(/&gt;/g, ">")
+            .replace(/&amp;/g, "&")
+            .replace(/&quot;/g, '"')
+            .replace(/&#39;/g, "'")
+            .replace(/&nbsp;/g, " ")
+            .replace(/<[^>]+>/g, "")
+            .trim()
+            .slice(0, 200);
+          // If snippet is mostly garbage (too short or just whitespace), use empty
+          if (snippet.length < 10) snippet = "";
 
           if (linkUrl && !seen.has(linkUrl) && title) {
             seen.add(linkUrl);
             items.push({ title, url: linkUrl, snippet });
           }
         }
+      }
       }
 
       console.log("[search] RSS found", items.length, "results from", url);
