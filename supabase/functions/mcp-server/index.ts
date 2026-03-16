@@ -246,7 +246,7 @@ app.post("/*", async (c) => {
 
       switch (name) {
         case "search": {
-          const results = await searchDDG(args.query, args.maxResults || 10);
+          const results = await searchWeb(args.query, args.maxResults || 10);
           result = { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
           break;
         }
