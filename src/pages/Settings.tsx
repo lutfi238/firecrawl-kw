@@ -76,30 +76,35 @@ export default function Settings() {
             </div>
           </div>
         </div>
-        {!githubToken && (
-          <div className="mt-4 rounded-md border border-cyber-amber/30 bg-cyber-amber/5 p-3">
-            <div className="flex items-start gap-2">
-              <AlertCircle className="h-4 w-4 text-cyber-amber mt-0.5" />
-              <div>
-                <p className="text-xs text-cyber-amber font-medium">GitHub token not available</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Re-authenticate to grant Copilot API access. The token is only available immediately after login.
-                </p>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="mt-2 gap-1.5 text-xs border-cyber-amber/30"
-                  onClick={() => {
-                    const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/github-auth?redirect_uri=${encodeURIComponent(window.location.origin)}`;
-                    window.location.href = url;
-                  }}
-                >
-                  <RefreshCw className="h-3 w-3" /> Re-authenticate
-                </Button>
+        <div className="mt-4 flex flex-col gap-3">
+          {!githubToken && (
+            <div className="rounded-md border border-cyber-amber/30 bg-cyber-amber/5 p-3">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="h-4 w-4 text-cyber-amber mt-0.5" />
+                <div>
+                  <p className="text-xs text-cyber-amber font-medium">GitHub token not available</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Re-authenticate to grant Copilot API access.
+                  </p>
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          )}
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-1.5 text-xs border-border w-fit"
+            onClick={() => {
+              const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/github-auth?redirect_uri=${encodeURIComponent(window.location.origin)}`;
+              window.location.href = url;
+            }}
+          >
+            <RefreshCw className="h-3 w-3" /> Re-authenticate with GitHub
+          </Button>
+          <p className="text-xs text-muted-foreground">
+            Re-login to refresh your GitHub token with Copilot scopes.
+          </p>
+        </div>
       </GlassCard>
 
       {/* Railway Config */}
