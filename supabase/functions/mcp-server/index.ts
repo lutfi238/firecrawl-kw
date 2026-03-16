@@ -382,12 +382,15 @@ app.post("/*", async (c) => {
           break;
         }
         case "extract": {
-          if (!currentGithubToken) {
-            result = { content: [{ type: "text", text: "Error: X-GitHub-Token header required for extract tool." }], isError: true };
+          // Try PAT from settings table first, then fall back to OAuth token header
+          const pat = await getGithubPat(currentAuthHeader);
+          const tokenForCopilot = pat || currentGithubToken;
+          if (!tokenForCopilot) {
+            result = { content: [{ type: "text", text: "Error: GitHub PAT not configured. Go to Settings and add your GitHub Personal Access Token with 'copilot' scope." }], isError: true };
           } else {
             const { markdown } = await scrapeUrl(args.url);
             const truncated = markdown.slice(0, 12000);
-            const copilotToken = await getCopilotToken(currentGithubToken);
+            const copilotToken = await getCopilotToken(tokenForCopilot);
             const systemPrompt = args.schema
               ? `Extract the requested data from the web page content. Return valid JSON matching this schema: ${args.schema}`
               : "Extract the requested data from the web page content. Return structured JSON.";

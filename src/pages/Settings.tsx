@@ -132,6 +132,50 @@ export default function Settings() {
         </div>
       </GlassCard>
 
+      {/* GitHub PAT for Copilot */}
+      <GlassCard>
+        <h2 className="text-xs font-mono uppercase tracking-widest text-muted-foreground mb-4 font-semibold">Copilot API Access</h2>
+        <p className="text-xs text-muted-foreground mb-4">
+          The extract tool requires a GitHub Personal Access Token (classic) with the <code className="text-primary">copilot</code> scope.
+          Generate one at{" "}
+          <a
+            href="https://github.com/settings/tokens/new?scopes=copilot&description=Firecrawl+MCP+Copilot"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-primary underline underline-offset-2"
+          >
+            github.com/settings/tokens
+          </a>
+        </p>
+        <div className="space-y-3">
+          <div>
+            <Label className="text-xs font-mono text-muted-foreground">GitHub PAT</Label>
+            <Input
+              type="password"
+              value={githubPat}
+              onChange={(e) => setGithubPat(e.target.value)}
+              placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+              className="font-mono text-sm bg-background/50 border-border"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleSavePat}
+              disabled={!githubPat || savingPat}
+              className="text-xs font-mono border-border gap-1.5"
+            >
+              {savingPat ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />}
+              Save PAT
+            </Button>
+            {settings.github_pat && (
+              <StatusBadge status="success" label="PAT SAVED" />
+            )}
+          </div>
+        </div>
+      </GlassCard>
+
       {/* Railway Config */}
       <GlassCard>
         <h2 className="text-xs font-mono uppercase tracking-widest text-muted-foreground mb-4 font-semibold">Railway Renderer</h2>
