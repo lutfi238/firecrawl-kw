@@ -35,6 +35,9 @@ export default function Settings() {
     if (settings.railway_url) setRailwayUrl(settings.railway_url);
     if (settings.railway_secret) setRailwaySecret(settings.railway_secret);
     if (settings.github_pat) setGithubPat(settings.github_pat);
+    if (settings.ai_base_url) setAiBaseUrl(settings.ai_base_url);
+    if (settings.ai_api_key) setAiApiKey(settings.ai_api_key);
+    if (settings.ai_model) setAiModel(settings.ai_model);
   });
 
   const handleSavePat = async () => {
