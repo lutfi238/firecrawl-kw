@@ -111,73 +111,57 @@ async function scrapeUrl(url: string): Promise<{ markdown: string; title: string
   return { markdown: htmlToMarkdown(html), title };
 }
 
-// ========== Web Search (SearXNG + Bing fallback) ==========
-const SEARXNG_INSTANCES = [
-  "https://searx.be",
-  "https://search.bus-hit.me",
-  "https://searxng.site",
-];
-
+// ========== Web Search (RSS-based) ==========
 async function searchWeb(query: string, maxResults: number): Promise<Array<{ title: string; url: string; snippet: string }>> {
-  // Try SearXNG instances first (JSON API)
-  for (const instance of SEARXNG_INSTANCES) {
+  const encoded = encodeURIComponent(query);
+
+  const sources = [
+    `https://news.google.com/rss/search?q=${encoded}&hl=en&gl=US&ceid=US:en`,
+    `https://www.bing.com/news/search?q=${encoded}&format=rss`,
+  ];
+
+  for (const url of sources) {
     try {
-      const url = `${instance}/search?q=${encodeURIComponent(query)}&format=json&categories=general`;
-      console.log("[search] Trying SearXNG:", url);
+      console.log("[search] Trying RSS source:", url);
       const res = await fetch(url, {
-        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", "Accept": "application/json" },
-        signal: AbortSignal.timeout(8000),
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; RSS/2.0)" },
+        signal: AbortSignal.timeout(10000),
       });
-      if (!res.ok) { console.log("[search] SearXNG returned", res.status); continue; }
-      const data = await res.json();
-      if (!data.results || !Array.isArray(data.results) || data.results.length === 0) { console.log("[search] SearXNG returned no results"); continue; }
+      if (!res.ok) { console.log("[search] RSS returned", res.status); continue; }
+      const xml = await res.text();
+      console.log("[search] RSS XML length:", xml.length, "preview:", xml.slice(0, 1000));
 
-      const host = new URL(instance).hostname;
-      const results = data.results
-        .filter((r: any) => r.url && r.title && !r.url.includes(host))
-        .slice(0, maxResults)
-        .map((r: any) => ({ title: r.title, url: r.url, snippet: r.content || "" }));
+      const items: Array<{ title: string; url: string; snippet: string }> = [];
+      const seen = new Set<string>();
+      const itemRegex = /<item>([\s\S]*?)<\/item>/gi;
+      let m;
+      while ((m = itemRegex.exec(xml)) !== null && items.length < maxResults) {
+        const item = m[1];
+        const titleMatch = item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>|<title>(.*?)<\/title>/i);
+        const linkMatch = item.match(/<link>(.*?)<\/link>|<guid>(https?[^<]+)<\/guid>/i);
+        const descMatch = item.match(/<description><!\[CDATA\[(.*?)\]\]><\/description>|<description>(.*?)<\/description>/i);
 
-      console.log("[search] SearXNG success from", instance, "—", results.length, "results");
-      return results;
+        if (titleMatch && linkMatch) {
+          const title = (titleMatch[1] || titleMatch[2] || "").trim();
+          const linkUrl = (linkMatch[1] || linkMatch[2] || "").trim();
+          const snippet = (descMatch?.[1] || descMatch?.[2] || "").replace(/<[^>]+>/g, "").trim().slice(0, 200);
+
+          if (linkUrl && !seen.has(linkUrl) && title) {
+            seen.add(linkUrl);
+            items.push({ title, url: linkUrl, snippet });
+          }
+        }
+      }
+
+      console.log("[search] RSS found", items.length, "results from", url);
+      if (items.length > 0) return items;
     } catch (e) {
-      console.log("[search] SearXNG failed:", instance, e instanceof Error ? e.message : "unknown");
+      console.log("[search] RSS failed:", url, e instanceof Error ? e.message : "unknown");
     }
   }
 
-  // Fallback: Bing HTML scraping
-  console.log("[search] All SearXNG instances failed, trying Bing...");
-  try {
-    const res = await fetch(`https://www.bing.com/search?q=${encodeURIComponent(query)}&count=${maxResults}`, {
-      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
-      signal: AbortSignal.timeout(10000),
-    });
-    const html = await res.text();
-    console.log("[search] Bing HTML length:", html.length);
-
-    const results: Array<{ title: string; url: string; snippet: string }> = [];
-    const seen = new Set<string>();
-    // Parse <li class="b_algo"> blocks
-    const algoRegex = /<li class="b_algo">([\s\S]*?)<\/li>/gi;
-    let block;
-    while ((block = algoRegex.exec(html)) !== null && results.length < maxResults) {
-      const content = block[1];
-      const linkMatch = content.match(/<a[^>]+href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/i);
-      if (!linkMatch) continue;
-      const url = linkMatch[1];
-      if (seen.has(url) || url.includes("bing.com") || url.includes("microsoft.com")) continue;
-      seen.add(url);
-      const title = linkMatch[2].replace(/<[^>]+>/g, "").trim();
-      const snippetMatch = content.match(/<p[^>]*>([\s\S]*?)<\/p>/i);
-      const snippet = snippetMatch ? snippetMatch[1].replace(/<[^>]+>/g, "").trim() : "";
-      if (title.length > 3) results.push({ title, url, snippet });
-    }
-    console.log("[search] Bing found", results.length, "results");
-    return results;
-  } catch (e) {
-    console.error("[search] Bing fallback failed:", e instanceof Error ? e.message : "unknown");
-    return [];
-  }
+  console.log("[search] All RSS sources failed, returning empty");
+  return [];
 }
 
 // ========== Hono App ==========
