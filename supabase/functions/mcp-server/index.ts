@@ -368,34 +368,26 @@ app.post("/*", async (c) => {
           break;
         }
         case "extract": {
-          const pat = await getGithubPat(currentAuthHeader);
-          console.log("[extract] PAT found:", !!pat);
-          if (!pat) {
-            result = { content: [{ type: "text", text: "Error: GitHub PAT not configured. Go to Settings and add your GitHub Personal Access Token with 'copilot' scope." }], isError: true };
+          const aiSettings = await getAiSettings(currentAuthHeader);
+          if (!aiSettings) {
+            result = { content: [{ type: "text", text: "Error: AI provider not configured. Go to Settings → AI Provider and add your API key." }], isError: true };
           } else {
             const { markdown } = await scrapeUrl(args.url);
             const truncated = markdown.slice(0, 12000);
             const systemPrompt = args.schema
               ? `Extract the requested data from the web page content. Return valid JSON matching this schema: ${args.schema}`
               : "Extract the requested data from the web page content. Return structured JSON.";
-            console.log("[extract] Calling Copilot API with PAT directly");
-            const aiRes = await fetch("https://api.githubcopilot.com/chat/completions", {
+            const aiRes = await fetch(`${aiSettings.baseUrl}/chat/completions`, {
               method: "POST",
               headers: {
-                Authorization: `Bearer ${pat}`,
+                Authorization: `Bearer ${aiSettings.apiKey}`,
                 "Content-Type": "application/json",
-                "User-Agent": "GitHubCopilot/1.155.0",
-                "Editor-Version": "vscode/1.85.0",
-                "Editor-Plugin-Version": "copilot-chat/0.11.1",
-                "Copilot-Integration-Id": "vscode-chat",
-                "OpenAI-Intent": "conversation-panel",
               },
-              body: JSON.stringify({ model: "claude-haiku-4-5", messages: [{ role: "system", content: systemPrompt }, { role: "user", content: `${args.prompt}\n\n---PAGE CONTENT---\n${truncated}` }], max_tokens: 4096 }),
+              body: JSON.stringify({ model: aiSettings.model, messages: [{ role: "system", content: systemPrompt }, { role: "user", content: `${args.prompt}\n\n---PAGE CONTENT---\n${truncated}` }], max_tokens: 4096 }),
             });
             const aiBody = await aiRes.text();
-            console.log("[extract] Copilot response:", aiRes.status, aiBody.slice(0, 500));
             if (!aiRes.ok) {
-              result = { content: [{ type: "text", text: `Copilot API error ${aiRes.status}: ${aiBody.slice(0, 300)}` }], isError: true };
+              result = { content: [{ type: "text", text: `AI API error ${aiRes.status}: ${aiBody.slice(0, 300)}` }], isError: true };
             } else {
               const aiData = JSON.parse(aiBody);
               const answer = aiData.choices?.[0]?.message?.content ?? "No response";

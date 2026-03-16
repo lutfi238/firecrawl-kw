@@ -196,6 +196,57 @@ export default function Settings() {
         </div>
       </GlassCard>
 
+      {/* AI Provider */}
+      <GlassCard>
+        <h2 className="text-xs font-mono uppercase tracking-widest text-muted-foreground mb-4 font-semibold">AI Provider (Extract Tool)</h2>
+        <p className="text-xs text-muted-foreground mb-4">
+          Any OpenAI-compatible API. Examples: Groq (<code className="text-primary">https://api.groq.com/openai/v1</code>), DeepSeek, OpenRouter, OpenAI.
+        </p>
+        <div className="space-y-3">
+          <div>
+            <Label className="text-xs font-mono text-muted-foreground">Base URL</Label>
+            <Input
+              value={aiBaseUrl}
+              onChange={(e) => setAiBaseUrl(e.target.value)}
+              placeholder="https://api.openai.com/v1"
+              className="font-mono text-sm bg-background/50 border-border"
+            />
+          </div>
+          <div>
+            <Label className="text-xs font-mono text-muted-foreground">API Key</Label>
+            <Input
+              type="password"
+              value={aiApiKey}
+              onChange={(e) => setAiApiKey(e.target.value)}
+              placeholder="sk-..."
+              className="font-mono text-sm bg-background/50 border-border"
+            />
+          </div>
+          <div>
+            <Label className="text-xs font-mono text-muted-foreground">Model</Label>
+            <Input
+              value={aiModel}
+              onChange={(e) => setAiModel(e.target.value)}
+              placeholder="gpt-4o-mini"
+              className="font-mono text-sm bg-background/50 border-border"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleSaveAi}
+              disabled={!aiApiKey || savingAi}
+              className="text-xs font-mono border-border gap-1.5"
+            >
+              {savingAi ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />}
+              Save
+            </Button>
+            {settings.ai_api_key && <StatusBadge status="success" label="CONFIGURED" />}
+          </div>
+        </div>
+      </GlassCard>
+
       {/* Railway Config */}
       <GlassCard>
         <h2 className="text-xs font-mono uppercase tracking-widest text-muted-foreground mb-4 font-semibold">Railway Renderer</h2>
