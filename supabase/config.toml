@@ -1,1 +1,7 @@
 project_id = "pvbkvntrofpmcwgmmacv"
+
+[functions.mcp-server]
+verify_jwt = false
+
+[functions.mcp-logs]
+verify_jwt = false
