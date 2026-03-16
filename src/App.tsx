@@ -18,22 +18,73 @@ import NotFound from "@/pages/NotFound";
 
 const queryClient = new QueryClient();
 
+/** Handle custom GitHub OAuth callback: verifyOtp then load GitHub token from DB */
+async function handleOAuthCallback() {
+  const params = new URLSearchParams(window.location.search);
+  const tokenHash = params.get("token_hash");
+  const type = params.get("type");
+  const authError = params.get("auth_error");
+
+  if (authError) {
+    console.error("GitHub auth error:", authError);
+    // Clean URL
+    window.history.replaceState({}, "", window.location.pathname);
+    return;
+  }
+
+  if (tokenHash && type === "magiclink") {
+    const { error } = await supabase.auth.verifyOtp({
+      token_hash: tokenHash,
+      type: "magiclink",
+    });
+    if (error) {
+      console.error("OTP verification failed:", error.message);
+    }
+    // Clean URL
+    window.history.replaceState({}, "", window.location.pathname);
+  }
+}
+
 function AuthListener() {
   const { setSession, setLoading } = useAuthStore();
 
   useEffect(() => {
+    // Handle OAuth callback first
+    handleOAuthCallback();
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event, session) => {
+      async (_event, session) => {
         const user = session?.user ?? null;
-        const providerToken = session?.provider_token ?? null;
-        setSession(user, providerToken);
+
+        // Load GitHub token from settings table instead of provider_token
+        let githubToken: string | null = null;
+        if (user) {
+          const { data } = await supabase
+            .from("settings")
+            .select("value")
+            .eq("key", "github_token")
+            .maybeSingle();
+          githubToken = data?.value ?? null;
+        }
+
+        setSession(user, githubToken);
       }
     );
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       const user = session?.user ?? null;
-      const providerToken = session?.provider_token ?? null;
-      setSession(user, providerToken);
+
+      let githubToken: string | null = null;
+      if (user) {
+        const { data } = await supabase
+          .from("settings")
+          .select("value")
+          .eq("key", "github_token")
+          .maybeSingle();
+        githubToken = data?.value ?? null;
+      }
+
+      setSession(user, githubToken);
     });
 
     return () => subscription.unsubscribe();
