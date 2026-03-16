@@ -22,6 +22,10 @@ export default function Settings() {
   const [savingPat, setSavingPat] = useState(false);
   const [testingRailway, setTestingRailway] = useState(false);
   const [railwayStatus, setRailwayStatus] = useState<"online" | "offline" | null>(null);
+  const [aiBaseUrl, setAiBaseUrl] = useState("https://api.openai.com/v1");
+  const [aiApiKey, setAiApiKey] = useState("");
+  const [aiModel, setAiModel] = useState("gpt-4o-mini");
+  const [savingAi, setSavingAi] = useState(false);
 
   const avatarUrl = user?.user_metadata?.avatar_url;
   const username = user?.user_metadata?.user_name ?? user?.email?.split("@")[0] ?? "User";
@@ -31,6 +35,9 @@ export default function Settings() {
     if (settings.railway_url) setRailwayUrl(settings.railway_url);
     if (settings.railway_secret) setRailwaySecret(settings.railway_secret);
     if (settings.github_pat) setGithubPat(settings.github_pat);
+    if (settings.ai_base_url) setAiBaseUrl(settings.ai_base_url);
+    if (settings.ai_api_key) setAiApiKey(settings.ai_api_key);
+    if (settings.ai_model) setAiModel(settings.ai_model);
   });
 
   const handleSavePat = async () => {
@@ -42,6 +49,19 @@ export default function Settings() {
       toast.error("Failed to save PAT");
     }
     setSavingPat(false);
+  };
+
+  const handleSaveAi = async () => {
+    setSavingAi(true);
+    try {
+      await upsert.mutateAsync({ key: "ai_base_url", value: aiBaseUrl });
+      await upsert.mutateAsync({ key: "ai_api_key", value: aiApiKey });
+      await upsert.mutateAsync({ key: "ai_model", value: aiModel });
+      toast.success("AI provider config saved");
+    } catch {
+      toast.error("Failed to save AI config");
+    }
+    setSavingAi(false);
   };
 
   const handleSaveRailway = async () => {
@@ -172,6 +192,57 @@ export default function Settings() {
             {settings.github_pat && (
               <StatusBadge status="success" label="PAT SAVED" />
             )}
+          </div>
+        </div>
+      </GlassCard>
+
+      {/* AI Provider */}
+      <GlassCard>
+        <h2 className="text-xs font-mono uppercase tracking-widest text-muted-foreground mb-4 font-semibold">AI Provider (Extract Tool)</h2>
+        <p className="text-xs text-muted-foreground mb-4">
+          Any OpenAI-compatible API. Examples: Groq (<code className="text-primary">https://api.groq.com/openai/v1</code>), DeepSeek, OpenRouter, OpenAI.
+        </p>
+        <div className="space-y-3">
+          <div>
+            <Label className="text-xs font-mono text-muted-foreground">Base URL</Label>
+            <Input
+              value={aiBaseUrl}
+              onChange={(e) => setAiBaseUrl(e.target.value)}
+              placeholder="https://api.openai.com/v1"
+              className="font-mono text-sm bg-background/50 border-border"
+            />
+          </div>
+          <div>
+            <Label className="text-xs font-mono text-muted-foreground">API Key</Label>
+            <Input
+              type="password"
+              value={aiApiKey}
+              onChange={(e) => setAiApiKey(e.target.value)}
+              placeholder="sk-..."
+              className="font-mono text-sm bg-background/50 border-border"
+            />
+          </div>
+          <div>
+            <Label className="text-xs font-mono text-muted-foreground">Model</Label>
+            <Input
+              value={aiModel}
+              onChange={(e) => setAiModel(e.target.value)}
+              placeholder="gpt-4o-mini"
+              className="font-mono text-sm bg-background/50 border-border"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleSaveAi}
+              disabled={!aiApiKey || savingAi}
+              className="text-xs font-mono border-border gap-1.5"
+            >
+              {savingAi ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />}
+              Save
+            </Button>
+            {settings.ai_api_key && <StatusBadge status="success" label="CONFIGURED" />}
           </div>
         </div>
       </GlassCard>
