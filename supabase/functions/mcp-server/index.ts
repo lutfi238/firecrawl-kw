@@ -158,10 +158,6 @@ async function searchDDG(query: string, maxResults: number): Promise<Array<{ tit
 const app = new Hono();
 
 
-// Register tool handlers by re-implementing dispatch
-// We'll use mcpServer's internal tool list via a direct approach
-// Since mcp-lite transport is broken, handle JSON-RPC manually
-
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-github-token, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
