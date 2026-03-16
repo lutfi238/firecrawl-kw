@@ -9,8 +9,29 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Github, RefreshCw, Trash2, CheckCircle, AlertCircle, Loader2 } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Github, RefreshCw, Trash2, CheckCircle, AlertCircle, Loader2, Bot, Sparkles } from "lucide-react";
 import { toast } from "sonner";
+
+const AI_PROVIDERS = [
+  { label: "OpenAI Compatible", baseUrl: "", model: "", icon: "🔌" },
+  { label: "OpenAI", baseUrl: "https://api.openai.com/v1", model: "gpt-4o-mini", icon: "🤖" },
+  { label: "Anthropic", baseUrl: "https://api.anthropic.com/v1", model: "claude-3-5-haiku-20241022", icon: "🧠" },
+  { label: "MiniMax", baseUrl: "https://api.minimax.chat/v1", model: "MiniMax-Text-01", icon: "⚡" },
+  { label: "Google Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", model: "gemini-2.0-flash", icon: "💎" },
+  { label: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat", icon: "🔍" },
+  { label: "Grok (xAI)", baseUrl: "https://api.x.ai/v1", model: "grok-2-latest", icon: "⚔️" },
+  { label: "Groq", baseUrl: "https://api.groq.com/openai/v1", model: "llama-3.1-8b-instant", icon: "🚀" },
+  { label: "Perplexity", baseUrl: "https://api.perplexity.ai", model: "sonar", icon: "🔮" },
+  { label: "Mistral", baseUrl: "https://api.mistral.ai/v1", model: "mistral-small-latest", icon: "🌬️" },
+  { label: "Cohere", baseUrl: "https://api.cohere.ai/compatibility/v1", model: "command-r-plus", icon: "🧬" },
+  { label: "HuggingFace", baseUrl: "https://api-inference.huggingface.co/v1", model: "meta-llama/Llama-3.1-8B-Instruct", icon: "🤗" },
+  { label: "Together AI", baseUrl: "https://api.together.xyz/v1", model: "meta-llama/Llama-3.1-8B-Instruct-Turbo", icon: "🤝" },
+  { label: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", model: "openai/gpt-4o-mini", icon: "🛤️" },
+  { label: "Ollama (Local)", baseUrl: "http://localhost:11434/v1", model: "llama3.2", icon: "🏠" },
+  { label: "GitHub Copilot", baseUrl: "https://api.githubcopilot.com", model: "claude-haiku-4-5", icon: "🐙" },
+  { label: "Z.ai (Zhipu)", baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4-flash", icon: "🇨🇳" },
+];
 
 export default function Settings() {
   const { user, githubToken } = useAuthStore();
@@ -22,6 +43,7 @@ export default function Settings() {
   const [savingPat, setSavingPat] = useState(false);
   const [testingRailway, setTestingRailway] = useState(false);
   const [railwayStatus, setRailwayStatus] = useState<"online" | "offline" | null>(null);
+  const [aiProvider, setAiProvider] = useState("OpenAI");
   const [aiBaseUrl, setAiBaseUrl] = useState("https://api.openai.com/v1");
   const [aiApiKey, setAiApiKey] = useState("");
   const [aiModel, setAiModel] = useState("gpt-4o-mini");
@@ -35,10 +57,19 @@ export default function Settings() {
     if (settings.railway_url) setRailwayUrl(settings.railway_url);
     if (settings.railway_secret) setRailwaySecret(settings.railway_secret);
     if (settings.github_pat) setGithubPat(settings.github_pat);
+    if (settings.ai_provider) setAiProvider(settings.ai_provider);
     if (settings.ai_base_url) setAiBaseUrl(settings.ai_base_url);
     if (settings.ai_api_key) setAiApiKey(settings.ai_api_key);
     if (settings.ai_model) setAiModel(settings.ai_model);
   });
+
+  const handleSelectProvider = (label: string) => {
+    const provider = AI_PROVIDERS.find((p) => p.label === label);
+    if (!provider) return;
+    setAiProvider(label);
+    setAiBaseUrl(provider.baseUrl);
+    setAiModel(provider.model);
+  };
 
   const handleSavePat = async () => {
     setSavingPat(true);
@@ -54,6 +85,7 @@ export default function Settings() {
   const handleSaveAi = async () => {
     setSavingAi(true);
     try {
+      await upsert.mutateAsync({ key: "ai_provider", value: aiProvider });
       await upsert.mutateAsync({ key: "ai_base_url", value: aiBaseUrl });
       await upsert.mutateAsync({ key: "ai_api_key", value: aiApiKey });
       await upsert.mutateAsync({ key: "ai_model", value: aiModel });
@@ -198,11 +230,40 @@ export default function Settings() {
 
       {/* AI Provider */}
       <GlassCard>
-        <h2 className="text-xs font-mono uppercase tracking-widest text-muted-foreground mb-4 font-semibold">AI Provider (Extract Tool)</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xs font-mono uppercase tracking-widest text-muted-foreground font-semibold flex items-center gap-2">
+            <Sparkles className="h-3.5 w-3.5 text-primary" />
+            AI Provider (Extract Tool)
+          </h2>
+          {settings.ai_provider && (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/40 bg-primary/10 px-2.5 py-0.5 text-xs font-mono font-semibold text-primary shadow-[0_0_8px_hsl(var(--primary)/0.25)]">
+              {AI_PROVIDERS.find((p) => p.label === settings.ai_provider)?.icon ?? "🔌"}{" "}
+              {settings.ai_provider}
+            </span>
+          )}
+        </div>
         <p className="text-xs text-muted-foreground mb-4">
-          Any OpenAI-compatible API. Examples: Groq (<code className="text-primary">https://api.groq.com/openai/v1</code>), DeepSeek, OpenRouter, OpenAI.
+          Select a provider or choose "OpenAI Compatible" to enter a custom endpoint.
         </p>
         <div className="space-y-3">
+          <div>
+            <Label className="text-xs font-mono text-muted-foreground">Provider</Label>
+            <Select value={aiProvider} onValueChange={handleSelectProvider}>
+              <SelectTrigger className="font-mono text-sm bg-background/50 border-primary/30 focus:ring-primary/50 shadow-[0_0_6px_hsl(var(--primary)/0.1)]">
+                <SelectValue placeholder="Select provider…" />
+              </SelectTrigger>
+              <SelectContent className="max-h-64 bg-card border-primary/20">
+                {AI_PROVIDERS.map((p) => (
+                  <SelectItem key={p.label} value={p.label} className="font-mono text-sm">
+                    <span className="flex items-center gap-2">
+                      <span>{p.icon}</span>
+                      <span>{p.label}</span>
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
           <div>
             <Label className="text-xs font-mono text-muted-foreground">Base URL</Label>
             <Input
@@ -237,10 +298,10 @@ export default function Settings() {
               size="sm"
               onClick={handleSaveAi}
               disabled={!aiApiKey || savingAi}
-              className="text-xs font-mono border-border gap-1.5"
+              className="text-xs font-mono border-primary/30 gap-1.5 hover:bg-primary/10 hover:border-primary/50"
             >
               {savingAi ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />}
-              Save
+              Save Provider Settings
             </Button>
             {settings.ai_api_key && <StatusBadge status="success" label="CONFIGURED" />}
           </div>
