@@ -56,6 +56,7 @@ const AGENT_STEPS = [
   { key: "extracting", label: "Extracting" },
   { key: "synthesizing", label: "Synthesizing" },
   { key: "completed", label: "Completed" },
+  { key: "failed", label: "Failed" },
 ] as const;
 
 const TERMINAL_STATUSES = new Set(["completed", "failed"]);
@@ -140,7 +141,7 @@ function jobStatusToBadge(status?: string): "online" | "offline" | "pending" | "
     case "failed": return "error";
     case "processing": return "pending";
     case "pending": return "pending";
-    default: return "offline"; // unknown status → offline/gray
+    default: return "pending"; // unknown status → neutral pending
   }
 }
 
@@ -195,25 +196,33 @@ function ProgressStepper({ currentStep, status }: { currentStep?: string; status
   const isFailed = status === "failed";
   const isCompleted = status === "completed";
 
-  // For failed: highlight the step where it failed, mark prior as done
-  // For completed: all steps done
-  // For in-progress: active step highlighted, prior done
+  const failedIdx = AGENT_STEPS.findIndex((s) => s.key === "failed");
+  const completedIdx = AGENT_STEPS.findIndex((s) => s.key === "completed");
+
   const activeIdx = isCompleted
-    ? AGENT_STEPS.length - 1
+    ? completedIdx
     : isFailed
-      ? getStepIndex(currentStep)
+      ? failedIdx
       : getStepIndex(currentStep);
+
+  // The step the job was on when it failed
+  const failedAtIdx = isFailed ? getStepIndex(currentStep) : -1;
 
   return (
     <div className="flex items-center gap-1 w-full overflow-x-auto py-2">
       {AGENT_STEPS.map((step, i) => {
+        // Hide "failed" step unless job actually failed
+        if (step.key === "failed" && !isFailed) return null;
+        // Hide "completed" step if job failed
+        if (step.key === "completed" && isFailed) return null;
+
         const isDone = isCompleted
-          ? true
+          ? i <= completedIdx
           : isFailed
-            ? i < activeIdx // steps before the failed step are done
+            ? i < failedAtIdx || (failedAtIdx === -1 && i < failedIdx)
             : i < activeIdx;
-        const isActive = !isCompleted && i === activeIdx;
-        const isFailedStep = isFailed && i === activeIdx;
+        const isActive = i === activeIdx;
+        const isFailedStep = isFailed && step.key === "failed";
 
         return (
           <div key={step.key} className="flex items-center gap-1 flex-1 min-w-0">
@@ -292,8 +301,8 @@ export function AgentJobMonitor({
   className,
 }: AgentJobMonitorProps) {
   const [autoRefresh, setAutoRefresh] = useState(false);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const refreshingRef = useRef(false);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelledRef = useRef(false);
 
   // Force re-render for relative timestamps
   const [, setTick] = useState(0);
@@ -305,33 +314,26 @@ export function AgentJobMonitor({
   const data = parseAgentData(result);
   const isTerminal = data?.status != null && TERMINAL_STATUSES.has(data.status);
 
-  // Wrap onRefresh to prevent overlapping calls
-  const safeRefresh = useCallback(() => {
-    if (refreshingRef.current || loading) return;
-    refreshingRef.current = true;
-    onRefresh();
-    // Reset guard after a short delay to allow the loading state to propagate
-    setTimeout(() => { refreshingRef.current = false; }, 500);
-  }, [onRefresh, loading]);
-
-  // Auto-refresh polling — only when enabled and not terminal
+  // Schedule next poll only after current refresh completes (recursive timeout)
   useEffect(() => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
+    if (!autoRefresh || isTerminal || loading) return;
 
-    if (autoRefresh && !isTerminal) {
-      intervalRef.current = setInterval(safeRefresh, 2000);
-    }
+    // When loading just finished (loading=false) and auto is on, schedule next
+    cancelledRef.current = false;
+    timeoutRef.current = setTimeout(() => {
+      if (!cancelledRef.current) {
+        onRefresh();
+      }
+    }, 2000);
 
     return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
+      cancelledRef.current = true;
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
       }
     };
-  }, [autoRefresh, isTerminal, safeRefresh]);
+  }, [autoRefresh, isTerminal, loading, onRefresh]);
 
   // Auto-stop on terminal state
   useEffect(() => {
@@ -339,6 +341,11 @@ export function AgentJobMonitor({
       setAutoRefresh(false);
     }
   }, [isTerminal, autoRefresh]);
+
+  // Manual refresh — safe because it just calls onRefresh directly
+  const safeRefresh = useCallback(() => {
+    if (!loading) onRefresh();
+  }, [onRefresh, loading]);
 
   // ─── Empty state ───
   if (!result && !error) {
