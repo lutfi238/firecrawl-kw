@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuthStore } from "@/stores/authStore";
 import { useSettings } from "@/hooks/useSettings";
 import { useRequestLogs } from "@/hooks/useRequestLogs";
@@ -9,6 +9,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Github, RefreshCw, Trash2, CheckCircle, AlertCircle, Loader2, Bot, Sparkles } from "lucide-react";
 import { toast } from "sonner";
@@ -37,12 +38,13 @@ export default function Settings() {
   const { user, githubToken } = useAuthStore();
   const { settings, upsert } = useSettings();
   const { clearLogs } = useRequestLogs();
-  const [railwayUrl, setRailwayUrl] = useState("");
-  const [railwaySecret, setRailwaySecret] = useState("");
+  const [renderUrl, setRenderUrl] = useState("");
+  const [renderSecret, setRenderSecret] = useState("");
+  const [rendererEnabled, setRendererEnabled] = useState(false);
   const [githubPat, setGithubPat] = useState("");
   const [savingPat, setSavingPat] = useState(false);
-  const [testingRailway, setTestingRailway] = useState(false);
-  const [railwayStatus, setRailwayStatus] = useState<"online" | "offline" | null>(null);
+  const [testingRenderer, setTestingRenderer] = useState(false);
+  const [rendererStatus, setRendererStatus] = useState<"online" | "offline" | null>(null);
   const [aiProvider, setAiProvider] = useState("OpenAI");
   const [aiBaseUrl, setAiBaseUrl] = useState("https://api.openai.com/v1");
   const [aiApiKey, setAiApiKey] = useState("");
@@ -53,15 +55,16 @@ export default function Settings() {
   const username = user?.user_metadata?.user_name ?? user?.email?.split("@")[0] ?? "User";
 
   // Initialize from settings
-  useState(() => {
-    if (settings.railway_url) setRailwayUrl(settings.railway_url);
-    if (settings.railway_secret) setRailwaySecret(settings.railway_secret);
+  useEffect(() => {
+    if (settings.renderer_url) setRenderUrl(settings.renderer_url);
+    if (settings.renderer_secret) setRenderSecret(settings.renderer_secret);
+    setRendererEnabled(settings.renderer_enabled === "true");
     if (settings.github_pat) setGithubPat(settings.github_pat);
     if (settings.ai_provider) setAiProvider(settings.ai_provider);
     if (settings.ai_base_url) setAiBaseUrl(settings.ai_base_url);
     if (settings.ai_api_key) setAiApiKey(settings.ai_api_key);
     if (settings.ai_model) setAiModel(settings.ai_model);
-  });
+  }, [settings]);
 
   const handleSelectProvider = (label: string) => {
     const provider = AI_PROVIDERS.find((p) => p.label === label);
@@ -96,26 +99,37 @@ export default function Settings() {
     setSavingAi(false);
   };
 
-  const handleSaveRailway = async () => {
+  const handleToggleRenderer = async (enabled: boolean) => {
+    setRendererEnabled(enabled);
     try {
-      await upsert.mutateAsync({ key: "railway_url", value: railwayUrl });
-      await upsert.mutateAsync({ key: "railway_secret", value: railwaySecret });
-      toast.success("Railway config saved");
+      await upsert.mutateAsync({ key: "renderer_enabled", value: enabled ? "true" : "false" });
+      toast.success(enabled ? "JS Renderer enabled" : "JS Renderer disabled");
+    } catch {
+      toast.error("Failed to save");
+      setRendererEnabled(!enabled);
+    }
+  };
+
+  const handleSaveRenderer = async () => {
+    try {
+      await upsert.mutateAsync({ key: "renderer_url", value: renderUrl });
+      await upsert.mutateAsync({ key: "renderer_secret", value: renderSecret });
+      toast.success("Renderer config saved");
     } catch {
       toast.error("Failed to save");
     }
   };
 
-  const handleTestRailway = async () => {
-    setTestingRailway(true);
-    setRailwayStatus(null);
+  const handleTestRenderer = async () => {
+    setTestingRenderer(true);
+    setRendererStatus(null);
     try {
-      const res = await fetch(`${railwayUrl}/health`);
-      setRailwayStatus(res.ok ? "online" : "offline");
+      const res = await fetch(`${renderUrl}/health`);
+      setRendererStatus(res.ok ? "online" : "offline");
     } catch {
-      setRailwayStatus("offline");
+      setRendererStatus("offline");
     }
-    setTestingRailway(false);
+    setTestingRenderer(false);
   };
 
   return (
@@ -308,47 +322,74 @@ export default function Settings() {
         </div>
       </GlassCard>
 
-      {/* Railway Config */}
+      {/* Render Renderer */}
       <GlassCard>
-        <h2 className="text-xs font-mono uppercase tracking-widest text-muted-foreground mb-4 font-semibold">Railway Renderer</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xs font-mono uppercase tracking-widest text-muted-foreground font-semibold">JS Renderer</h2>
+          <div className="flex items-center gap-3">
+            {rendererEnabled && (
+              <StatusBadge status="online" label="ACTIVE" />
+            )}
+            <div className="flex items-center gap-2">
+              <Label htmlFor="renderer-toggle" className="text-xs font-mono text-muted-foreground cursor-pointer">
+                Enable
+              </Label>
+              <Switch
+                id="renderer-toggle"
+                checked={rendererEnabled}
+                onCheckedChange={handleToggleRenderer}
+              />
+            </div>
+          </div>
+        </div>
         <p className="text-xs text-muted-foreground mb-4">
-          Optional Playwright renderer for JS-rendered scraping and screenshots. Deploy the renderer to Railway and paste the URL here.
+          Deploy your renderer to Render.com for free. Enables scrape_js and screenshot tools.
         </p>
         <div className="space-y-3">
           <div>
             <Label className="text-xs font-mono text-muted-foreground">Renderer URL</Label>
             <Input
-              value={railwayUrl}
-              onChange={(e) => setRailwayUrl(e.target.value)}
-              placeholder="https://your-renderer.railway.app"
+              value={renderUrl}
+              onChange={(e) => setRenderUrl(e.target.value)}
+              placeholder="https://your-renderer.onrender.com"
               className="font-mono text-sm bg-background/50 border-border"
+              disabled={!rendererEnabled}
             />
           </div>
           <div>
             <Label className="text-xs font-mono text-muted-foreground">Secret</Label>
             <Input
               type="password"
-              value={railwaySecret}
-              onChange={(e) => setRailwaySecret(e.target.value)}
+              value={renderSecret}
+              onChange={(e) => setRenderSecret(e.target.value)}
               placeholder="Optional shared secret"
               className="font-mono text-sm bg-background/50 border-border"
+              disabled={!rendererEnabled}
             />
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={handleSaveRailway} className="text-xs font-mono border-border gap-1.5">
-              Save
-            </Button>
             <Button
               variant="outline"
               size="sm"
-              onClick={handleTestRailway}
-              disabled={!railwayUrl || testingRailway}
+              onClick={handleSaveRenderer}
+              disabled={!rendererEnabled}
               className="text-xs font-mono border-border gap-1.5"
             >
-              {testingRailway ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
-              Test
+              Save
             </Button>
-            {railwayStatus && <StatusBadge status={railwayStatus} />}
+            {rendererEnabled && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleTestRenderer}
+                disabled={!renderUrl || testingRenderer}
+                className="text-xs font-mono border-border gap-1.5"
+              >
+                {testingRenderer ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                Test Connection
+              </Button>
+            )}
+            {rendererStatus && <StatusBadge status={rendererStatus === "online" ? "success" : "error"} label={rendererStatus === "online" ? "CONNECTED" : "ERROR"} />}
           </div>
         </div>
       </GlassCard>

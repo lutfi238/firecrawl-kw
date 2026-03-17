@@ -8,7 +8,7 @@ import { GlassCard } from "@/components/GlassCard";
 import { TOOL_DEFINITIONS } from "@/types/tools";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { XCircle } from "lucide-react";
+import { XCircle, AlertTriangle } from "lucide-react";
 import { Link } from "react-router-dom";
 
 export default function ToolTester() {
@@ -17,6 +17,9 @@ export default function ToolTester() {
   const { settings } = useSettings();
 
   const tool = TOOL_DEFINITIONS.find((t) => t.name === selectedTool)!;
+  const rendererEnabled = settings.renderer_enabled === "true";
+
+  const isToolDisabled = tool.requiresRenderer && !rendererEnabled;
 
   const toolDescription = useMemo(() => {
     if (tool.name === "extract") {
@@ -46,7 +49,12 @@ export default function ToolTester() {
               <SelectContent className="bg-card border-border">
                 {TOOL_DEFINITIONS.map((t) => (
                   <SelectItem key={t.name} value={t.name} className="font-mono text-sm">
-                    {t.name} — {t.category}
+                    <span className="flex items-center gap-2">
+                      <span>{t.name} — {t.category}</span>
+                      {t.requiresRenderer && !rendererEnabled && (
+                        <span className="text-[10px] text-muted-foreground/50">(disabled)</span>
+                      )}
+                    </span>
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -54,6 +62,23 @@ export default function ToolTester() {
           </div>
 
           <div className="border-t border-border pt-4">
+            {isToolDisabled && (
+              <div className="rounded-md border border-cyber-amber/30 bg-cyber-amber/5 p-3 mb-4">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="h-4 w-4 text-cyber-amber mt-0.5" />
+                  <div>
+                    <p className="text-xs text-cyber-amber font-medium">⚠️ Renderer not configured</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Enable the JS Renderer in{" "}
+                      <Link to="/settings" className="text-primary underline underline-offset-2 hover:text-primary/80">
+                        Settings
+                      </Link>{" "}
+                      to use this tool.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
             {toolDescription ? (
               <p className="text-xs text-muted-foreground mb-4 leading-relaxed">{toolDescription}</p>
             ) : (
@@ -67,6 +92,7 @@ export default function ToolTester() {
             <ToolForm
               tool={tool}
               loading={loading}
+              disabled={isToolDisabled}
               onExecute={(args) => execute(tool.name, args)}
             />
             {loading && (
