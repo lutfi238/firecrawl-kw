@@ -8,3 +8,6 @@ verify_jwt = false
 
 [functions.github-auth]
 verify_jwt = false
+
+[functions.uptime-checker]
+verify_jwt = false
