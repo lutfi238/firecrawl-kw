@@ -235,12 +235,35 @@ const app = new Hono();
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-github-token, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-github-token, x-mcp-secret, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
   "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
 };
 
-// Health check GET handler
+
+// CORS preflight
+app.options("/*", (c) => {
+  return new Response(null, { headers: corsHeaders });
+});
+
+// ========== API Key middleware ==========
+function checkMcpSecret(c: any): Response | null {
+  const secret = Deno.env.get("MCP_SECRET");
+  if (!secret) return null; // open mode
+  const provided = c.req.header("x-mcp-secret");
+  if (provided !== secret) {
+    return c.json(
+      { jsonrpc: "2.0", id: null, error: { code: -32001, message: "Unauthorized: invalid or missing X-MCP-Secret header" } },
+      401,
+      corsHeaders
+    );
+  }
+  return null;
+}
+
+// Health check GET handler (override to also check secret)
 app.get("/*", (c) => {
+  const denied = checkMcpSecret(c);
+  if (denied) return denied;
   return c.json(
     { status: "ok", server: "personal-firecrawl", version: "1.0.0", tools: 10 },
     200,
@@ -248,13 +271,11 @@ app.get("/*", (c) => {
   );
 });
 
-// CORS preflight
-app.options("/*", (c) => {
-  return new Response(null, { headers: corsHeaders });
-});
-
 // MCP POST handler - manual JSON-RPC dispatch
 app.post("/*", async (c) => {
+  const denied = checkMcpSecret(c);
+  if (denied) return denied;
+
   currentGithubToken = c.req.header("x-github-token") || null;
   currentAuthHeader = c.req.header("authorization") || null;
 

@@ -35,6 +35,9 @@ export default function Overview() {
       mcpServers: {
         "firecrawl-mcp": {
           url: MCP_ENDPOINT,
+          headers: {
+            "X-MCP-Secret": "your-secret-here",
+          },
         },
       },
     },
