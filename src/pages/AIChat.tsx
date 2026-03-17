@@ -11,24 +11,28 @@ import { SlashCommandPicker } from "@/components/SlashCommandPicker";
 import { classifyIntent, registerJob, type JobType } from "@/lib/intentClassifier";
 
 // ========== Escalation helpers ==========
-const RANKING_KEYWORDS = [
-  "top ", "top-", "best ", "ranking", "compare", "comparison", "versus", " vs ",
-  "alternatives", "leaderboard", "list of", "which is better", "recommend",
+const RANKING_PATTERNS = [
+  /\btop\s*\d+/i, /\btop[\s-]rated/i, /\bbest\b/i, /\branking/i, /\branked\b/i,
+  /\bcompare\b/i, /\bcomparison/i, /\bversus\b/i, /\bvs\b/i,
+  /\balternatives?\b/i, /\bleaderboard/i, /\blist\s+of\b/i,
+  /\bwhich\s+is\s+better/i, /\brecommend/i,
 ];
 
 function isRankingQuery(text: string): boolean {
-  const lower = text.toLowerCase();
-  return RANKING_KEYWORDS.some(kw => lower.includes(kw));
+  return RANKING_PATTERNS.some(p => p.test(text));
 }
 
-function isSearchEvidenceThin(evidence: string): boolean {
-  // Search results are thin if they're mostly titles/snippets with no article body content
-  // Each search result is ~3 lines (title, URL, snippet). If average content per result < 200 chars, it's thin.
-  const lines = evidence.split("\n").filter(l => l.trim().length > 0);
-  // Count lines that look like actual content (not just "[1] Title" or "URL: ...")
-  const contentLines = lines.filter(l => !l.match(/^\[?\d+\]?\s/) && !l.match(/^\s*URL:/i));
-  const contentLength = contentLines.join(" ").length;
-  return contentLength < 500;
+/** Search evidence is considered "deep enough" only if it contains substantial article body text,
+ *  not just titles/URLs/snippets. For ranking queries we need actual article content. */
+function searchEvidenceHasDepth(evidence: string): boolean {
+  // Strip out the structured search result lines (titles, URLs)
+  const stripped = evidence
+    .split("\n")
+    .filter(l => !l.match(/^\[?\d+\]/) && !l.match(/^\s*URL:/i) && !l.match(/^---\s/))
+    .join(" ")
+    .trim();
+  // Need at least 2000 chars of actual prose to consider it deep enough for a ranked answer
+  return stripped.length > 2000;
 }
 
 // ========== Tool display metadata ==========
@@ -328,15 +332,20 @@ export default function AIChat() {
         // === AUTO-ESCALATION ===
         // If search returned only thin snippets and the query needs ranked/list/comparison data,
         // escalate to search_and_scrape for deeper evidence before synthesizing.
+        // For ranking/list/comparison queries, search snippets are almost never sufficient.
+        // Always escalate unless the search result already contains deep article-body content.
         const onlySearchSoFar = toolResults.every(r => r.tool === "search");
-        const evidenceThin = onlySearchSoFar && isSearchEvidenceThin(combinedEvidence);
         const queryNeedsDepth = isRankingQuery(text);
+        const alreadyDeep = searchEvidenceHasDepth(combinedEvidence);
+        const shouldEscalate = onlySearchSoFar && queryNeedsDepth && !alreadyDeep;
 
-        if (evidenceThin && queryNeedsDepth && !controller.signal.aborted) {
-          setCurrentStep("🔎 Search snippets too thin — escalating to deeper scrape...");
+        console.log("[AIChat escalation]", { queryNeedsDepth, onlySearchSoFar, alreadyDeep, shouldEscalate, evidenceLen: combinedEvidence.length });
+
+        if (shouldEscalate && !controller.signal.aborted) {
+          setCurrentStep("🔎 Ranking query — escalating to deeper evidence...");
           addMessage({
             role: "tool",
-            content: "🔎 Search snippets insufficient for a ranked answer. Escalating to search_and_scrape for deeper evidence...",
+            content: "🔎 Ranking query detected — search snippets insufficient. Escalating to search_and_scrape for article-level evidence...",
             toolName: "escalation",
           });
 
@@ -362,7 +371,7 @@ export default function AIChat() {
         }
 
         const allSourceUrls = [...new Set(allEvidence.flatMap(e => e.sourceUrls))];
-        const toolsUsed = [...new Set(toolResults.map(r => r.tool).concat(evidenceThin && queryNeedsDepth ? ["search_and_scrape"] : []))];
+        const toolsUsed = [...new Set(toolResults.map(r => r.tool).concat(shouldEscalate ? ["search_and_scrape"] : []))];
         const evidenceIsSubstantial = combinedEvidence.length > 100;
 
         if (evidenceIsSubstantial) {
