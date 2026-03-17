@@ -275,19 +275,26 @@ app.post("/*", async (c) => {
     }
 
     if (method === "tools/list") {
-      // Get AI provider info for dynamic extract description
-      const aiSettings = await getAiSettings(currentAuthHeader);
+      const userSettings = await getUserSettings(currentAuthHeader);
+      const aiSettings = getAiSettingsFromMap(userSettings);
       const extractDesc = aiSettings
         ? `Scrape URL and use AI (${aiSettings.model}) to extract structured data`
         : "Scrape URL and use AI to extract structured data (not configured)";
+      const rendererEnabled = userSettings.renderer_enabled === "true";
+      const scrapeJsDesc = rendererEnabled
+        ? "Scrape a JS-rendered page via Render renderer"
+        : "Scrape a JS-rendered page (disabled - configure Render renderer in Settings)";
+      const screenshotDesc = rendererEnabled
+        ? "Take a screenshot via Render renderer"
+        : "Take a screenshot (disabled - configure Render renderer in Settings)";
       const toolDefs = [
         { name: "search", description: "Search the web using DuckDuckGo", inputSchema: { type: "object", properties: { query: { type: "string" }, maxResults: { type: "number" } }, required: ["query"] } },
         { name: "scrape", description: "Fetch a URL and convert HTML to Markdown", inputSchema: { type: "object", properties: { url: { type: "string" } }, required: ["url"] } },
-        { name: "scrape_js", description: "Scrape a JS-rendered page via Railway renderer", inputSchema: { type: "object", properties: { url: { type: "string" }, waitFor: { type: "number" } }, required: ["url"] } },
+        { name: "scrape_js", description: scrapeJsDesc, inputSchema: { type: "object", properties: { url: { type: "string" }, waitFor: { type: "number" } }, required: ["url"] } },
         { name: "crawl", description: "BFS crawl a website staying on the same domain", inputSchema: { type: "object", properties: { url: { type: "string" }, maxPages: { type: "number" }, extractContent: { type: "boolean" } }, required: ["url"] } },
         { name: "map", description: "Fast URL-only crawl to map all links on a domain", inputSchema: { type: "object", properties: { url: { type: "string" }, maxPages: { type: "number" } }, required: ["url"] } },
         { name: "extract", description: extractDesc, inputSchema: { type: "object", properties: { url: { type: "string" }, prompt: { type: "string" }, schema: { type: "string" } }, required: ["url", "prompt"] } },
-        { name: "screenshot", description: "Take a screenshot via Railway renderer", inputSchema: { type: "object", properties: { url: { type: "string" }, width: { type: "number" }, height: { type: "number" } }, required: ["url"] } },
+        { name: "screenshot", description: screenshotDesc, inputSchema: { type: "object", properties: { url: { type: "string" }, width: { type: "number" }, height: { type: "number" } }, required: ["url"] } },
         { name: "search_and_scrape", description: "Search then scrape top results", inputSchema: { type: "object", properties: { query: { type: "string" }, maxResults: { type: "number" } }, required: ["query"] } },
         { name: "html_to_markdown", description: "Convert HTML string to Markdown", inputSchema: { type: "object", properties: { html: { type: "string" } }, required: ["html"] } },
         { name: "batch_scrape", description: "Scrape multiple URLs in parallel", inputSchema: { type: "object", properties: { urls: { type: "string" } }, required: ["urls"] } },
