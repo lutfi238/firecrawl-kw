@@ -772,12 +772,35 @@ async function processAgentJob(jobId: string, args: Record<string, unknown>, aiS
     const schema = args.schema as string | undefined;
     const maxSteps = (args.maxSteps as number) || 5;
 
-    // Step 1: Search — multi-source with direct publisher priority
+    // Step 1: Classify and validate user-provided focus URLs
     let discoveredUrls: SearchResult[] = [];
     for (const u of focusUrls) {
-      discoveredUrls.push({ title: "", url: u, sourceUrl: u, snippet: "", rawDesc: "", acquisitionType: "direct_article", searchSource: "user_provided" });
+      const check = isValidArticleUrl(u);
+      if (!check.valid) {
+        console.log("[agent] Rejecting user URL:", u.slice(0, 80), check.reason);
+        continue;
+      }
+      if (isGoogleNewsRssWrapper(u)) {
+        // Attempt resolution for Google News wrappers
+        const resolved = await resolveGoogleNewsRssUrl(u);
+        if (resolved.finalUrl && resolved.resolveStatus === "resolved") {
+          discoveredUrls.push({ title: "", url: resolved.finalUrl, sourceUrl: u, snippet: "", rawDesc: "", acquisitionType: "resolved_article", searchSource: "user_provided" });
+        } else {
+          discoveredUrls.push({ title: "", url: u, sourceUrl: u, snippet: "", rawDesc: "", acquisitionType: "unresolved_wrapper", searchSource: "user_provided" });
+        }
+      } else if (isRedirectUrl(u)) {
+        const resolved = await resolveRedirect(u);
+        const finalCheck = isValidArticleUrl(resolved.finalUrl);
+        if (finalCheck.valid) {
+          discoveredUrls.push({ title: "", url: resolved.finalUrl, sourceUrl: u, snippet: "", rawDesc: "", acquisitionType: resolved.resolved ? "resolved_article" : "direct_article", searchSource: "user_provided" });
+        } else {
+          console.log("[agent] Resolved user URL rejected:", resolved.finalUrl.slice(0, 80), finalCheck.reason);
+        }
+      } else {
+        discoveredUrls.push({ title: "", url: u, sourceUrl: u, snippet: "", rawDesc: "", acquisitionType: "direct_article", searchSource: "user_provided" });
+      }
     }
-    console.log("[agent] Focus URLs:", focusUrls.length);
+    console.log("[agent] Focus URLs:", focusUrls.length, "accepted:", discoveredUrls.length);
 
     if (discoveredUrls.length < maxSteps) {
       console.log("[agent] Searching web for:", prompt);
