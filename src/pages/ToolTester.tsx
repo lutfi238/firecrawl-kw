@@ -1,14 +1,17 @@
 import { useState } from "react";
-import { useToolExecutor } from "@/hooks/useToolExecutor";
+import { useToolExecutorWithActivity } from "@/hooks/useToolExecutorWithActivity";
 import { ToolForm } from "@/components/ToolForm";
 import { ResponseViewer } from "@/components/ResponseViewer";
+import { ActivityLog } from "@/components/ActivityLog";
 import { GlassCard } from "@/components/GlassCard";
 import { TOOL_DEFINITIONS } from "@/types/tools";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
+import { XCircle } from "lucide-react";
 
 export default function ToolTester() {
   const [selectedTool, setSelectedTool] = useState(TOOL_DEFINITIONS[0].name);
-  const { execute, result, durationMs, loading, error } = useToolExecutor();
+  const { execute, cancel, result, durationMs, loading, error, steps } = useToolExecutorWithActivity();
 
   const tool = TOOL_DEFINITIONS.find((t) => t.name === selectedTool)!;
 
@@ -42,7 +45,22 @@ export default function ToolTester() {
               loading={loading}
               onExecute={(args) => execute(tool.name, args)}
             />
+            {loading && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={cancel}
+                className="mt-2 w-full text-xs font-mono border-destructive/50 text-destructive hover:bg-destructive/10 gap-1.5"
+              >
+                <XCircle className="h-3 w-3" /> Cancel
+              </Button>
+            )}
           </div>
+
+          {/* Activity log */}
+          {steps.length > 0 && (
+            <ActivityLog steps={steps} className="mt-2" />
+          )}
         </GlassCard>
 
         {/* Right: Response */}

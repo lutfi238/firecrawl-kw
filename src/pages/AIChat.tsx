@@ -1,13 +1,15 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useAuthStore } from "@/stores/authStore";
 import { useMCPServer } from "@/hooks/useMCPServer";
+import { useSettings } from "@/hooks/useSettings";
 import { GlassCard } from "@/components/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Send, Loader2, Bot, User, Wrench } from "lucide-react";
+import { Send, Loader2, Bot, User, Wrench, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ChatMessage, ToolCallResult } from "@/types/mcp";
 import { TOOL_DEFINITIONS } from "@/types/tools";
+import { supabase } from "@/integrations/supabase/client";
 
 const SLASH_COMMANDS = TOOL_DEFINITIONS.map((t) => `/${t.name}`);
 
@@ -15,16 +17,53 @@ export default function AIChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [loadingStartedAt, setLoadingStartedAt] = useState<number | null>(null);
+  const [elapsed, setElapsed] = useState(0);
   const { callTool } = useMCPServer();
+  const { settings } = useSettings();
   const { githubToken } = useAuthStore();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages]);
 
+  // Elapsed timer
+  useEffect(() => {
+    if (!loading || !loadingStartedAt) return;
+    const interval = setInterval(() => setElapsed((Date.now() - loadingStartedAt) / 1000), 100);
+    return () => clearInterval(interval);
+  }, [loading, loadingStartedAt]);
+
   const addMessage = (msg: Omit<ChatMessage, "id" | "timestamp">) => {
     setMessages((prev) => [...prev, { ...msg, id: crypto.randomUUID(), timestamp: new Date() }]);
+  };
+
+  const providerLabel = settings.ai_provider || "AI";
+  const modelLabel = settings.ai_model || "";
+
+  const cancel = useCallback(() => {
+    abortRef.current?.abort();
+    setLoading(false);
+    setLoadingStartedAt(null);
+    addMessage({ role: "assistant", content: "⚠️ Request cancelled." });
+  }, []);
+
+  const logToMonitor = async (toolName: string, input: Record<string, unknown>, output: ToolCallResult, duration: number) => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        await supabase.from("mcp_logs").insert({
+          user_id: user.id,
+          tool: toolName,
+          input: input as any,
+          output: output as any,
+          status: output.isError ? "error" : "success",
+          duration_ms: duration,
+        });
+      }
+    } catch { /* don't block */ }
   };
 
   const handleSend = async () => {
@@ -33,6 +72,9 @@ export default function AIChat() {
     setInput("");
 
     addMessage({ role: "user", content: text });
+
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     // Check for slash commands
     const match = text.match(/^\/(\w+)\s*(.*)/);
@@ -43,45 +85,69 @@ export default function AIChat() {
 
       if (tool) {
         setLoading(true);
-        // Build args from first required field
+        setLoadingStartedAt(Date.now());
         const args: Record<string, unknown> = {};
         const firstRequired = tool.inputs.find((i) => i.required);
-        if (firstRequired) {
-          args[firstRequired.name] = argText;
-        }
+        if (firstRequired) args[firstRequired.name] = argText;
 
         addMessage({ role: "tool", content: `Executing ${toolName}...`, toolName, toolInput: args });
 
+        // Timeout
+        const timeout = setTimeout(() => {
+          controller.abort();
+          setLoading(false);
+          setLoadingStartedAt(null);
+          addMessage({ role: "assistant", content: "⏱️ Request timed out after 30s. Check your API key and Base URL in Settings." });
+        }, 30000);
+
+        const start = Date.now();
         const result = await callTool(toolName, args);
+        clearTimeout(timeout);
+
+        if (controller.signal.aborted) return;
+
+        const duration = Date.now() - start;
         const resultText = result.content.map((c) => c.text ?? `[${c.type}]`).join("\n");
 
-        addMessage({
-          role: "assistant",
-          content: resultText,
-          toolName,
-          toolOutput: result,
-        });
+        addMessage({ role: "assistant", content: resultText, toolName, toolOutput: result });
+        await logToMonitor(toolName, args, result, duration);
+
         setLoading(false);
+        setLoadingStartedAt(null);
         return;
       }
     }
 
-    // Non-slash: use extract with AI if token available
-    if (githubToken) {
+    // Non-slash: use extract with AI
+    if (settings.ai_api_key) {
       setLoading(true);
-      addMessage({ role: "tool", content: "Thinking with AI...", toolName: "extract" });
+      setLoadingStartedAt(Date.now());
+      addMessage({ role: "tool", content: `Using ${providerLabel} → ${modelLabel}`, toolName: "ai" });
 
-      const result = await callTool("extract", {
-        url: "https://example.com",
-        prompt: text,
-      });
+      const timeout = setTimeout(() => {
+        controller.abort();
+        setLoading(false);
+        setLoadingStartedAt(null);
+        addMessage({ role: "assistant", content: "⏱️ Request timed out after 30s. Check your API key and Base URL in Settings." });
+      }, 30000);
+
+      const start = Date.now();
+      const result = await callTool("extract", { url: "https://example.com", prompt: text });
+      clearTimeout(timeout);
+
+      if (controller.signal.aborted) return;
+
+      const duration = Date.now() - start;
       const resultText = result.content.map((c) => c.text ?? `[${c.type}]`).join("\n");
       addMessage({ role: "assistant", content: resultText });
+      await logToMonitor("ai_chat", { prompt: text }, result, duration);
+
       setLoading(false);
+      setLoadingStartedAt(null);
     } else {
       addMessage({
         role: "assistant",
-        content: "No GitHub token available. Use slash commands (e.g. `/search your query`) to run tools directly, or re-authenticate in Settings to enable AI chat.",
+        content: "No AI provider configured. Go to Settings → AI Provider to add your API key, or use slash commands (e.g. `/search your query`).",
       });
     }
   };
@@ -99,16 +165,18 @@ export default function AIChat() {
               <p className="text-sm text-muted-foreground/50 font-mono">
                 Use slash commands: {SLASH_COMMANDS.slice(0, 4).join(", ")}...
               </p>
+              {settings.ai_provider && (
+                <p className="text-[11px] text-muted-foreground/30 font-mono">
+                  AI: {settings.ai_provider} → {settings.ai_model}
+                </p>
+              )}
             </div>
           </div>
         )}
         {messages.map((msg) => (
           <div
             key={msg.id}
-            className={cn(
-              "flex gap-3",
-              msg.role === "user" && "justify-end"
-            )}
+            className={cn("flex gap-3", msg.role === "user" && "justify-end")}
           >
             {msg.role !== "user" && (
               <div className={cn(
@@ -140,13 +208,32 @@ export default function AIChat() {
             )}
           </div>
         ))}
+
+        {/* Thinking indicator */}
         {loading && (
           <div className="flex gap-3">
             <div className="h-7 w-7 rounded-full bg-primary/20 flex items-center justify-center">
               <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
             </div>
-            <div className="glass rounded-lg px-4 py-2.5">
-              <span className="text-sm text-muted-foreground">Processing...</span>
+            <div className="glass rounded-lg px-4 py-2.5 space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground">
+                  🤖 Thinking
+                  <span className="inline-flex w-6">
+                    <span className="animate-pulse">...</span>
+                  </span>
+                </span>
+              </div>
+              {providerLabel && settings.ai_api_key && (
+                <p className="text-[10px] text-muted-foreground/50 font-mono">
+                  Using {providerLabel} → {modelLabel}
+                </p>
+              )}
+              {elapsed > 5 && (
+                <p className="text-[10px] text-cyber-amber font-mono">
+                  Still working... ({elapsed.toFixed(0)}s)
+                </p>
+              )}
             </div>
           </div>
         )}
@@ -162,14 +249,25 @@ export default function AIChat() {
           className="bg-transparent border-none font-mono text-sm focus-visible:ring-0 focus-visible:ring-offset-0"
           disabled={loading}
         />
-        <Button
-          onClick={handleSend}
-          disabled={!input.trim() || loading}
-          size="icon"
-          className="shrink-0 bg-primary text-primary-foreground"
-        >
-          <Send className="h-4 w-4" />
-        </Button>
+        {loading ? (
+          <Button
+            onClick={cancel}
+            size="icon"
+            variant="outline"
+            className="shrink-0 border-destructive/50 text-destructive hover:bg-destructive/10"
+          >
+            <XCircle className="h-4 w-4" />
+          </Button>
+        ) : (
+          <Button
+            onClick={handleSend}
+            disabled={!input.trim()}
+            size="icon"
+            className="shrink-0 bg-primary text-primary-foreground"
+          >
+            <Send className="h-4 w-4" />
+          </Button>
+        )}
       </div>
     </div>
   );
