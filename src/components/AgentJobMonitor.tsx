@@ -595,37 +595,54 @@ export function AgentJobMonitor({
                 </div>
               )}
 
-              {/* Sources list — rich rendering */}
+              {/* Sources list — structured diagnostics */}
               {data.sources && data.sources.length > 0 && (
                 <div className="rounded-md border border-border bg-muted/10 p-3">
                   <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">
-                    Sources ({data.sources.length})
+                    Source Diagnostics ({data.sources.length})
                   </p>
                   <div className="space-y-2">
                     {data.sources.map((src, i) => (
-                      <div key={i} className="flex items-start gap-2 text-xs font-mono border-b border-border/50 pb-1.5 last:border-0 last:pb-0">
-                        <span className={cn(
-                          "mt-0.5 h-2 w-2 rounded-full flex-shrink-0",
-                          src.scrapeStatus === "success" && "bg-cyber-green",
-                          src.scrapeStatus === "empty" && "bg-cyber-amber",
-                          src.scrapeStatus === "boilerplate" && "bg-cyber-amber",
-                          src.scrapeStatus === "failed" && "bg-cyber-red",
-                        )} />
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className="text-foreground/80 truncate">{src.title || src.publisher || "Unknown"}</span>
-                            {src.publisher && <span className="text-muted-foreground/50 text-[10px] flex-shrink-0">{src.publisher}</span>}
-                          </div>
-                          <a href={src.finalUrl || src.sourceUrl} target="_blank" rel="noopener noreferrer"
-                            className="text-primary/60 hover:text-primary truncate block text-[10px]">
-                            {src.finalUrl || src.sourceUrl}
-                          </a>
-                          <div className="flex gap-3 text-[10px] text-muted-foreground/50 mt-0.5">
-                            {src.contentLength != null && <span>{src.contentLength} chars</span>}
-                            {src.resolveStatus === "resolved" && <span className="text-cyber-green/60">redirected</span>}
-                            {src.error && <span className="text-cyber-red/60">{src.error}</span>}
-                          </div>
+                      <div key={i} className="text-xs font-mono border border-border/60 rounded p-2 space-y-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-foreground/80 truncate">{src.title || src.publisher || "Unknown"}</span>
+                          <span className="text-[10px] text-muted-foreground truncate">{src.publisher || "unknown-domain"}</span>
                         </div>
+
+                        <div className="text-[10px] space-y-0.5">
+                          <div className="text-muted-foreground">Source URL</div>
+                          <a href={src.sourceUrl} target="_blank" rel="noopener noreferrer" className="text-primary/70 hover:text-primary truncate block">{src.sourceUrl || "—"}</a>
+                        </div>
+
+                        <div className="text-[10px] space-y-0.5">
+                          <div className="text-muted-foreground">Final URL</div>
+                          {src.finalUrl ? (
+                            <a href={src.finalUrl} target="_blank" rel="noopener noreferrer" className="text-primary/70 hover:text-primary truncate block">{src.finalUrl}</a>
+                          ) : (
+                            <span className="text-cyber-amber">unresolved</span>
+                          )}
+                        </div>
+
+                        <div className="flex flex-wrap gap-2 text-[10px]">
+                          <span className={cn(
+                            "px-1.5 py-0.5 rounded border",
+                            src.resolveStatus === "resolved" && "border-cyber-green/40 text-cyber-green",
+                            src.resolveStatus === "unchanged" && "border-muted text-muted-foreground",
+                            src.resolveStatus === "unresolved_wrapper" && "border-cyber-amber/40 text-cyber-amber",
+                            src.resolveStatus === "failed" && "border-cyber-red/40 text-cyber-red",
+                          )}>resolve: {src.resolveStatus || "—"}</span>
+                          <span className={cn(
+                            "px-1.5 py-0.5 rounded border",
+                            src.scrapeStatus === "success" && "border-cyber-green/40 text-cyber-green",
+                            (src.scrapeStatus === "empty" || src.scrapeStatus === "boilerplate" || src.scrapeStatus === "unresolved_wrapper") && "border-cyber-amber/40 text-cyber-amber",
+                            src.scrapeStatus === "failed" && "border-cyber-red/40 text-cyber-red",
+                          )}>scrape: {src.scrapeStatus || "—"}</span>
+                          <span className="text-muted-foreground">content: {src.contentLength ?? 0}</span>
+                        </div>
+
+                        {src.error && (
+                          <div className="text-[10px] text-cyber-red/80 break-words">error: {src.error}</div>
+                        )}
                       </div>
                     ))}
                   </div>
