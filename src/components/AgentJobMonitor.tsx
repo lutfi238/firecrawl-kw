@@ -629,7 +629,7 @@ export function AgentJobMonitor({
                       </span>
                     )}
                   </div>
-                  <div className="grid grid-cols-3 gap-2 text-xs font-mono">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs font-mono">
                     <div><span className="text-muted-foreground">Collected:</span> {data.evidenceMetrics.sourcesCollected ?? "—"}</div>
                     <div><span className="text-muted-foreground">Resolved:</span> {data.evidenceMetrics.sourcesResolved ?? "—"}</div>
                     <div><span className="text-muted-foreground">Scraped:</span> {data.evidenceMetrics.sourcesScrapedSuccessfully ?? "—"}</div>
