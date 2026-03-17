@@ -139,7 +139,8 @@ export default function AIChat() {
 
       const duration = Date.now() - start;
       const resultText = result.content.map((c) => c.text ?? `[${c.type}]`).join("\n");
-      addMessage({ role: "assistant", content: resultText });
+      console.log("[AIChat] Full API result:", JSON.stringify(result));
+      addMessage({ role: result.isError ? "tool" : "assistant", content: resultText });
       await logToMonitor("ai_chat", { prompt: text }, result, duration);
 
       setLoading(false);
