@@ -344,7 +344,7 @@ app.post("/*", async (c) => {
           break;
         }
         case "scrape_js": {
-          const userSettings = await getUserSettings(currentAuthHeader);
+          const userSettings = await getUserSettings(authHeader);
           const rendererUrl = userSettings.renderer_url;
           if (!rendererUrl) {
             result = { content: [{ type: "text", text: "Error: Renderer URL not configured in Settings." }], isError: true };
