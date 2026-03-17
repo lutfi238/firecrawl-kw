@@ -293,8 +293,8 @@ export function AgentJobMonitor({
   className,
 }: AgentJobMonitorProps) {
   const [autoRefresh, setAutoRefresh] = useState(false);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const refreshingRef = useRef(false);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelledRef = useRef(false);
 
   // Force re-render for relative timestamps
   const [, setTick] = useState(0);
@@ -306,33 +306,26 @@ export function AgentJobMonitor({
   const data = parseAgentData(result);
   const isTerminal = data?.status != null && TERMINAL_STATUSES.has(data.status);
 
-  // Wrap onRefresh to prevent overlapping calls
-  const safeRefresh = useCallback(() => {
-    if (refreshingRef.current || loading) return;
-    refreshingRef.current = true;
-    onRefresh();
-    // Reset guard after a short delay to allow the loading state to propagate
-    setTimeout(() => { refreshingRef.current = false; }, 500);
-  }, [onRefresh, loading]);
-
-  // Auto-refresh polling — only when enabled and not terminal
+  // Schedule next poll only after current refresh completes (recursive timeout)
   useEffect(() => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
+    if (!autoRefresh || isTerminal || loading) return;
 
-    if (autoRefresh && !isTerminal) {
-      intervalRef.current = setInterval(safeRefresh, 2000);
-    }
+    // When loading just finished (loading=false) and auto is on, schedule next
+    cancelledRef.current = false;
+    timeoutRef.current = setTimeout(() => {
+      if (!cancelledRef.current) {
+        onRefresh();
+      }
+    }, 2000);
 
     return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
+      cancelledRef.current = true;
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
       }
     };
-  }, [autoRefresh, isTerminal, safeRefresh]);
+  }, [autoRefresh, isTerminal, loading, onRefresh]);
 
   // Auto-stop on terminal state
   useEffect(() => {
@@ -340,6 +333,11 @@ export function AgentJobMonitor({
       setAutoRefresh(false);
     }
   }, [isTerminal, autoRefresh]);
+
+  // Manual refresh — safe because it just calls onRefresh directly
+  const safeRefresh = useCallback(() => {
+    if (!loading) onRefresh();
+  }, [onRefresh, loading]);
 
   // ─── Empty state ───
   if (!result && !error) {
