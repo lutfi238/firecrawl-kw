@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { GlassCard } from "./GlassCard";
 import { StatusBadge } from "./StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -59,25 +58,46 @@ const AGENT_STEPS = [
   { key: "completed", label: "Completed" },
 ] as const;
 
+const TERMINAL_STATUSES = new Set(["completed", "failed"]);
+
 /* ── Helpers ───────────────────────────────────────── */
 
 function parseAgentData(result: ToolCallResult | null): AgentJobData | null {
   if (!result?.content?.[0]?.text) return null;
   try {
-    const parsed = JSON.parse(result.content[0].text);
-    // Handle nested response wrapper
-    const data = parsed.result ?? parsed;
+    const raw = result.content[0].text;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      // If the text isn't JSON at all, wrap it
+      return null;
+    }
+    if (typeof parsed !== "object" || parsed === null) return null;
+
+    // Handle nested { result: { ... } } wrapper from MCP response
+    const obj = parsed as Record<string, unknown>;
+    const data = (typeof obj.result === "object" && obj.result !== null ? obj.result : obj) as Record<string, unknown>;
+
+    const sourcesRaw = data.sourcesUsed ?? data.sources_used;
+    const sourcesUsed = Array.isArray(sourcesRaw) ? sourcesRaw.filter((s): s is string => typeof s === "string") : undefined;
+
+    const scrapedRaw = data.scrapedCount ?? data.scraped_count ?? data.scraped_sources;
+    const scrapedCount = typeof scrapedRaw === "number"
+      ? scrapedRaw
+      : sourcesUsed?.length ?? undefined;
+
     return {
-      jobId: data.jobId ?? data.id,
-      type: data.type,
-      status: data.status,
-      step: data.step,
-      scrapedCount: data.scrapedCount ?? data.scraped_count ?? data.sourcesUsed?.length,
-      createdAt: data.createdAt ?? data.created_at,
-      updatedAt: data.updatedAt ?? data.updated_at,
-      result: data.result ?? data.output,
-      error: data.error,
-      sourcesUsed: data.sourcesUsed ?? data.sources_used,
+      jobId: String(data.jobId ?? data.job_id ?? data.id ?? ""),
+      type: typeof data.type === "string" ? data.type : undefined,
+      status: typeof data.status === "string" ? data.status : undefined,
+      step: typeof data.step === "string" ? data.step : undefined,
+      scrapedCount,
+      createdAt: String(data.createdAt ?? data.created_at ?? ""),
+      updatedAt: String(data.updatedAt ?? data.updated_at ?? ""),
+      result: data.result ?? data.output ?? data.synthesis,
+      error: typeof data.error === "string" ? data.error : undefined,
+      sourcesUsed,
     };
   } catch {
     return null;
@@ -86,7 +106,9 @@ function parseAgentData(result: ToolCallResult | null): AgentJobData | null {
 
 function relativeTime(iso: string | undefined): string {
   if (!iso) return "—";
-  const diff = Date.now() - new Date(iso).getTime();
+  const ts = new Date(iso).getTime();
+  if (isNaN(ts)) return "—";
+  const diff = Date.now() - ts;
   if (diff < 0) return "just now";
   const seconds = Math.floor(diff / 1000);
   if (seconds < 5) return "just now";
@@ -94,12 +116,18 @@ function relativeTime(iso: string | undefined): string {
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.floor(minutes / 60);
-  return `${hours}h ago`;
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
 }
 
-function formatTimestamp(iso: string | undefined): string {
+function formatFullTimestamp(iso: string | undefined): string {
   if (!iso) return "—";
-  return new Date(iso).toLocaleTimeString([], {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "—";
+  return d.toLocaleString([], {
+    month: "short",
+    day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
@@ -112,59 +140,80 @@ function jobStatusToBadge(status?: string): "online" | "offline" | "pending" | "
     case "failed": return "error";
     case "processing": return "pending";
     case "pending": return "pending";
-    default: return "pending";
+    default: return "offline"; // unknown status → offline/gray
   }
 }
 
 function getStepIndex(step?: string): number {
   if (!step) return -1;
-  const idx = AGENT_STEPS.findIndex((s) => s.key === step);
-  return idx;
+  return AGENT_STEPS.findIndex((s) => s.key === step);
 }
 
 function getStatusSentence(data: AgentJobData): string {
+  const count = data.scrapedCount;
+  const countStr = count != null && count > 0
+    ? `${count} scraped source${count !== 1 ? "s" : ""}`
+    : null;
+
   if (data.status === "completed") {
-    const count = data.scrapedCount ?? 0;
-    return count > 0
-      ? `The job has completed successfully with ${count} scraped source${count !== 1 ? "s" : ""}.`
+    return countStr
+      ? `The job has completed successfully with ${countStr}.`
       : "The job has completed successfully.";
   }
   if (data.status === "failed") {
-    return data.error
-      ? `The job failed: ${data.error}`
-      : `The job failed before ${data.step ?? "completion"}.`;
+    if (data.error) return `The job failed: ${data.error}`;
+    if (data.step) return `The job failed during the ${data.step} step.`;
+    return "The job failed before completion.";
   }
-  if (data.step === "synthesizing") {
-    const count = data.scrapedCount ?? 0;
-    return count > 0
-      ? `The agent is currently synthesizing results from ${count} scraped source${count !== 1 ? "s" : ""}.`
-      : "The agent is currently synthesizing results.";
+
+  // In-progress states
+  switch (data.step) {
+    case "queued":
+      return "The job is queued and waiting to start.";
+    case "searching":
+      return "The agent is searching the web for relevant sources…";
+    case "scraping":
+      return countStr
+        ? `The agent is scraping URLs (${countStr} so far)…`
+        : "The agent is scraping discovered URLs…";
+    case "extracting":
+      return "The agent is extracting structured data from scraped content…";
+    case "synthesizing":
+      return countStr
+        ? `The agent is synthesizing results from ${countStr}.`
+        : "The agent is synthesizing results…";
+    default:
+      return data.status === "processing"
+        ? "The job is currently processing."
+        : "Waiting for job status…";
   }
-  if (data.step === "scraping") {
-    return "The agent is scraping discovered URLs...";
-  }
-  if (data.step === "searching") {
-    return "The agent is searching the web for relevant sources...";
-  }
-  if (data.step === "extracting") {
-    return "The agent is extracting structured data from scraped content...";
-  }
-  return "The job is still processing.";
 }
 
-/* ── Stepper ───────────────────────────────────────── */
+/* ── Progress Stepper ──────────────────────────────── */
 
 function ProgressStepper({ currentStep, status }: { currentStep?: string; status?: string }) {
   const isFailed = status === "failed";
   const isCompleted = status === "completed";
-  const activeIdx = isCompleted ? AGENT_STEPS.length - 1 : getStepIndex(currentStep);
+
+  // For failed: highlight the step where it failed, mark prior as done
+  // For completed: all steps done
+  // For in-progress: active step highlighted, prior done
+  const activeIdx = isCompleted
+    ? AGENT_STEPS.length - 1
+    : isFailed
+      ? getStepIndex(currentStep)
+      : getStepIndex(currentStep);
 
   return (
     <div className="flex items-center gap-1 w-full overflow-x-auto py-2">
       {AGENT_STEPS.map((step, i) => {
-        const isDone = isCompleted || i < activeIdx;
+        const isDone = isCompleted
+          ? true
+          : isFailed
+            ? i < activeIdx // steps before the failed step are done
+            : i < activeIdx;
         const isActive = !isCompleted && i === activeIdx;
-        const isFailedStep = isFailed && isActive;
+        const isFailedStep = isFailed && i === activeIdx;
 
         return (
           <div key={step.key} className="flex items-center gap-1 flex-1 min-w-0">
@@ -199,7 +248,7 @@ function ProgressStepper({ currentStep, status }: { currentStep?: string; status
               <div
                 className={cn(
                   "h-px flex-1 min-w-2 mt-[-16px]",
-                  isDone ? "bg-cyber-green/40" : "bg-border"
+                  isDone ? "bg-cyber-green/40" : isFailedStep ? "bg-cyber-red/30" : "bg-border"
                 )}
               />
             )}
@@ -210,7 +259,7 @@ function ProgressStepper({ currentStep, status }: { currentStep?: string; status
   );
 }
 
-/* ── Summary Cards ─────────────────────────────────── */
+/* ── Summary Card ──────────────────────────────────── */
 
 function SummaryCard({ icon: Icon, label, value, accent }: {
   icon: React.ElementType;
@@ -244,42 +293,54 @@ export function AgentJobMonitor({
 }: AgentJobMonitorProps) {
   const [autoRefresh, setAutoRefresh] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [now, setNow] = useState(Date.now());
+  const refreshingRef = useRef(false);
 
-  const data = parseAgentData(result);
-  const isTerminal = data?.status === "completed" || data?.status === "failed";
-
-  // Update relative time every second
+  // Force re-render for relative timestamps
+  const [, setTick] = useState(0);
   useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 1000);
+    const t = setInterval(() => setTick((n) => n + 1), 1000);
     return () => clearInterval(t);
   }, []);
 
-  // Auto-refresh polling
-  useEffect(() => {
-    if (autoRefresh && !isTerminal) {
-      intervalRef.current = setInterval(() => {
-        onRefresh();
-      }, 2000);
-    }
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    };
-  }, [autoRefresh, isTerminal, onRefresh]);
+  const data = parseAgentData(result);
+  const isTerminal = data?.status != null && TERMINAL_STATUSES.has(data.status);
 
-  // Auto-stop when terminal
+  // Wrap onRefresh to prevent overlapping calls
+  const safeRefresh = useCallback(() => {
+    if (refreshingRef.current || loading) return;
+    refreshingRef.current = true;
+    onRefresh();
+    // Reset guard after a short delay to allow the loading state to propagate
+    setTimeout(() => { refreshingRef.current = false; }, 500);
+  }, [onRefresh, loading]);
+
+  // Auto-refresh polling — only when enabled and not terminal
+  useEffect(() => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+
+    if (autoRefresh && !isTerminal) {
+      intervalRef.current = setInterval(safeRefresh, 2000);
+    }
+
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
+  }, [autoRefresh, isTerminal, safeRefresh]);
+
+  // Auto-stop on terminal state
   useEffect(() => {
     if (isTerminal && autoRefresh) {
       setAutoRefresh(false);
     }
   }, [isTerminal, autoRefresh]);
 
-  const handleToggleAutoRefresh = useCallback(() => {
-    setAutoRefresh((prev) => !prev);
-  }, []);
-
-  // No result yet — show placeholder
+  // ─── Empty state ───
   if (!result && !error) {
     return (
       <div className={cn("flex flex-col items-center justify-center rounded-lg border border-border bg-background/30 p-12 gap-3", className)}>
@@ -289,22 +350,41 @@ export function AgentJobMonitor({
     );
   }
 
-  // Error with no parseable data
+  // ─── Request error with no parseable data ───
   if (!data && error) {
     return (
       <div className={cn("rounded-lg border border-cyber-red/30 bg-cyber-red/5 p-6", className)}>
         <div className="flex items-center gap-2 mb-2">
           <AlertCircle className="h-4 w-4 text-cyber-red" />
-          <span className="text-sm font-mono text-cyber-red">Error</span>
+          <span className="text-sm font-mono text-cyber-red">Request Error</span>
         </div>
         <p className="text-xs font-mono text-muted-foreground">{error}</p>
       </div>
     );
   }
 
+  // ─── Unparseable response (result exists but data is null) ───
+  if (!data && result) {
+    return (
+      <div className={cn("rounded-lg border border-border bg-background/30 flex flex-col", className)}>
+        <div className="flex items-center justify-between border-b border-border px-4 py-2">
+          <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Agent Monitor</span>
+          <StatusBadge status={result.isError ? "error" : "success"} label={result.isError ? "REQUEST FAILED" : "REQUEST OK"} />
+        </div>
+        <div className="p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 text-cyber-amber" />
+            <span className="text-xs font-mono text-cyber-amber">Could not parse agent job data from response</span>
+          </div>
+          <ResponseViewer result={result} durationMs={durationMs} error={error} className="border-0 rounded-none min-h-[200px]" />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={cn("rounded-lg border border-border bg-background/30 flex flex-col", className)}>
-      {/* Header with polling controls */}
+      {/* ── Header with polling controls ── */}
       <div className="flex items-center justify-between border-b border-border px-4 py-2 gap-2 flex-wrap">
         <div className="flex items-center gap-2">
           <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Agent Monitor</span>
@@ -318,7 +398,7 @@ export function AgentJobMonitor({
           <Button
             variant="ghost"
             size="sm"
-            onClick={onRefresh}
+            onClick={safeRefresh}
             disabled={loading}
             className="h-7 gap-1.5 text-xs font-mono"
           >
@@ -328,7 +408,7 @@ export function AgentJobMonitor({
           <div className="flex items-center gap-1.5">
             <Switch
               checked={autoRefresh}
-              onCheckedChange={handleToggleAutoRefresh}
+              onCheckedChange={(checked) => setAutoRefresh(checked)}
               disabled={isTerminal}
               className="scale-75"
             />
@@ -342,7 +422,7 @@ export function AgentJobMonitor({
         </div>
       </div>
 
-      {/* Tabbed content */}
+      {/* ── Tabbed content ── */}
       <Tabs defaultValue="overview" className="flex-1 flex flex-col">
         <TabsList className="mx-4 mt-3 w-fit bg-muted/50">
           <TabsTrigger value="overview" className="text-xs font-mono">Overview</TabsTrigger>
@@ -350,13 +430,19 @@ export function AgentJobMonitor({
           <TabsTrigger value="activity" className="text-xs font-mono">Activity Log</TabsTrigger>
         </TabsList>
 
-        {/* Overview Tab */}
-        <TabsContent value="overview" className="flex-1 p-4 space-y-4 overflow-auto">
+        {/* ── Overview Tab ── */}
+        <TabsContent value="overview" className="flex-1 p-4 space-y-4 overflow-auto scrollbar-cyber">
           {data ? (
             <>
               {/* Status sentence */}
-              <div className="rounded-md border border-border bg-muted/10 p-3">
-                <p className="text-sm text-foreground/80 leading-relaxed">
+              <div className={cn(
+                "rounded-md border p-3",
+                data.status === "failed" ? "border-cyber-red/30 bg-cyber-red/5" : "border-border bg-muted/10"
+              )}>
+                <p className={cn(
+                  "text-sm leading-relaxed",
+                  data.status === "failed" ? "text-cyber-red/90" : "text-foreground/80"
+                )}>
                   {getStatusSentence(data)}
                 </p>
               </div>
@@ -364,13 +450,13 @@ export function AgentJobMonitor({
               {/* Progress stepper */}
               <ProgressStepper currentStep={data.step} status={data.status} />
 
-              {/* Summary cards grid */}
+              {/* Summary cards */}
               <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
                 <SummaryCard
                   icon={Hash}
                   label="Job ID"
                   value={
-                    <span className="text-xs" title={data.jobId}>
+                    <span className="text-xs" title={data.jobId || undefined}>
                       {data.jobId ? `${data.jobId.slice(0, 8)}…` : "—"}
                     </span>
                   }
@@ -388,35 +474,46 @@ export function AgentJobMonitor({
                     <StatusBadge
                       status={jobStatusToBadge(data.status)}
                       label={data.status?.toUpperCase() ?? "UNKNOWN"}
+                      pulse={data.status === "processing"}
                     />
                   }
                 />
                 <SummaryCard
                   icon={Bot}
                   label="Current Step"
-                  value={data.step ?? "—"}
+                  value={data.step ?? (data.status === "completed" ? "completed" : "—")}
                   accent="text-primary"
                 />
                 <SummaryCard
                   icon={Globe}
                   label="Sources Scraped"
-                  value={data.scrapedCount ?? 0}
+                  value={data.scrapedCount != null ? data.scrapedCount : "—"}
                 />
                 <SummaryCard
                   icon={Calendar}
                   label="Updated"
                   value={
-                    <span title={formatTimestamp(data.updatedAt)}>
+                    <span title={formatFullTimestamp(data.updatedAt)}>
                       {relativeTime(data.updatedAt)}
                     </span>
                   }
                 />
               </div>
 
-              {/* Sources list if available */}
+              {/* Timestamps row */}
+              {(data.createdAt || data.updatedAt) && (
+                <div className="flex gap-4 text-[10px] font-mono text-muted-foreground/60">
+                  {data.createdAt && <span>Created: {formatFullTimestamp(data.createdAt)}</span>}
+                  {data.updatedAt && <span>Updated: {formatFullTimestamp(data.updatedAt)}</span>}
+                </div>
+              )}
+
+              {/* Sources list */}
               {data.sourcesUsed && data.sourcesUsed.length > 0 && (
                 <div className="rounded-md border border-border bg-muted/10 p-3">
-                  <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">Sources Used</p>
+                  <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">
+                    Sources Used ({data.sourcesUsed.length})
+                  </p>
                   <div className="space-y-1">
                     {data.sourcesUsed.map((url, i) => (
                       <a
@@ -433,21 +530,23 @@ export function AgentJobMonitor({
                 </div>
               )}
 
-              {/* Result preview if completed */}
+              {/* Synthesis result on completion */}
               {data.status === "completed" && data.result && (
-                <div className="rounded-md border border-border bg-muted/10 p-3">
-                  <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">Synthesis Result</p>
+                <div className="rounded-md border border-cyber-green/20 bg-cyber-green/5 p-3">
+                  <p className="text-[10px] font-mono uppercase tracking-wider text-cyber-green mb-2">Synthesis Result</p>
                   <pre className="text-xs font-mono text-foreground/70 whitespace-pre-wrap break-words max-h-60 overflow-auto scrollbar-cyber">
                     {typeof data.result === "string" ? data.result : JSON.stringify(data.result, null, 2)}
                   </pre>
                 </div>
               )}
 
-              {/* Error details if failed */}
-              {data.status === "failed" && data.error && (
+              {/* Error details on failure */}
+              {data.status === "failed" && (
                 <div className="rounded-md border border-cyber-red/30 bg-cyber-red/5 p-3">
                   <p className="text-[10px] font-mono uppercase tracking-wider text-cyber-red mb-1">Error Details</p>
-                  <p className="text-xs font-mono text-cyber-red/80">{data.error}</p>
+                  <p className="text-xs font-mono text-cyber-red/80">
+                    {data.error ?? "No error message provided. Check the Raw JSON tab for details."}
+                  </p>
                 </div>
               )}
             </>
@@ -459,18 +558,18 @@ export function AgentJobMonitor({
           )}
         </TabsContent>
 
-        {/* Raw JSON Tab */}
+        {/* ── Raw JSON Tab ── */}
         <TabsContent value="json" className="flex-1">
           <ResponseViewer result={result} durationMs={durationMs} error={error} className="border-0 rounded-none min-h-[300px]" />
         </TabsContent>
 
-        {/* Activity Log Tab */}
+        {/* ── Activity Log Tab ── */}
         <TabsContent value="activity" className="flex-1 p-4">
           {steps.length > 0 ? (
             <ActivityLog steps={steps} />
           ) : (
             <div className="flex items-center justify-center py-12">
-              <p className="text-xs font-mono text-muted-foreground/50">No activity yet</p>
+              <p className="text-xs font-mono text-muted-foreground/50">No activity recorded yet</p>
             </div>
           )}
         </TabsContent>
