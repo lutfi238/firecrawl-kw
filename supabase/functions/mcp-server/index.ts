@@ -522,9 +522,9 @@ async function processAgentJob(jobId: string, args: Record<string, unknown>, aiS
       sourcesCollected: collectedCount,
       sourcesResolved: sources.filter(s => s.resolveStatus === "resolved" || s.resolveStatus === "unchanged").length,
       sourcesScrapedSuccessfully: sources.filter(s => s.scrapeStatus === "success").length,
-      sourcesUsableForSynthesis: sources.filter(s => s.scrapeStatus === "success" && s.contentLength >= MIN_USABLE_CONTENT_LENGTH).length,
+      sourcesUsableForSynthesis: sources.filter(s => s.scrapeStatus === "success").length,
       failedSources: sources.filter(s => s.scrapeStatus === "failed").length,
-      emptyContentSources: sources.filter(s => s.scrapeStatus === "empty").length,
+      emptyContentSources: sources.filter(s => s.scrapeStatus === "empty" || s.scrapeStatus === "boilerplate").length,
     };
 
     console.log("[agent] Evidence metrics:", JSON.stringify(metrics));
@@ -541,8 +541,8 @@ async function processAgentJob(jobId: string, args: Record<string, unknown>, aiS
       error: s.error,
     }));
 
-    // Step 3: Synthesis quality gate
-    const usableSources = sources.filter(s => s.scrapeStatus === "success" && s.contentLength >= MIN_USABLE_CONTENT_LENGTH);
+    // Step 3: Synthesis quality gate — only "success" sources are usable
+    const usableSources = sources.filter(s => s.scrapeStatus === "success");
 
     if (usableSources.length === 0) {
       // No usable evidence — do not synthesize
