@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useAuthStore } from "@/stores/authStore";
 import { useMCPServer } from "@/hooks/useMCPServer";
 import { useSettings } from "@/hooks/useSettings";
