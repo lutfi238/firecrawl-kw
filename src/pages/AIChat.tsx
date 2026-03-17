@@ -371,7 +371,7 @@ export default function AIChat() {
         }
 
         const allSourceUrls = [...new Set(allEvidence.flatMap(e => e.sourceUrls))];
-        const toolsUsed = [...new Set(toolResults.map(r => r.tool).concat(evidenceThin && queryNeedsDepth ? ["search_and_scrape"] : []))];
+        const toolsUsed = [...new Set(toolResults.map(r => r.tool).concat(shouldEscalate ? ["search_and_scrape"] : []))];
         const evidenceIsSubstantial = combinedEvidence.length > 100;
 
         if (evidenceIsSubstantial) {
