@@ -14,8 +14,21 @@ import { Link } from "react-router-dom";
 export default function ToolTester() {
   const [selectedTool, setSelectedTool] = useState(TOOL_DEFINITIONS[0].name);
   const { execute, cancel, result, durationMs, loading, error, steps } = useToolExecutorWithActivity();
+  const { settings } = useSettings();
 
   const tool = TOOL_DEFINITIONS.find((t) => t.name === selectedTool)!;
+
+  const toolDescription = useMemo(() => {
+    if (tool.name === "extract") {
+      const provider = settings.ai_provider;
+      const model = settings.ai_model;
+      if (provider && model) {
+        return `Scrape a URL and use AI (${provider} → ${model}) to extract structured data.`;
+      }
+      return null; // signal to show "not configured" link
+    }
+    return tool.description;
+  }, [tool, settings.ai_provider, settings.ai_model]);
 
   return (
     <div className="space-y-4 max-w-6xl">
