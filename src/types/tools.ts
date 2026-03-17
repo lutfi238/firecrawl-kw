@@ -69,7 +69,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     name: "extract",
-    description: "Scrape a URL and use AI (Claude Haiku 4.5 via GitHub Copilot) to extract structured data.",
+    description: "Scrape a URL and use AI to extract structured data.",
     icon: "Brain",
     category: "ai",
     inputs: [
