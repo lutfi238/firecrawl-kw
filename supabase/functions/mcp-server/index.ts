@@ -480,8 +480,14 @@ async function processAgentJob(jobId: string, args: Record<string, unknown>, aiS
         const scraped = await scrapeUrl(finalUrl);
         markdown = scraped.markdown.slice(0, 6000);
         title = title || scraped.title;
-        scrapeStatus = markdown.length >= MIN_USABLE_CONTENT_LENGTH ? "success" : "empty";
-        console.log("[agent] Scraped OK:", finalUrl, "len:", markdown.length);
+        if (isUsableArticleContent(markdown)) {
+          scrapeStatus = "success";
+        } else if (markdown.length > 0) {
+          scrapeStatus = "boilerplate";
+        } else {
+          scrapeStatus = "empty";
+        }
+        console.log("[agent] Scraped:", finalUrl, "len:", markdown.length, "status:", scrapeStatus);
       } catch (e) {
         scrapeError = e instanceof Error ? e.message : "scrape failed";
         console.log("[agent] Scrape failed:", finalUrl, scrapeError);
