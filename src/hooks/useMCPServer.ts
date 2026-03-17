@@ -12,7 +12,7 @@ export function useMCPServer() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const githubToken = useAuthStore((s) => s.githubToken);
-  const { data: settings } = useSettings();
+  const { settings } = useSettings();
 
   const callTool = useCallback(
     async (toolName: string, args: Record<string, unknown>): Promise<ToolCallResult> => {
