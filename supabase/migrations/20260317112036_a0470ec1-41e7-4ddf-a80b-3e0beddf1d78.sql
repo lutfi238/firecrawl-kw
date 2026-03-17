@@ -1,0 +1,1 @@
+ALTER TABLE public.uptime_logs ADD COLUMN status_code integer;
