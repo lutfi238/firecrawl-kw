@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useAuthStore } from "@/stores/authStore";
 import { useMCPServer } from "@/hooks/useMCPServer";
 import { useSettings } from "@/hooks/useSettings";
@@ -10,8 +10,7 @@ import { cn } from "@/lib/utils";
 import type { ChatMessage, ToolCallResult } from "@/types/mcp";
 import { TOOL_DEFINITIONS } from "@/types/tools";
 import { supabase } from "@/integrations/supabase/client";
-
-const SLASH_COMMANDS = TOOL_DEFINITIONS.map((t) => `/${t.name}`);
+import { SlashCommandPicker } from "@/components/SlashCommandPicker";
 
 export default function AIChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -24,6 +23,7 @@ export default function AIChat() {
   const { githubToken } = useAuthStore();
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const [showSlashPicker, setShowSlashPicker] = useState(false);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -170,7 +170,7 @@ export default function AIChat() {
             <div className="text-center space-y-2">
               <Bot className="h-10 w-10 text-muted-foreground/30 mx-auto" />
               <p className="text-sm text-muted-foreground/50 font-mono">
-                Use slash commands: {SLASH_COMMANDS.slice(0, 4).join(", ")}...
+                Use slash commands: /search, /scrape, /extract, /crawl...
               </p>
               {settings.ai_provider && (
                 <p className="text-[11px] text-muted-foreground/30 font-mono">
@@ -247,11 +247,33 @@ export default function AIChat() {
       </div>
 
       {/* Input */}
-      <div className="glass rounded-lg p-3 flex gap-2">
+      <div className="relative glass rounded-lg p-3 flex gap-2">
+        <SlashCommandPicker
+          input={input}
+          visible={showSlashPicker && input.startsWith("/") && !input.includes(" ")}
+          onSelect={(cmd) => {
+            setInput(cmd);
+            setShowSlashPicker(false);
+          }}
+          onDismiss={() => setShowSlashPicker(false)}
+        />
         <Input
           value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSend()}
+          onChange={(e) => {
+            setInput(e.target.value);
+            if (e.target.value.startsWith("/")) {
+              setShowSlashPicker(true);
+            } else {
+              setShowSlashPicker(false);
+            }
+          }}
+          onKeyDown={(e) => {
+            if (showSlashPicker && input.startsWith("/") && !input.includes(" ")) {
+              if (["ArrowUp", "ArrowDown", "Escape"].includes(e.key)) return;
+              if (e.key === "Enter") return; // let picker handle it
+            }
+            if (e.key === "Enter" && !e.shiftKey) handleSend();
+          }}
           placeholder="/search query or ask a question..."
           className="bg-transparent border-none font-mono text-sm focus-visible:ring-0 focus-visible:ring-offset-0"
           disabled={loading}
