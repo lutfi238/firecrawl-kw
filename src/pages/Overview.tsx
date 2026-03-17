@@ -99,7 +99,7 @@ export default function Overview() {
               <div className="flex items-center justify-center gap-1.5 text-cyber-violet mb-1">
                 <Wrench className="h-4 w-4" />
               </div>
-              <p className="text-xl font-display font-bold">10</p>
+              <p className="text-xl font-display font-bold">15</p>
               <p className="text-[10px] font-mono text-muted-foreground uppercase">Tools</p>
             </div>
           </div>

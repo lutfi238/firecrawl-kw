@@ -11,7 +11,7 @@ export interface ToolDefinition {
   name: string;
   description: string;
   icon: string;
-  category: "search" | "scrape" | "crawl" | "ai" | "utility";
+  category: "search" | "scrape" | "crawl" | "ai" | "utility" | "async";
   inputs: ToolInputField[];
   requiresRenderer?: boolean;
 }
@@ -50,7 +50,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     name: "crawl",
-    description: "Crawl a website using BFS, staying on the same domain, with optional content extraction.",
+    description: "Async BFS crawl a website — returns jobId for polling via check_crawl_status.",
     icon: "Network",
     category: "crawl",
     inputs: [
@@ -113,12 +113,60 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     name: "batch_scrape",
-    description: "Scrape multiple URLs in parallel and return combined results.",
+    description: "Async scrape multiple URLs — returns jobId for polling via check_batch_status.",
     icon: "Layers",
     category: "scrape",
     inputs: [
       { name: "urls", type: "string", description: "Comma-separated list of URLs", required: true, placeholder: "https://a.com, https://b.com" },
       { name: "includeLinks", type: "boolean", description: "Include hyperlinks in output", default: true },
+    ],
+  },
+  {
+    name: "check_crawl_status",
+    description: "Check status of an async crawl job and retrieve results when completed.",
+    icon: "Timer",
+    category: "async",
+    inputs: [
+      { name: "jobId", type: "string", description: "Job ID returned by the crawl tool", required: true, placeholder: "uuid" },
+    ],
+  },
+  {
+    name: "check_batch_status",
+    description: "Check status of an async batch scrape job and retrieve results when completed.",
+    icon: "Timer",
+    category: "async",
+    inputs: [
+      { name: "jobId", type: "string", description: "Job ID returned by the batch_scrape tool", required: true, placeholder: "uuid" },
+    ],
+  },
+  {
+    name: "agent",
+    description: "Autonomous AI research agent — searches, scrapes, and synthesizes information automatically.",
+    icon: "Bot",
+    category: "ai",
+    inputs: [
+      { name: "prompt", type: "string", description: "Natural language research task", required: true, placeholder: "Research the latest trends in AI agents" },
+      { name: "urls", type: "string", description: "Optional comma-separated focus URLs", placeholder: "https://example.com" },
+      { name: "schema", type: "string", description: "Optional JSON schema for structured output", placeholder: '{"findings": [{"topic": "string", "summary": "string"}]}' },
+      { name: "maxSteps", type: "number", description: "Maximum research steps", default: 5 },
+    ],
+  },
+  {
+    name: "agent_status",
+    description: "Check status of an autonomous agent research job and retrieve synthesis when done.",
+    icon: "Timer",
+    category: "async",
+    inputs: [
+      { name: "jobId", type: "string", description: "Job ID returned by the agent tool", required: true, placeholder: "uuid" },
+    ],
+  },
+  {
+    name: "chat",
+    description: "Send a conversational message to the AI assistant.",
+    icon: "MessageSquare",
+    category: "ai",
+    inputs: [
+      { name: "message", type: "string", description: "Your message", required: true, placeholder: "Hello, help me with..." },
     ],
   },
 ];
