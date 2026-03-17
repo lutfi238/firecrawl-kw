@@ -201,7 +201,51 @@ export default function Settings() {
         </div>
       </GlassCard>
 
-      {/* GitHub PAT for Copilot */}
+      {/* MCP API Key Protection */}
+      <GlassCard>
+        <h2 className="text-xs font-mono uppercase tracking-widest text-muted-foreground mb-4 font-semibold flex items-center gap-2">
+          🔐 MCP Server Secret
+        </h2>
+        <p className="text-xs text-muted-foreground mb-4">
+          Protect your MCP endpoint with a shared secret. External clients (Claude CLI, etc.) must send this value in the <code className="text-primary">X-MCP-Secret</code> header. The dashboard reads it automatically from your settings.
+        </p>
+        <div className="flex flex-col gap-3">
+          <div>
+            <Label className="text-xs">MCP Secret</Label>
+            <Input
+              type="password"
+              placeholder="Enter a secret string…"
+              value={mcpSecret}
+              onChange={(e) => setMcpSecret(e.target.value)}
+              className="mt-1 font-mono text-xs"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              disabled={savingSecret || !mcpSecret}
+              onClick={async () => {
+                setSavingSecret(true);
+                try {
+                  await upsert.mutateAsync({ key: "mcp_secret", value: mcpSecret });
+                  toast.success("MCP secret saved");
+                } catch {
+                  toast.error("Failed to save secret");
+                }
+                setSavingSecret(false);
+              }}
+            >
+              {savingSecret ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <CheckCircle className="h-3 w-3 mr-1" />}
+              Save Secret
+            </Button>
+            {settings.mcp_secret && (
+              <StatusBadge status="online" label="PROTECTED" />
+            )}
+          </div>
+        </div>
+      </GlassCard>
+
+
       <GlassCard>
         <h2 className="text-xs font-mono uppercase tracking-widest text-muted-foreground mb-4 font-semibold">Copilot API Access</h2>
         <p className="text-xs text-muted-foreground mb-4">
