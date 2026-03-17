@@ -40,6 +40,25 @@ function getAiSettingsFromMap(map: Record<string, string>): { baseUrl: string; a
   };
 }
 
+function getServiceClient() {
+  const url = Deno.env.get("SUPABASE_URL")!;
+  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  return createClient(url, key, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+}
+
+function getUserIdFromAuth(authHeader: string | null): Promise<string | null> {
+  const url = Deno.env.get("SUPABASE_URL");
+  const key = Deno.env.get("SUPABASE_ANON_KEY");
+  if (!url || !key || !authHeader) return Promise.resolve(null);
+  const sb = createClient(url, key, {
+    global: { headers: { Authorization: authHeader } },
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  return sb.auth.getUser().then(({ data }) => data.user?.id ?? null).catch(() => null);
+}
+
 // ========== HTML → Markdown ==========
 function htmlToMarkdown(html: string): string {
   let md = html;
@@ -157,14 +176,12 @@ async function searchWeb(query: string, maxResults: number): Promise<Array<{ tit
       const xml = await res.text();
       console.log("[search] RSS XML length:", xml.length);
 
-      // Parse all items first
       const rawItems: Array<{ title: string; rawLink: string; rawDesc: string }> = [];
       const itemRegex = /<item>([\s\S]*?)<\/item>/gi;
       let m;
       while ((m = itemRegex.exec(xml)) !== null && rawItems.length < maxResults) {
         const item = m[1];
         const titleMatch = item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>|<title>(.*?)<\/title>/i);
-        // Extract link - handle CDATA and newlines around link content
         const linkMatch = item.match(/<link\s*\/?>\s*<!\[CDATA\[(.*?)\]\]>|<link>(.*?)<\/link>|<link\s*\/?>([^<\s]+)/i);
         const guidMatch = item.match(/<guid[^>]*>(https?:\/\/[^<]+)<\/guid>/i);
         const descMatch = item.match(/<description><!\[CDATA\[([\s\S]*?)\]\]><\/description>|<description>([\s\S]*?)<\/description>/i);
@@ -179,22 +196,18 @@ async function searchWeb(query: string, maxResults: number): Promise<Array<{ tit
 
       if (rawItems.length === 0) continue;
 
-      // Resolve redirects in parallel for Google News URLs
       const items = await Promise.all(rawItems.map(async ({ title, rawLink, rawDesc }) => {
         let finalUrl = rawLink;
         if (rawLink.includes("news.google.com")) {
           finalUrl = await resolveRedirect(rawLink);
         }
 
-        // Google News descriptions just repeat title + source — not useful
-        // Only use snippet if it contains real descriptive text beyond the title
         let snippet = "";
         if (rawDesc) {
           const cleaned = rawDesc
             .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&")
             .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, " ")
             .replace(/<[^>]+>/g, "").trim();
-          // Check if the cleaned text is substantially different from the title
           const titleLower = title.toLowerCase();
           const cleanedLower = cleaned.toLowerCase();
           const isDifferent = !cleanedLower.includes(titleLower) && !titleLower.includes(cleanedLower);
@@ -206,7 +219,6 @@ async function searchWeb(query: string, maxResults: number): Promise<Array<{ tit
         return { title, url: finalUrl, snippet };
       }));
 
-      // Deduplicate by URL
       const seen = new Set<string>();
       const deduped = items.filter(item => {
         if (seen.has(item.url)) return false;
@@ -225,16 +237,229 @@ async function searchWeb(query: string, maxResults: number): Promise<Array<{ tit
   return [];
 }
 
+// ========== Background crawl processor ==========
+async function processCrawlJob(jobId: string, args: Record<string, unknown>) {
+  const svc = getServiceClient();
+  try {
+    await svc.from("mcp_jobs").update({ status: "processing" }).eq("id", jobId);
+
+    const visited = new Set<string>();
+    const queue: string[] = [args.url as string];
+    const results: Array<{ url: string; title?: string; markdown?: string }> = [];
+    const limit = (args.maxPages as number) || 10;
+
+    while (queue.length > 0 && visited.size < limit) {
+      const current = queue.shift()!;
+      if (visited.has(current)) continue;
+      visited.add(current);
+      try {
+        const res = await fetch(current, { headers: { "User-Agent": "Mozilla/5.0 (compatible; FirecrawlMCP/1.0)" }, redirect: "follow" });
+        if (!res.ok) continue;
+        const html = await res.text();
+        const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+        const title = titleMatch ? titleMatch[1].trim() : current;
+        const entry: { url: string; title?: string; markdown?: string } = { url: current, title };
+        if (args.extractContent) entry.markdown = htmlToMarkdown(html);
+        results.push(entry);
+        for (const link of extractLinks(html, current)) {
+          if (!visited.has(link)) queue.push(link);
+        }
+      } catch { /* skip */ }
+
+      // Update progress periodically
+      if (visited.size % 3 === 0) {
+        await svc.from("mcp_jobs").update({
+          output: { progress: `${visited.size}/${limit}`, partial: results.length },
+        }).eq("id", jobId);
+      }
+    }
+
+    await svc.from("mcp_jobs").update({
+      status: "completed",
+      output: { pages: results, totalCrawled: results.length },
+    }).eq("id", jobId);
+  } catch (err) {
+    await svc.from("mcp_jobs").update({
+      status: "failed",
+      output: { error: err instanceof Error ? err.message : "Unknown error" },
+    }).eq("id", jobId);
+  }
+}
+
+// ========== Background batch scrape processor ==========
+async function processBatchScrapeJob(jobId: string, args: Record<string, unknown>) {
+  const svc = getServiceClient();
+  try {
+    await svc.from("mcp_jobs").update({ status: "processing" }).eq("id", jobId);
+
+    const urlList = ((args.urls as string) || "").split(",").map((u: string) => u.trim()).filter(Boolean);
+    const results: Array<{ url: string; title: string; markdown: string; error?: string }> = [];
+
+    for (const url of urlList) {
+      try {
+        const { markdown, title } = await scrapeUrl(url);
+        results.push({ url, title, markdown: markdown.slice(0, 4000) });
+      } catch (e) {
+        results.push({ url, title: "Error", markdown: "", error: e instanceof Error ? e.message : "unknown" });
+      }
+
+      // Update progress
+      await svc.from("mcp_jobs").update({
+        output: { progress: `${results.length}/${urlList.length}`, partial: results.length },
+      }).eq("id", jobId);
+    }
+
+    await svc.from("mcp_jobs").update({
+      status: "completed",
+      output: { results, totalScraped: results.filter(r => !r.error).length },
+    }).eq("id", jobId);
+  } catch (err) {
+    await svc.from("mcp_jobs").update({
+      status: "failed",
+      output: { error: err instanceof Error ? err.message : "Unknown error" },
+    }).eq("id", jobId);
+  }
+}
+
+// ========== Background agent processor ==========
+async function processAgentJob(jobId: string, args: Record<string, unknown>, aiSettings: { baseUrl: string; apiKey: string; model: string }) {
+  const svc = getServiceClient();
+  try {
+    await svc.from("mcp_jobs").update({ status: "processing", output: { step: "searching" } }).eq("id", jobId);
+
+    const prompt = args.prompt as string;
+    const focusUrls = (args.urls as string[] | undefined) ?? [];
+    const schema = args.schema as string | undefined;
+    const maxSteps = (args.maxSteps as number) || 5;
+
+    // Step 1: Search for relevant URLs
+    let urlsToScrape: string[] = [...focusUrls];
+    if (urlsToScrape.length < maxSteps) {
+      const searchResults = await searchWeb(prompt, maxSteps - urlsToScrape.length);
+      urlsToScrape.push(...searchResults.map(r => r.url));
+    }
+    urlsToScrape = urlsToScrape.slice(0, maxSteps);
+
+    await svc.from("mcp_jobs").update({ output: { step: "scraping", urls: urlsToScrape } }).eq("id", jobId);
+
+    // Step 2: Scrape URLs
+    const scrapedContent: string[] = [];
+    for (const url of urlsToScrape) {
+      try {
+        const { markdown, title } = await scrapeUrl(url);
+        scrapedContent.push(`# ${title}\nURL: ${url}\n\n${markdown.slice(0, 4000)}`);
+      } catch {
+        scrapedContent.push(`URL: ${url}\nFailed to scrape.`);
+      }
+    }
+
+    await svc.from("mcp_jobs").update({ output: { step: "synthesizing", scrapedCount: scrapedContent.length } }).eq("id", jobId);
+
+    // Step 3: Synthesize with AI
+    const systemPrompt = schema
+      ? `You are a research agent. Synthesize the provided web content to answer the research prompt thoroughly. Return valid JSON matching this schema: ${schema}`
+      : "You are a research agent. Synthesize the provided web content to answer the research prompt thoroughly. Provide a comprehensive, well-structured response.";
+
+    const aiRes = await fetch(`${aiSettings.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${aiSettings.apiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://id-preview--4485e6f5-86ea-4999-acd7-7209fb13e21d.lovable.app",
+        "X-Title": "Personal Firecrawl MCP",
+      },
+      body: JSON.stringify({
+        model: aiSettings.model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: `Research prompt: ${prompt}\n\n---SCRAPED CONTENT---\n\n${scrapedContent.join("\n\n---\n\n")}` },
+        ],
+        max_tokens: 8192,
+      }),
+    });
+
+    if (!aiRes.ok) {
+      const errText = await aiRes.text();
+      throw new Error(`AI API error ${aiRes.status}: ${errText.slice(0, 300)}`);
+    }
+
+    const aiData = await aiRes.json();
+    const answer = aiData.choices?.[0]?.message?.content;
+
+    await svc.from("mcp_jobs").update({
+      status: "completed",
+      output: {
+        synthesis: answer || "No response from AI",
+        sourcesUsed: urlsToScrape,
+        scrapedCount: scrapedContent.length,
+      },
+    }).eq("id", jobId);
+  } catch (err) {
+    await svc.from("mcp_jobs").update({
+      status: "failed",
+      output: { error: err instanceof Error ? err.message : "Unknown error" },
+    }).eq("id", jobId);
+  }
+}
+
+// ========== Job creation helper ==========
+async function createJob(
+  authHeader: string | null,
+  type: string,
+  input: Record<string, unknown>,
+): Promise<{ jobId: string; error?: string }> {
+  const userId = await getUserIdFromAuth(authHeader);
+  if (!userId) return { jobId: "", error: "Not authenticated" };
+
+  const svc = getServiceClient();
+  const { data, error } = await svc
+    .from("mcp_jobs")
+    .insert({ user_id: userId, type, status: "pending", input })
+    .select("id")
+    .single();
+
+  if (error || !data) return { jobId: "", error: error?.message || "Failed to create job" };
+  return { jobId: data.id };
+}
+
+// ========== Check job status helper ==========
+async function checkJobStatus(authHeader: string | null, jobId: string): Promise<Record<string, unknown>> {
+  const userId = await getUserIdFromAuth(authHeader);
+  if (!userId) return { error: "Not authenticated" };
+
+  const url = Deno.env.get("SUPABASE_URL")!;
+  const key = Deno.env.get("SUPABASE_ANON_KEY")!;
+  const sb = createClient(url, key, {
+    global: { headers: authHeader ? { Authorization: authHeader } : {} },
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+
+  const { data, error } = await sb
+    .from("mcp_jobs")
+    .select("*")
+    .eq("id", jobId)
+    .eq("user_id", userId)
+    .single();
+
+  if (error || !data) return { error: "Job not found" };
+  return {
+    jobId: data.id,
+    type: data.type,
+    status: data.status,
+    ...(data.output as Record<string, unknown> || {}),
+    createdAt: data.created_at,
+    updatedAt: data.updated_at,
+  };
+}
+
 // ========== Hono App ==========
 const app = new Hono();
-
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-github-token, x-mcp-secret, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
   "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
 };
-
 
 // CORS preflight
 app.options("/*", (c) => {
@@ -244,7 +469,7 @@ app.options("/*", (c) => {
 // ========== API Key middleware ==========
 function checkMcpSecret(c: any): Response | null {
   const secret = Deno.env.get("MCP_SECRET");
-  if (!secret) return null; // open mode
+  if (!secret) return null;
   const provided = c.req.header("x-mcp-secret");
   if (provided !== secret) {
     return c.json(
@@ -256,21 +481,20 @@ function checkMcpSecret(c: any): Response | null {
   return null;
 }
 
-// Health check GET handler - no auth needed
+// Health check GET handler
 app.get("/*", (c) => {
   return c.json(
-    { status: "ok", server: "personal-firecrawl", version: "1.0.0", tools: 10 },
+    { status: "ok", server: "personal-firecrawl", version: "2.0.0", tools: 15 },
     200,
     corsHeaders
   );
 });
 
-// MCP POST handler - manual JSON-RPC dispatch
+// MCP POST handler
 app.post("/*", async (c) => {
   const denied = checkMcpSecret(c);
   if (denied) return denied;
 
-  // Request-scoped tokens — never store at module level
   const authHeader = c.req.header("authorization") || null;
   const githubToken = c.req.header("x-github-token") || null;
 
@@ -285,7 +509,7 @@ app.post("/*", async (c) => {
         result: {
           protocolVersion: "2024-11-05",
           capabilities: { tools: { listChanged: false } },
-          serverInfo: { name: "personal-firecrawl", version: "1.0.0" },
+          serverInfo: { name: "personal-firecrawl", version: "2.0.0" },
         },
       }, 200, corsHeaders);
     }
@@ -303,18 +527,26 @@ app.post("/*", async (c) => {
       const screenshotDesc = rendererEnabled
         ? "Take a screenshot via Render renderer"
         : "Take a screenshot (disabled - configure Render renderer in Settings)";
+      const agentDesc = aiSettings
+        ? `Autonomous AI research agent — searches, scrapes, and synthesizes information using ${aiSettings.model}`
+        : "Autonomous AI research agent (not configured — set AI provider in Settings)";
+
       const toolDefs = [
         { name: "search", description: "Search the web using DuckDuckGo", inputSchema: { type: "object", properties: { query: { type: "string" }, maxResults: { type: "number" } }, required: ["query"] } },
         { name: "scrape", description: "Fetch a URL and convert HTML to Markdown", inputSchema: { type: "object", properties: { url: { type: "string" } }, required: ["url"] } },
         { name: "scrape_js", description: scrapeJsDesc, inputSchema: { type: "object", properties: { url: { type: "string" }, waitFor: { type: "number" } }, required: ["url"] } },
-        { name: "crawl", description: "BFS crawl a website staying on the same domain", inputSchema: { type: "object", properties: { url: { type: "string" }, maxPages: { type: "number" }, extractContent: { type: "boolean" } }, required: ["url"] } },
+        { name: "crawl", description: "Async BFS crawl a website — returns jobId for polling", inputSchema: { type: "object", properties: { url: { type: "string" }, maxPages: { type: "number" }, extractContent: { type: "boolean" } }, required: ["url"] } },
         { name: "map", description: "Fast URL-only crawl to map all links on a domain", inputSchema: { type: "object", properties: { url: { type: "string" }, maxPages: { type: "number" } }, required: ["url"] } },
         { name: "extract", description: extractDesc, inputSchema: { type: "object", properties: { url: { type: "string" }, prompt: { type: "string" }, schema: { type: "string" } }, required: ["url", "prompt"] } },
         { name: "screenshot", description: screenshotDesc, inputSchema: { type: "object", properties: { url: { type: "string" }, width: { type: "number" }, height: { type: "number" } }, required: ["url"] } },
         { name: "search_and_scrape", description: "Search then scrape top results", inputSchema: { type: "object", properties: { query: { type: "string" }, maxResults: { type: "number" } }, required: ["query"] } },
         { name: "html_to_markdown", description: "Convert HTML string to Markdown", inputSchema: { type: "object", properties: { html: { type: "string" } }, required: ["html"] } },
-        { name: "batch_scrape", description: "Scrape multiple URLs in parallel", inputSchema: { type: "object", properties: { urls: { type: "string" } }, required: ["urls"] } },
+        { name: "batch_scrape", description: "Async scrape multiple URLs — returns jobId for polling", inputSchema: { type: "object", properties: { urls: { type: "string" } }, required: ["urls"] } },
         { name: "chat", description: "Send a conversational message to the AI assistant", inputSchema: { type: "object", properties: { message: { type: "string" }, history: { type: "array" } }, required: ["message"] } },
+        { name: "check_crawl_status", description: "Check status of an async crawl job", inputSchema: { type: "object", properties: { jobId: { type: "string" } }, required: ["jobId"] } },
+        { name: "check_batch_status", description: "Check status of an async batch scrape job", inputSchema: { type: "object", properties: { jobId: { type: "string" } }, required: ["jobId"] } },
+        { name: "agent", description: agentDesc, inputSchema: { type: "object", properties: { prompt: { type: "string" }, urls: { type: "array", items: { type: "string" } }, schema: { type: "string" }, maxSteps: { type: "number" } }, required: ["prompt"] } },
+        { name: "agent_status", description: "Check status of an autonomous agent research job", inputSchema: { type: "object", properties: { jobId: { type: "string" } }, required: ["jobId"] } },
       ];
       return c.json({ jsonrpc: "2.0", id, result: { tools: toolDefs } }, 200, corsHeaders);
     }
@@ -361,32 +593,20 @@ app.post("/*", async (c) => {
           }
           break;
         }
+
+        // ========== ASYNC CRAWL ==========
         case "crawl": {
-          const visited = new Set<string>();
-          const queue: string[] = [args.url];
-          const results: Array<{ url: string; title?: string; markdown?: string }> = [];
-          const limit = args.maxPages || 10;
-          while (queue.length > 0 && visited.size < limit) {
-            const current = queue.shift()!;
-            if (visited.has(current)) continue;
-            visited.add(current);
-            try {
-              const res = await fetch(current, { headers: { "User-Agent": "Mozilla/5.0 (compatible; FirecrawlMCP/1.0)" }, redirect: "follow" });
-              if (!res.ok) continue;
-              const html = await res.text();
-              const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-              const title = titleMatch ? titleMatch[1].trim() : current;
-              const entry: { url: string; title?: string; markdown?: string } = { url: current, title };
-              if (args.extractContent) entry.markdown = htmlToMarkdown(html);
-              results.push(entry);
-              for (const link of extractLinks(html, current)) {
-                if (!visited.has(link)) queue.push(link);
-              }
-            } catch { /* skip */ }
+          const job = await createJob(authHeader, "crawl", args);
+          if (job.error) {
+            result = { content: [{ type: "text", text: `Error creating crawl job: ${job.error}` }], isError: true };
+          } else {
+            // Fire and forget background processing
+            EdgeRuntime.waitUntil(processCrawlJob(job.jobId, args));
+            result = { content: [{ type: "text", text: JSON.stringify({ jobId: job.jobId, status: "pending", message: "Crawl started. Use check_crawl_status tool with this jobId to poll for results." }) }] };
           }
-          result = { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
           break;
         }
+
         case "map": {
           const visited = new Set<string>();
           const queue: string[] = [args.url];
@@ -407,6 +627,7 @@ app.post("/*", async (c) => {
           result = { content: [{ type: "text", text: JSON.stringify([...visited], null, 2) }] };
           break;
         }
+
         case "extract": {
           const uSettings = await getUserSettings(authHeader);
           const aiSettings = getAiSettingsFromMap(uSettings);
@@ -434,7 +655,6 @@ app.post("/*", async (c) => {
             const aiBody = await aiRes.text();
             console.log("[extract] AI response status:", aiRes.status, "body:", aiBody.slice(0, 500));
             if (!aiRes.ok) {
-              // Try to parse error details
               let errorMsg = `AI API error ${aiRes.status}`;
               try {
                 const errData = JSON.parse(aiBody);
@@ -457,6 +677,7 @@ app.post("/*", async (c) => {
           }
           break;
         }
+
         case "screenshot": {
           const sSettings = await getUserSettings(authHeader);
           const rendererUrl = sSettings.renderer_url;
@@ -475,6 +696,7 @@ app.post("/*", async (c) => {
           }
           break;
         }
+
         case "search_and_scrape": {
           const searchResults = await searchWeb(args.query, args.maxResults || 3);
           const scraped: string[] = [];
@@ -489,25 +711,61 @@ app.post("/*", async (c) => {
           result = { content: [{ type: "text", text: scraped.join("\n\n") }] };
           break;
         }
+
         case "html_to_markdown": {
           result = { content: [{ type: "text", text: htmlToMarkdown(args.html) }] };
           break;
         }
+
+        // ========== ASYNC BATCH SCRAPE ==========
         case "batch_scrape": {
-          const urlList = (args.urls as string).split(",").map((u: string) => u.trim()).filter(Boolean);
-          const batchResults = await Promise.all(
-            urlList.map(async (url: string) => {
-              try {
-                const { markdown, title } = await scrapeUrl(url);
-                return `# ${title}\nURL: ${url}\n\n${markdown.slice(0, 4000)}`;
-              } catch (e) {
-                return `# Error\nURL: ${url}\nFailed: ${e instanceof Error ? e.message : "unknown"}`;
-              }
-            })
-          );
-          result = { content: [{ type: "text", text: batchResults.join("\n\n---\n\n") }] };
+          const job = await createJob(authHeader, "batch_scrape", args);
+          if (job.error) {
+            result = { content: [{ type: "text", text: `Error creating batch job: ${job.error}` }], isError: true };
+          } else {
+            EdgeRuntime.waitUntil(processBatchScrapeJob(job.jobId, args));
+            result = { content: [{ type: "text", text: JSON.stringify({ jobId: job.jobId, status: "pending", message: "Batch scrape started. Use check_batch_status tool with this jobId to poll for results." }) }] };
+          }
           break;
         }
+
+        // ========== POLLING TOOLS ==========
+        case "check_crawl_status": {
+          const status = await checkJobStatus(authHeader, args.jobId);
+          result = { content: [{ type: "text", text: JSON.stringify(status, null, 2) }] };
+          break;
+        }
+
+        case "check_batch_status": {
+          const status = await checkJobStatus(authHeader, args.jobId);
+          result = { content: [{ type: "text", text: JSON.stringify(status, null, 2) }] };
+          break;
+        }
+
+        // ========== AGENT TOOL ==========
+        case "agent": {
+          const uSettings = await getUserSettings(authHeader);
+          const aiSettings = getAiSettingsFromMap(uSettings);
+          if (!aiSettings) {
+            result = { content: [{ type: "text", text: "Error: AI provider not configured. Go to Settings → AI Provider and add your API key." }], isError: true };
+          } else {
+            const job = await createJob(authHeader, "agent", args);
+            if (job.error) {
+              result = { content: [{ type: "text", text: `Error creating agent job: ${job.error}` }], isError: true };
+            } else {
+              EdgeRuntime.waitUntil(processAgentJob(job.jobId, args, aiSettings));
+              result = { content: [{ type: "text", text: JSON.stringify({ jobId: job.jobId, status: "pending", message: "Agent research started. Use agent_status tool with this jobId to poll for results." }) }] };
+            }
+          }
+          break;
+        }
+
+        case "agent_status": {
+          const status = await checkJobStatus(authHeader, args.jobId);
+          result = { content: [{ type: "text", text: JSON.stringify(status, null, 2) }] };
+          break;
+        }
+
         case "chat": {
           const cSettings = await getUserSettings(authHeader);
           const aiSettings = getAiSettingsFromMap(cSettings);
@@ -516,7 +774,6 @@ app.post("/*", async (c) => {
           } else {
             const systemPrompt = "You are a helpful AI assistant for Personal Firecrawl MCP, a web intelligence server. Answer conversationally and helpfully. Only use tools when explicitly requested.";
             const messages = [{ role: "system", content: systemPrompt }];
-            // Support conversation history if provided
             if (args.history && Array.isArray(args.history)) {
               for (const msg of args.history) {
                 messages.push({ role: msg.role, content: msg.content });
@@ -559,6 +816,7 @@ app.post("/*", async (c) => {
           }
           break;
         }
+
         default:
           return c.json({ jsonrpc: "2.0", id, error: { code: -32601, message: `Unknown tool: ${name}` } }, 200, corsHeaders);
       }
@@ -573,5 +831,8 @@ app.post("/*", async (c) => {
     return c.json({ jsonrpc: "2.0", id: null, error: { code: -32603, message } }, 200, corsHeaders);
   }
 });
+
+// Declare EdgeRuntime for Deno/Supabase
+declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
 
 Deno.serve(app.fetch);
