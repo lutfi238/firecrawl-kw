@@ -231,6 +231,7 @@ function getStatusSentence(data: AgentJobData): string {
 /* ── Progress Stepper ──────────────────────────────── */
 
 function ProgressStepper({ currentStep, status }: { currentStep?: string; status?: string }) {
+  const isMobile = useIsMobile();
   const isFailed = status === "failed";
   const isCompleted = status === "completed";
 
@@ -243,17 +244,76 @@ function ProgressStepper({ currentStep, status }: { currentStep?: string; status
       ? failedIdx
       : getStepIndex(currentStep);
 
-  // The step the job was on when it failed
   const failedAtIdx = isFailed ? getStepIndex(currentStep) : -1;
 
-  return (
-    <div className="flex items-center gap-1 w-full overflow-x-auto py-2">
-      {AGENT_STEPS.map((step, i) => {
-        // Hide "failed" step unless job actually failed
-        if (step.key === "failed" && !isFailed) return null;
-        // Hide "completed" step if job failed
-        if (step.key === "completed" && isFailed) return null;
+  const visibleSteps = AGENT_STEPS.filter((step) => {
+    if (step.key === "failed" && !isFailed) return false;
+    if (step.key === "completed" && isFailed) return false;
+    return true;
+  });
 
+  if (isMobile) {
+    return (
+      <div className="flex flex-col gap-1 py-2">
+        {visibleSteps.map((step, vi) => {
+          const i = AGENT_STEPS.findIndex((s) => s.key === step.key);
+          const isDone = isCompleted
+            ? i <= completedIdx
+            : isFailed
+              ? i < failedAtIdx || (failedAtIdx === -1 && i < failedIdx)
+              : i < activeIdx;
+          const isActive = i === activeIdx;
+          const isFailedStep = isFailed && step.key === "failed";
+
+          return (
+            <div key={step.key} className="flex items-center gap-2.5">
+              <div className="flex flex-col items-center">
+                <div
+                  className={cn(
+                    "h-6 w-6 rounded-full flex items-center justify-center border-2 transition-all duration-300",
+                    isDone && "border-cyber-green bg-cyber-green/20",
+                    isActive && !isFailedStep && "border-primary bg-primary/20 animate-pulse",
+                    isFailedStep && "border-cyber-red bg-cyber-red/20",
+                    !isDone && !isActive && "border-border bg-muted/30"
+                  )}
+                >
+                  {isDone && <CheckCircle2 className="h-3 w-3 text-cyber-green" />}
+                  {isActive && !isFailedStep && <Loader2 className="h-3 w-3 text-primary animate-spin" />}
+                  {isFailedStep && <AlertCircle className="h-3 w-3 text-cyber-red" />}
+                  {!isDone && !isActive && <Circle className="h-2.5 w-2.5 text-muted-foreground/30" />}
+                </div>
+                {vi < visibleSteps.length - 1 && (
+                  <div
+                    className={cn(
+                      "w-px h-3",
+                      isDone ? "bg-cyber-green/40" : isFailedStep ? "bg-cyber-red/30" : "bg-border"
+                    )}
+                  />
+                )}
+              </div>
+              <span
+                className={cn(
+                  "text-[10px] font-mono uppercase tracking-wider",
+                  isDone && "text-cyber-green",
+                  isActive && !isFailedStep && "text-primary",
+                  isFailedStep && "text-cyber-red",
+                  !isDone && !isActive && "text-muted-foreground/40"
+                )}
+              >
+                {step.label}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  // Desktop: horizontal stepper
+  return (
+    <div className="flex items-center gap-1 w-full py-2">
+      {visibleSteps.map((step, vi) => {
+        const i = AGENT_STEPS.findIndex((s) => s.key === step.key);
         const isDone = isCompleted
           ? i <= completedIdx
           : isFailed
@@ -263,7 +323,7 @@ function ProgressStepper({ currentStep, status }: { currentStep?: string; status
         const isFailedStep = isFailed && step.key === "failed";
 
         return (
-          <div key={step.key} className="flex items-center gap-1 flex-1 min-w-0">
+          <div key={step.key} className="flex items-center gap-1 flex-1 min-w-[3.5rem]">
             <div className="flex flex-col items-center gap-1 flex-shrink-0">
               <div
                 className={cn(
@@ -281,7 +341,7 @@ function ProgressStepper({ currentStep, status }: { currentStep?: string; status
               </div>
               <span
                 className={cn(
-                  "text-[10px] font-mono uppercase tracking-wider text-center leading-tight",
+                  "text-[10px] font-mono uppercase tracking-wider text-center leading-tight whitespace-nowrap",
                   isDone && "text-cyber-green",
                   isActive && !isFailedStep && "text-primary",
                   isFailedStep && "text-cyber-red",
@@ -291,7 +351,7 @@ function ProgressStepper({ currentStep, status }: { currentStep?: string; status
                 {step.label}
               </span>
             </div>
-            {i < AGENT_STEPS.length - 1 && (
+            {vi < visibleSteps.length - 1 && (
               <div
                 className={cn(
                   "h-px flex-1 min-w-2 mt-[-16px]",
