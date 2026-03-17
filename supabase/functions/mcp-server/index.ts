@@ -402,7 +402,9 @@ function isUsableArticleContent(markdown: string): boolean {
   return true;
 }
 
-// ========== Source evidence types ==========
+// ========== Source acquisition types ==========
+type AcquisitionType = "direct_article" | "resolved_article" | "unresolved_wrapper" | "failed_fetch";
+
 interface NormalizedSource {
   sourceUrl: string;
   finalUrl?: string;
@@ -411,6 +413,7 @@ interface NormalizedSource {
   excerpt: string;
   markdown: string;
   contentLength: number;
+  acquisitionType: AcquisitionType;
   resolveStatus: "resolved" | "unchanged" | "failed" | "unresolved_wrapper";
   scrapeStatus: "success" | "failed" | "unresolved_wrapper" | "empty" | "boilerplate";
   error?: string;
@@ -419,99 +422,252 @@ interface NormalizedSource {
 interface EvidenceMetrics {
   sourcesCollected: number;
   sourcesResolved: number;
+  sourcesUnresolvedWrapper: number;
   sourcesScrapedSuccessfully: number;
   sourcesUsableForSynthesis: number;
-  failedSources: number;
-  emptyContentSources: number;
+  sourcesFailed: number;
+  sourcesEmpty: number;
+  sourcesBoilerplate: number;
 }
 
 const MIN_USABLE_CONTENT_LENGTH = 300;
 
-// ========== Web Search (RSS-based) ==========
-async function searchWeb(query: string, maxResults: number): Promise<Array<{ title: string; url: string; sourceUrl: string; snippet: string; rawDesc: string }>> {
+// ========== Search result with acquisition metadata ==========
+interface SearchResult {
+  title: string;
+  url: string;
+  sourceUrl: string;
+  snippet: string;
+  rawDesc: string;
+  acquisitionType: AcquisitionType;
+  searchSource: string; // which search engine found this
+}
+
+// ========== DuckDuckGo HTML search — returns direct publisher URLs ==========
+async function searchDuckDuckGo(query: string, maxResults: number): Promise<SearchResult[]> {
   const encoded = encodeURIComponent(query);
+  const ddgUrl = `https://html.duckduckgo.com/html/?q=${encoded}`;
+  try {
+    console.log("[search-ddg] Fetching:", ddgUrl);
+    const res = await fetch(ddgUrl, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html",
+      },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) {
+      console.log("[search-ddg] HTTP", res.status);
+      return [];
+    }
+    const html = await res.text();
+    console.log("[search-ddg] Response length:", html.length);
 
-  const sources = [
-    `https://news.google.com/rss/search?q=${encoded}&hl=en&gl=US&ceid=US:en`,
-    `https://www.bing.com/news/search?q=${encoded}&format=rss`,
-  ];
+    const results: SearchResult[] = [];
+    // DuckDuckGo HTML results have class="result__a" links and result__snippet
+    const resultBlocks = [...html.matchAll(/<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)];
+    const snippetBlocks = [...html.matchAll(/<a[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi)];
 
-  for (const feedUrl of sources) {
-    try {
-      console.log("[search] Trying RSS source:", feedUrl);
-      const res = await fetch(feedUrl, {
-        headers: { "User-Agent": "Mozilla/5.0 (compatible; RSS/2.0)" },
-        signal: AbortSignal.timeout(10000),
-      });
-      if (!res.ok) { console.log("[search] RSS returned", res.status); continue; }
-      const xml = await res.text();
-      console.log("[search] RSS XML length:", xml.length);
+    for (let i = 0; i < resultBlocks.length && results.length < maxResults; i++) {
+      let rawHref = resultBlocks[i][1];
+      const rawTitle = resultBlocks[i][2].replace(/<[^>]+>/g, "").trim();
 
-      const rawItems: Array<{ title: string; rawLink: string; rawDesc: string }> = [];
-      const itemRegex = /<item>([\s\S]*?)<\/item>/gi;
-      let m;
-      while ((m = itemRegex.exec(xml)) !== null && rawItems.length < maxResults) {
-        const item = m[1];
-        const titleMatch = item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>|<title>(.*?)<\/title>/i);
-        const linkMatch = item.match(/<link\s*\/?>\s*<!\[CDATA\[(.*?)\]\]>|<link>(.*?)<\/link>|<link\s*\/?>([^<\s]+)/i);
-        const guidMatch = item.match(/<guid[^>]*>(https?:\/\/[^<]+)<\/guid>/i);
-        const descMatch = item.match(/<description><!\[CDATA\[([\s\S]*?)\]\]><\/description>|<description>([\s\S]*?)<\/description>/i);
-
-        const title = (titleMatch?.[1] || titleMatch?.[2] || "").trim();
-        const rawLink = (linkMatch?.[1] || linkMatch?.[2] || linkMatch?.[3] || guidMatch?.[1] || "").trim();
-
-        if (title && rawLink) {
-          rawItems.push({ title, rawLink, rawDesc: descMatch?.[1] || descMatch?.[2] || "" });
-        }
+      // DDG wraps URLs through a redirect — extract the real URL from uddg param
+      if (rawHref.includes("uddg=")) {
+        const match = rawHref.match(/uddg=([^&]+)/);
+        if (match) rawHref = decodeURIComponent(match[1]);
       }
 
-      if (rawItems.length === 0) continue;
+      // Validate it's a real article URL
+      const check = isValidArticleUrl(rawHref);
+      if (!check.valid) {
+        console.log("[search-ddg] Skipping non-article:", rawHref.slice(0, 80), check.reason);
+        continue;
+      }
 
-      // Resolve URLs — pass rawDesc to Google News resolver
-      const items = await Promise.all(rawItems.map(async ({ title, rawLink, rawDesc }) => {
-        let finalUrl = rawLink;
-        if (isGoogleNewsRssWrapper(rawLink)) {
-          const resolved = await resolveGoogleNewsRssUrl(rawLink, rawDesc);
-          finalUrl = resolved.finalUrl || rawLink;
-          console.log("[search] Google resolve:", rawLink.slice(0, 60), "→", finalUrl.slice(0, 80), "method:", resolved.method || "none");
-        } else if (isRedirectUrl(rawLink)) {
-          const resolved = await resolveRedirect(rawLink);
-          finalUrl = resolved.finalUrl;
-        }
+      const snippet = snippetBlocks[i]
+        ? snippetBlocks[i][1].replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").trim()
+        : "";
 
-        let snippet = "";
-        if (rawDesc) {
-          const cleaned = rawDesc
-            .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&")
-            .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, " ")
-            .replace(/<[^>]+>/g, "").trim();
-          const titleLower = title.toLowerCase();
-          const cleanedLower = cleaned.toLowerCase();
-          const isDifferent = !cleanedLower.includes(titleLower) && !titleLower.includes(cleanedLower);
-          if (isDifferent && cleaned.length > 30) {
-            snippet = cleaned.slice(0, 200);
-          }
-        }
-
-        return { title, url: finalUrl, sourceUrl: rawLink, snippet, rawDesc };
-      }));
-
-      const seen = new Set<string>();
-      const deduped = items.filter(item => {
-        if (seen.has(item.url)) return false;
-        seen.add(item.url);
-        return true;
+      results.push({
+        title: rawTitle,
+        url: rawHref,
+        sourceUrl: rawHref,
+        snippet: snippet.slice(0, 200),
+        rawDesc: "",
+        acquisitionType: "direct_article",
+        searchSource: "duckduckgo",
       });
-
-      console.log("[search] RSS found", deduped.length, "results from", feedUrl);
-      if (deduped.length > 0) return deduped;
-    } catch (e) {
-      console.log("[search] RSS failed:", feedUrl, e instanceof Error ? e.message : "unknown");
     }
+
+    console.log("[search-ddg] Found", results.length, "direct publisher results");
+    return results;
+  } catch (e) {
+    console.log("[search-ddg] Error:", e instanceof Error ? e.message : "unknown");
+    return [];
+  }
+}
+
+// ========== Google News RSS — discovery only, may return wrappers ==========
+async function searchGoogleNewsRss(query: string, maxResults: number): Promise<SearchResult[]> {
+  const encoded = encodeURIComponent(query);
+  const feedUrl = `https://news.google.com/rss/search?q=${encoded}&hl=en&gl=US&ceid=US:en`;
+  try {
+    console.log("[search-gnews] Fetching:", feedUrl);
+    const res = await fetch(feedUrl, {
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; RSS/2.0)" },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) { console.log("[search-gnews] HTTP", res.status); return []; }
+    const xml = await res.text();
+
+    const rawItems: Array<{ title: string; rawLink: string; rawDesc: string }> = [];
+    const itemRegex = /<item>([\s\S]*?)<\/item>/gi;
+    let m;
+    while ((m = itemRegex.exec(xml)) !== null && rawItems.length < maxResults) {
+      const item = m[1];
+      const titleMatch = item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>|<title>(.*?)<\/title>/i);
+      const linkMatch = item.match(/<link\s*\/?>\s*<!\[CDATA\[(.*?)\]\]>|<link>(.*?)<\/link>|<link\s*\/?>([^<\s]+)/i);
+      const guidMatch = item.match(/<guid[^>]*>(https?:\/\/[^<]+)<\/guid>/i);
+      const descMatch = item.match(/<description><!\[CDATA\[([\s\S]*?)\]\]><\/description>|<description>([\s\S]*?)<\/description>/i);
+      const title = (titleMatch?.[1] || titleMatch?.[2] || "").trim();
+      const rawLink = (linkMatch?.[1] || linkMatch?.[2] || linkMatch?.[3] || guidMatch?.[1] || "").trim();
+      if (title && rawLink) {
+        rawItems.push({ title, rawLink, rawDesc: descMatch?.[1] || descMatch?.[2] || "" });
+      }
+    }
+
+    // Resolve and classify
+    const results: SearchResult[] = [];
+    for (const { title, rawLink, rawDesc } of rawItems) {
+      if (isGoogleNewsRssWrapper(rawLink)) {
+        const resolved = await resolveGoogleNewsRssUrl(rawLink, rawDesc);
+        if (resolved.finalUrl && resolved.resolveStatus === "resolved") {
+          results.push({
+            title, url: resolved.finalUrl, sourceUrl: rawLink,
+            snippet: "", rawDesc,
+            acquisitionType: "resolved_article",
+            searchSource: "google_news_rss",
+          });
+        } else {
+          results.push({
+            title, url: rawLink, sourceUrl: rawLink,
+            snippet: "", rawDesc,
+            acquisitionType: "unresolved_wrapper",
+            searchSource: "google_news_rss",
+          });
+        }
+      } else {
+        // Direct link from RSS (rare but possible)
+        results.push({
+          title, url: rawLink, sourceUrl: rawLink,
+          snippet: "", rawDesc,
+          acquisitionType: "direct_article",
+          searchSource: "google_news_rss",
+        });
+      }
+    }
+
+    // Build snippets for resolved results
+    for (const r of results) {
+      if (r.rawDesc && !r.snippet) {
+        const cleaned = r.rawDesc
+          .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&")
+          .replace(/<[^>]+>/g, "").trim();
+        if (cleaned.length > 30) r.snippet = cleaned.slice(0, 200);
+      }
+    }
+
+    console.log("[search-gnews] Found", results.length, "results (",
+      results.filter(r => r.acquisitionType === "direct_article").length, "direct,",
+      results.filter(r => r.acquisitionType === "resolved_article").length, "resolved,",
+      results.filter(r => r.acquisitionType === "unresolved_wrapper").length, "unresolved)");
+    return results;
+  } catch (e) {
+    console.log("[search-gnews] Error:", e instanceof Error ? e.message : "unknown");
+    return [];
+  }
+}
+
+// ========== Bing News RSS ==========
+async function searchBingNewsRss(query: string, maxResults: number): Promise<SearchResult[]> {
+  const encoded = encodeURIComponent(query);
+  const feedUrl = `https://www.bing.com/news/search?q=${encoded}&format=rss`;
+  try {
+    console.log("[search-bing] Fetching:", feedUrl);
+    const res = await fetch(feedUrl, {
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; RSS/2.0)" },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) { console.log("[search-bing] HTTP", res.status); return []; }
+    const xml = await res.text();
+    const results: SearchResult[] = [];
+    const itemRegex = /<item>([\s\S]*?)<\/item>/gi;
+    let m;
+    while ((m = itemRegex.exec(xml)) !== null && results.length < maxResults) {
+      const item = m[1];
+      const titleMatch = item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>|<title>(.*?)<\/title>/i);
+      const linkMatch = item.match(/<link>(.*?)<\/link>/i);
+      const title = (titleMatch?.[1] || titleMatch?.[2] || "").trim();
+      const rawLink = (linkMatch?.[1] || "").trim();
+      if (title && rawLink && isValidArticleUrl(rawLink).valid) {
+        results.push({
+          title, url: rawLink, sourceUrl: rawLink,
+          snippet: "", rawDesc: "",
+          acquisitionType: "direct_article",
+          searchSource: "bing_rss",
+        });
+      }
+    }
+    console.log("[search-bing] Found", results.length, "direct results");
+    return results;
+  } catch (e) {
+    console.log("[search-bing] Error:", e instanceof Error ? e.message : "unknown");
+    return [];
+  }
+}
+
+// ========== Combined Web Search — prioritizes direct publisher URLs ==========
+async function searchWeb(query: string, maxResults: number): Promise<SearchResult[]> {
+  console.log("[search] Starting multi-source search for:", query, "max:", maxResults);
+
+  // Run all search sources in parallel
+  const [ddgResults, bingResults, gnewsResults] = await Promise.all([
+    searchDuckDuckGo(query, maxResults),
+    searchBingNewsRss(query, maxResults),
+    searchGoogleNewsRss(query, maxResults),
+  ]);
+
+  // Priority order: direct articles first, then resolved, then unresolved wrappers last
+  const allResults: SearchResult[] = [];
+
+  // 1. Direct articles from DuckDuckGo (highest priority — real publisher URLs)
+  for (const r of ddgResults) allResults.push(r);
+  // 2. Direct articles from Bing
+  for (const r of bingResults) allResults.push(r);
+  // 3. Resolved articles from Google News
+  for (const r of gnewsResults.filter(r => r.acquisitionType === "resolved_article")) allResults.push(r);
+  // 4. Direct articles from Google News (rare)
+  for (const r of gnewsResults.filter(r => r.acquisitionType === "direct_article")) allResults.push(r);
+  // 5. Unresolved wrappers last (will be skipped in scrape pipeline)
+  for (const r of gnewsResults.filter(r => r.acquisitionType === "unresolved_wrapper")) allResults.push(r);
+
+  // Deduplicate by final URL domain+path
+  const seen = new Set<string>();
+  const deduped: SearchResult[] = [];
+  for (const r of allResults) {
+    const key = r.url.replace(/^https?:\/\/(www\.)?/, "").split("?")[0];
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(r);
   }
 
-  console.log("[search] All RSS sources failed, returning empty");
-  return [];
+  const final = deduped.slice(0, maxResults);
+  console.log("[search] Combined results:", final.length,
+    "| direct:", final.filter(r => r.acquisitionType === "direct_article").length,
+    "| resolved:", final.filter(r => r.acquisitionType === "resolved_article").length,
+    "| unresolved:", final.filter(r => r.acquisitionType === "unresolved_wrapper").length);
+  return final;
 }
 
 // ========== Background crawl processor ==========
