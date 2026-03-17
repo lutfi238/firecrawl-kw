@@ -11,9 +11,10 @@ interface ToolFormProps {
   tool: ToolDefinition;
   onExecute: (args: Record<string, unknown>) => void;
   loading?: boolean;
+  disabled?: boolean;
 }
 
-export function ToolForm({ tool, onExecute, loading }: ToolFormProps) {
+export function ToolForm({ tool, onExecute, loading, disabled }: ToolFormProps) {
   const [values, setValues] = useState<Record<string, unknown>>({});
 
   useEffect(() => {
