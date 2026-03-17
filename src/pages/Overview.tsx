@@ -1,7 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMCPServer } from "@/hooks/useMCPServer";
 import { useLogStats } from "@/hooks/useRequestLogs";
+import { useSettings } from "@/hooks/useSettings";
 import { GlassCard } from "@/components/GlassCard";
 import { ConfigCopier } from "@/components/ConfigCopier";
 import { ToolCard } from "@/components/ToolCard";
