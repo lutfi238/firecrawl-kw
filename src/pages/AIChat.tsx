@@ -292,7 +292,7 @@ export default function AIChat() {
 
       // === SYNTHESIS PATH ===
       // When synthesize=true and we have tool evidence, pass it through AI for a grounded answer
-      if (intent.synthesize && !lastResult.result.isError && settings.ai_api_key) {
+      if (intent.synthesize && !lastResult.result.isError) {
         const allEvidence = toolResults
           .filter(r => r.tool !== "chat")
           .map(r => {
