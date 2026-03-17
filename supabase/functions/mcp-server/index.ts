@@ -509,7 +509,7 @@ app.post("/*", async (c) => {
           break;
         }
         case "chat": {
-          const cSettings = await getUserSettings(currentAuthHeader);
+          const cSettings = await getUserSettings(authHeader);
           const aiSettings = getAiSettingsFromMap(cSettings);
           if (!aiSettings) {
             result = { content: [{ type: "text", text: "Error: AI provider not configured. Go to Settings → AI Provider and add your API key." }], isError: true };
