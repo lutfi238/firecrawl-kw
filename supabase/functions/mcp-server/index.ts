@@ -142,13 +142,21 @@ async function scrapeUrl(url: string): Promise<{ markdown: string; title: string
 }
 
 // ========== URL redirect detection & resolution ==========
+function isGoogleNewsRssWrapper(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return u.hostname === "news.google.com" && u.pathname.includes("/rss/articles/");
+  } catch {
+    return false;
+  }
+}
+
 function isRedirectUrl(url: string): boolean {
   try {
     const u = new URL(url);
     return (
-      u.hostname.includes("news.google.com") ||
+      isGoogleNewsRssWrapper(url) ||
       u.hostname.includes("google.com/rss") ||
-      u.pathname.includes("/rss/articles/") ||
       u.hostname.includes("feedproxy.google.com") ||
       u.hostname.includes("t.co") ||
       u.hostname.includes("bit.ly") ||
@@ -156,6 +164,75 @@ function isRedirectUrl(url: string): boolean {
     );
   } catch {
     return false;
+  }
+}
+
+function normalizeResolvedUrl(candidate: string): string | null {
+  try {
+    const parsed = new URL(candidate);
+    if (parsed.hostname.includes("news.google.com")) return null;
+    return parsed.href;
+  } catch {
+    return null;
+  }
+}
+
+function decodeGoogleNewsToken(token: string): string | null {
+  try {
+    const normalized = token.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+    const decoded = atob(padded);
+    const match = decoded.match(/https?:\/\/[^\s"'\x00-\x1F<>\\]+/i);
+    if (!match) return null;
+    return normalizeResolvedUrl(match[0]);
+  } catch {
+    return null;
+  }
+}
+
+function decodeEscapedUrl(value: string): string {
+  return value
+    .replace(/\\u0026/g, "&")
+    .replace(/\\u003d/g, "=")
+    .replace(/\\\//g, "/");
+}
+
+async function resolveGoogleNewsRssUrl(url: string): Promise<{ finalUrl?: string; resolveStatus: "resolved" | "unresolved_wrapper" | "failed"; error?: string }> {
+  try {
+    const parsed = new URL(url);
+    const token = parsed.pathname.split("/").filter(Boolean).pop() || "";
+    const decodedCandidate = decodeGoogleNewsToken(token);
+    if (decodedCandidate) {
+      return { finalUrl: decodedCandidate, resolveStatus: "resolved" };
+    }
+
+    const res = await fetch(url, {
+      redirect: "follow",
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; RSS/2.0)" },
+      signal: AbortSignal.timeout(10000),
+    });
+
+    const html = await res.text();
+    const patterns = [
+      /"canonicalUrl":"(https?:\/\/[^"\\]+)"/gi,
+      /"url":"(https?:\/\/[^"\\]+)"/gi,
+      /(https?:\/\/[^"'\s<>{}\\]+(?:\?[^"'\s<>{}]*)?)/gi,
+    ];
+
+    for (const pattern of patterns) {
+      let m: RegExpExecArray | null;
+      while ((m = pattern.exec(html)) !== null) {
+        const candidate = decodeEscapedUrl(m[1] || m[0]);
+        const normalized = normalizeResolvedUrl(candidate);
+        if (normalized) {
+          return { finalUrl: normalized, resolveStatus: "resolved" };
+        }
+      }
+    }
+
+    return { resolveStatus: "unresolved_wrapper", error: "Could not extract publisher URL from Google News RSS wrapper" };
+  } catch (e) {
+    return { resolveStatus: "failed", error: e instanceof Error ? e.message : "google news resolve failed" };
   }
 }
 
@@ -221,14 +298,14 @@ function isUsableArticleContent(markdown: string): boolean {
 // ========== Source evidence types ==========
 interface NormalizedSource {
   sourceUrl: string;
-  finalUrl: string;
+  finalUrl?: string;
   title: string;
   publisher: string;
   excerpt: string;
   markdown: string;
   contentLength: number;
-  resolveStatus: "resolved" | "unchanged" | "failed";
-  scrapeStatus: "success" | "failed" | "empty" | "boilerplate";
+  resolveStatus: "resolved" | "unchanged" | "failed" | "unresolved_wrapper";
+  scrapeStatus: "success" | "failed" | "unresolved_wrapper" | "empty" | "boilerplate";
   error?: string;
 }
 
@@ -285,7 +362,10 @@ async function searchWeb(query: string, maxResults: number): Promise<Array<{ tit
 
       const items = await Promise.all(rawItems.map(async ({ title, rawLink, rawDesc }) => {
         let finalUrl = rawLink;
-        if (isRedirectUrl(rawLink)) {
+        if (isGoogleNewsRssWrapper(rawLink)) {
+          const resolved = await resolveGoogleNewsRssUrl(rawLink);
+          finalUrl = resolved.finalUrl || rawLink;
+        } else if (isRedirectUrl(rawLink)) {
           const resolved = await resolveRedirect(rawLink);
           finalUrl = resolved.finalUrl;
         }
@@ -469,17 +549,22 @@ async function processAgentJob(jobId: string, args: Record<string, unknown>, aiS
 
     const sources: NormalizedSource[] = [];
     for (const item of discoveredUrls) {
-      const needsResolve = isRedirectUrl(item.url);
-      let finalUrl = item.url;
+      let finalUrl: string | undefined = item.url;
       let resolveStatus: NormalizedSource["resolveStatus"] = "unchanged";
       let resolveError: string | undefined;
 
-      if (needsResolve) {
+      if (isGoogleNewsRssWrapper(item.url)) {
+        const resolved = await resolveGoogleNewsRssUrl(item.url);
+        resolveStatus = resolved.resolveStatus;
+        finalUrl = resolved.finalUrl;
+        resolveError = resolved.error;
+        console.log("[agent] Google RSS resolve:", item.url, "→", finalUrl || "unresolved", resolveStatus);
+      } else if (isRedirectUrl(item.url)) {
         const resolved = await resolveRedirect(item.url);
         finalUrl = resolved.finalUrl;
-        resolveStatus = resolved.resolved ? "resolved" : "failed";
+        resolveStatus = resolved.error ? "failed" : (resolved.resolved ? "resolved" : "unchanged");
         resolveError = resolved.error;
-        console.log("[agent] Resolved:", item.url, "→", finalUrl);
+        console.log("[agent] Resolved:", item.url, "→", finalUrl, resolveStatus);
       }
 
       // Scrape the final URL
@@ -488,32 +573,37 @@ async function processAgentJob(jobId: string, args: Record<string, unknown>, aiS
       let scrapeStatus: NormalizedSource["scrapeStatus"] = "failed";
       let scrapeError: string | undefined;
 
-      try {
-        const scraped = await scrapeUrl(finalUrl);
-        markdown = scraped.markdown.slice(0, 6000);
-        title = title || scraped.title;
-        if (isUsableArticleContent(markdown)) {
-          scrapeStatus = "success";
-        } else if (markdown.length > 0) {
-          scrapeStatus = "boilerplate";
-        } else {
-          scrapeStatus = "empty";
+      if (!finalUrl) {
+        scrapeStatus = "unresolved_wrapper";
+      } else {
+        try {
+          const scraped = await scrapeUrl(finalUrl);
+          markdown = scraped.markdown.slice(0, 6000);
+          title = title || scraped.title;
+          if (isUsableArticleContent(markdown)) {
+            scrapeStatus = "success";
+          } else if (markdown.length > 0) {
+            scrapeStatus = "boilerplate";
+          } else {
+            scrapeStatus = "empty";
+          }
+          console.log("[agent] Scraped:", finalUrl, "len:", markdown.length, "status:", scrapeStatus);
+        } catch (e) {
+          scrapeError = e instanceof Error ? e.message : "scrape failed";
+          console.log("[agent] Scrape failed:", finalUrl, scrapeError);
         }
-        console.log("[agent] Scraped:", finalUrl, "len:", markdown.length, "status:", scrapeStatus);
-      } catch (e) {
-        scrapeError = e instanceof Error ? e.message : "scrape failed";
-        console.log("[agent] Scrape failed:", finalUrl, scrapeError);
       }
 
+      const displayUrl = finalUrl || item.sourceUrl || item.url;
       sources.push({
         sourceUrl: item.sourceUrl,
         finalUrl,
-        title: title || extractDomain(finalUrl),
-        publisher: extractDomain(finalUrl),
+        title: title || extractDomain(displayUrl),
+        publisher: extractDomain(displayUrl),
         excerpt: item.snippet || markdown.slice(0, 200),
         markdown,
         contentLength: markdown.length,
-        resolveStatus: resolveError ? "failed" : resolveStatus,
+        resolveStatus,
         scrapeStatus,
         error: scrapeError || resolveError,
       });
@@ -523,7 +613,7 @@ async function processAgentJob(jobId: string, args: Record<string, unknown>, aiS
         output: {
           step: "scraping",
           sourcesCollected: collectedCount,
-          scrapedCount: sources.filter(s => s.scrapeStatus !== "failed").length,
+          scrapedCount: sources.filter(s => s.scrapeStatus === "success").length,
           totalSources: collectedCount,
         },
       }).eq("id", jobId);
@@ -532,10 +622,10 @@ async function processAgentJob(jobId: string, args: Record<string, unknown>, aiS
     // Compute evidence metrics
     const metrics: EvidenceMetrics = {
       sourcesCollected: collectedCount,
-      sourcesResolved: sources.filter(s => s.resolveStatus === "resolved" || s.resolveStatus === "unchanged").length,
+      sourcesResolved: sources.filter(s => s.resolveStatus === "resolved").length,
       sourcesScrapedSuccessfully: sources.filter(s => s.scrapeStatus === "success").length,
       sourcesUsableForSynthesis: sources.filter(s => s.scrapeStatus === "success").length,
-      failedSources: sources.filter(s => s.scrapeStatus === "failed").length,
+      failedSources: sources.filter(s => s.scrapeStatus === "failed" || s.resolveStatus === "failed" || s.resolveStatus === "unresolved_wrapper" || s.scrapeStatus === "unresolved_wrapper").length,
       emptyContentSources: sources.filter(s => s.scrapeStatus === "empty" || s.scrapeStatus === "boilerplate").length,
     };
 
@@ -639,7 +729,7 @@ async function processAgentJob(jobId: string, args: Record<string, unknown>, aiS
         ...(isWeakEvidence ? { warning: `Only ${usableSources.length} of ${collectedCount} sources yielded usable article content. Synthesis may have limited grounding.` } : {}),
         evidenceMetrics: metrics,
         sources: sourceSummary,
-        sourcesUsed: usableSources.map(s => s.finalUrl),
+        sourcesUsed: usableSources.map(s => s.finalUrl).filter((u): u is string => typeof u === "string"),
         scrapedCount: metrics.sourcesScrapedSuccessfully,
       },
     }).eq("id", jobId);
