@@ -54,7 +54,16 @@ export default function ToolTester() {
           </div>
 
           <div className="border-t border-border pt-4">
-            <p className="text-xs text-muted-foreground mb-4 leading-relaxed">{tool.description}</p>
+            {toolDescription ? (
+              <p className="text-xs text-muted-foreground mb-4 leading-relaxed">{toolDescription}</p>
+            ) : (
+              <p className="text-xs text-muted-foreground mb-4 leading-relaxed">
+                Scrape a URL and use AI to extract structured data.{" "}
+                <Link to="/settings" className="text-primary underline underline-offset-2 hover:text-primary/80">
+                  Configure AI provider in Settings →
+                </Link>
+              </p>
+            )}
             <ToolForm
               tool={tool}
               loading={loading}
