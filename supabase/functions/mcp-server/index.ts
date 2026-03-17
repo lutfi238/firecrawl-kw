@@ -383,18 +383,35 @@ app.post("/*", async (c) => {
               "HTTP-Referer": "https://id-preview--4485e6f5-86ea-4999-acd7-7209fb13e21d.lovable.app",
               "X-Title": "Personal Firecrawl MCP",
             };
+            const requestBody = { model: aiSettings.model, messages: [{ role: "system", content: systemPrompt }, { role: "user", content: `${args.prompt}\n\n---PAGE CONTENT---\n${truncated}` }], max_tokens: 4096 };
+            console.log("[extract] AI request:", aiSettings.baseUrl, aiSettings.model);
             const aiRes = await fetch(`${aiSettings.baseUrl}/chat/completions`, {
               method: "POST",
               headers: aiHeaders,
-              body: JSON.stringify({ model: aiSettings.model, messages: [{ role: "system", content: systemPrompt }, { role: "user", content: `${args.prompt}\n\n---PAGE CONTENT---\n${truncated}` }], max_tokens: 4096 }),
+              body: JSON.stringify(requestBody),
             });
             const aiBody = await aiRes.text();
+            console.log("[extract] AI response status:", aiRes.status, "body:", aiBody.slice(0, 500));
             if (!aiRes.ok) {
-              result = { content: [{ type: "text", text: `AI API error ${aiRes.status}: ${aiBody.slice(0, 300)}` }], isError: true };
+              // Try to parse error details
+              let errorMsg = `AI API error ${aiRes.status}`;
+              try {
+                const errData = JSON.parse(aiBody);
+                errorMsg += `: ${errData.error?.message || errData.message || aiBody.slice(0, 300)}`;
+              } catch {
+                errorMsg += `: ${aiBody.slice(0, 300)}`;
+              }
+              result = { content: [{ type: "text", text: errorMsg }], isError: true };
             } else {
               const aiData = JSON.parse(aiBody);
-              const answer = aiData.choices?.[0]?.message?.content ?? "No response";
-              result = { content: [{ type: "text", text: answer }] };
+              console.log("[extract] AI parsed response keys:", Object.keys(aiData));
+              const answer = aiData.choices?.[0]?.message?.content;
+              if (!answer) {
+                console.log("[extract] Full AI response:", JSON.stringify(aiData).slice(0, 1000));
+                result = { content: [{ type: "text", text: `AI returned no content. Raw response: ${JSON.stringify(aiData).slice(0, 500)}` }], isError: true };
+              } else {
+                result = { content: [{ type: "text", text: answer }] };
+              }
             }
           }
           break;
