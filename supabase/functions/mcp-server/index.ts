@@ -377,12 +377,15 @@ app.post("/*", async (c) => {
             const systemPrompt = args.schema
               ? `Extract the requested data from the web page content. Return valid JSON matching this schema: ${args.schema}`
               : "Extract the requested data from the web page content. Return structured JSON.";
+            const aiHeaders: Record<string, string> = {
+              Authorization: `Bearer ${aiSettings.apiKey}`,
+              "Content-Type": "application/json",
+              "HTTP-Referer": "https://id-preview--4485e6f5-86ea-4999-acd7-7209fb13e21d.lovable.app",
+              "X-Title": "Personal Firecrawl MCP",
+            };
             const aiRes = await fetch(`${aiSettings.baseUrl}/chat/completions`, {
               method: "POST",
-              headers: {
-                Authorization: `Bearer ${aiSettings.apiKey}`,
-                "Content-Type": "application/json",
-              },
+              headers: aiHeaders,
               body: JSON.stringify({ model: aiSettings.model, messages: [{ role: "system", content: systemPrompt }, { role: "user", content: `${args.prompt}\n\n---PAGE CONTENT---\n${truncated}` }], max_tokens: 4096 }),
             });
             const aiBody = await aiRes.text();
