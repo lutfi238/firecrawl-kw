@@ -772,42 +772,27 @@ async function processAgentJob(jobId: string, args: Record<string, unknown>, aiS
     const schema = args.schema as string | undefined;
     const maxSteps = (args.maxSteps as number) || 5;
 
-    // Step 1: Search for relevant URLs (preserve rawDesc for Google News resolution)
-    let discoveredUrls: Array<{ title: string; url: string; sourceUrl: string; snippet: string; rawDesc: string }> = [];
+    // Step 1: Search — multi-source with direct publisher priority
+    let discoveredUrls: SearchResult[] = [];
     for (const u of focusUrls) {
-      discoveredUrls.push({ title: "", url: u, sourceUrl: u, snippet: "", rawDesc: "" });
+      discoveredUrls.push({ title: "", url: u, sourceUrl: u, snippet: "", rawDesc: "", acquisitionType: "direct_article", searchSource: "user_provided" });
     }
-    console.log("[agent] Focus URLs:", focusUrls);
+    console.log("[agent] Focus URLs:", focusUrls.length);
 
     if (discoveredUrls.length < maxSteps) {
       console.log("[agent] Searching web for:", prompt);
       const searchResults = await searchWeb(prompt, maxSteps - discoveredUrls.length);
       console.log("[agent] Search returned", searchResults.length, "results");
-      for (const r of searchResults) {
-        discoveredUrls.push({
-          title: r.title,
-          url: r.url,
-          sourceUrl: r.sourceUrl || r.url,
-          snippet: r.snippet,
-          rawDesc: r.rawDesc || "",
-        });
-      }
+      for (const r of searchResults) discoveredUrls.push(r);
     }
 
-    // No fallback to generic homepages — return early with low-evidence result
+    // No results at all
     if (discoveredUrls.length === 0) {
-      console.log("[agent] No URLs discovered — returning low-evidence result immediately");
+      console.log("[agent] No URLs discovered — returning low-evidence result");
+      const emptyMetrics: EvidenceMetrics = { sourcesCollected: 0, sourcesResolved: 0, sourcesUnresolvedWrapper: 0, sourcesScrapedSuccessfully: 0, sourcesUsableForSynthesis: 0, sourcesFailed: 0, sourcesEmpty: 0, sourcesBoilerplate: 0 };
       await svc.from("mcp_jobs").update({
         status: "completed",
-        output: {
-          step: "completed",
-          synthesis: null,
-          groundedness: "none",
-          warning: "Web search returned no relevant URLs for this query. No article content could be collected or synthesized.",
-          evidenceMetrics: { sourcesCollected: 0, sourcesResolved: 0, sourcesScrapedSuccessfully: 0, sourcesUsableForSynthesis: 0, failedSources: 0, emptyContentSources: 0 },
-          sources: [],
-          scrapedCount: 0,
-        },
+        output: { step: "completed", synthesis: null, groundedness: "none", warning: "Web search returned no relevant URLs.", evidenceMetrics: emptyMetrics, sources: [], scrapedCount: 0 },
       }).eq("id", jobId);
       return;
     }
@@ -815,87 +800,79 @@ async function processAgentJob(jobId: string, args: Record<string, unknown>, aiS
     discoveredUrls = discoveredUrls.slice(0, maxSteps);
     const collectedCount = discoveredUrls.length;
 
-    // Step 2: Resolve redirect URLs and scrape
+    // Check if ALL results are unresolved wrappers — return early
+    const scrapeable = discoveredUrls.filter(r => r.acquisitionType !== "unresolved_wrapper");
+    if (scrapeable.length === 0) {
+      console.log("[agent] All", collectedCount, "results are unresolved wrappers — returning low-evidence");
+      const wrapperMetrics: EvidenceMetrics = { sourcesCollected: collectedCount, sourcesResolved: 0, sourcesUnresolvedWrapper: collectedCount, sourcesScrapedSuccessfully: 0, sourcesUsableForSynthesis: 0, sourcesFailed: 0, sourcesEmpty: 0, sourcesBoilerplate: 0 };
+      const wrapperSummary = discoveredUrls.map(r => ({ sourceUrl: r.sourceUrl, finalUrl: undefined, title: r.title, publisher: extractDomain(r.sourceUrl), contentLength: 0, acquisitionType: r.acquisitionType, resolveStatus: "unresolved_wrapper" as const, scrapeStatus: "unresolved_wrapper" as const }));
+      await svc.from("mcp_jobs").update({
+        status: "completed",
+        output: { step: "completed", synthesis: null, groundedness: "none", warning: "All discovered sources were Google News wrappers that could not be resolved to publisher URLs.", evidenceMetrics: wrapperMetrics, sources: wrapperSummary, scrapedCount: 0 },
+      }).eq("id", jobId);
+      return;
+    }
+
+    // Step 2: Scrape — only direct_article and resolved_article, skip unresolved wrappers
     await svc.from("mcp_jobs").update({ output: { step: "scraping", sourcesCollected: collectedCount } }).eq("id", jobId);
 
     const sources: NormalizedSource[] = [];
     for (const item of discoveredUrls) {
-      let finalUrl: string | undefined = item.url;
-      let resolveStatus: NormalizedSource["resolveStatus"] = "unchanged";
-      let resolveError: string | undefined;
-
-      // If searchWeb already resolved Google News (url !== sourceUrl), check if it's still a wrapper
-      const isStillWrapper = isGoogleNewsRssWrapper(item.url);
-      const wasAlreadyResolved = item.sourceUrl !== item.url && !isStillWrapper;
-
-      if (wasAlreadyResolved) {
-        resolveStatus = "resolved";
-        console.log("[agent] Already resolved by searchWeb:", item.sourceUrl.slice(0, 60), "→", item.url.slice(0, 80));
-      } else if (isStillWrapper) {
-        // Re-attempt resolution with rawDesc (searchWeb might have failed without it being used properly)
-        console.log("[agent] Google wrapper still present, re-resolving with rawDesc length:", item.rawDesc.length);
-        const resolved = await resolveGoogleNewsRssUrl(item.url, item.rawDesc);
-        resolveStatus = resolved.resolveStatus;
-        finalUrl = resolved.finalUrl;
-        resolveError = resolved.error;
-        console.log("[agent] Google RSS resolve result:", resolveStatus, "method:", (resolved as any).method || "none", "finalUrl:", finalUrl?.slice(0, 80) || "none");
-      } else if (isRedirectUrl(item.url)) {
-        const resolved = await resolveRedirect(item.url);
-        finalUrl = resolved.finalUrl;
-        resolveStatus = resolved.error ? "failed" : (resolved.resolved ? "resolved" : "unchanged");
-        resolveError = resolved.error;
-        console.log("[agent] Redirect resolved:", item.url.slice(0, 60), "→", finalUrl.slice(0, 80), resolveStatus);
+      // Skip unresolved wrappers entirely — do not scrape
+      if (item.acquisitionType === "unresolved_wrapper") {
+        console.log("[agent] Skipping unresolved wrapper:", item.url.slice(0, 80));
+        sources.push({
+          sourceUrl: item.sourceUrl, finalUrl: undefined,
+          title: item.title || extractDomain(item.sourceUrl),
+          publisher: extractDomain(item.sourceUrl),
+          excerpt: item.snippet, markdown: "", contentLength: 0,
+          acquisitionType: "unresolved_wrapper",
+          resolveStatus: "unresolved_wrapper", scrapeStatus: "unresolved_wrapper",
+        });
+        continue;
       }
 
-      // Scrape the final URL
+      let finalUrl: string | undefined = item.url;
+      let resolveStatus: NormalizedSource["resolveStatus"] = item.acquisitionType === "resolved_article" ? "resolved" : "unchanged";
+
+      // For direct articles, handle remaining redirects (t.co, bit.ly etc)
+      if (isRedirectUrl(item.url) && !isGoogleNewsRssWrapper(item.url)) {
+        const resolved = await resolveRedirect(item.url);
+        finalUrl = resolved.finalUrl;
+        resolveStatus = resolved.resolved ? "resolved" : "unchanged";
+      }
+
+      // Scrape
       let title = item.title;
       let markdown = "";
       let scrapeStatus: NormalizedSource["scrapeStatus"] = "failed";
       let scrapeError: string | undefined;
 
-      if (!finalUrl) {
-        scrapeStatus = "unresolved_wrapper";
-      } else {
-        try {
-          const scraped = await scrapeUrl(finalUrl);
-          markdown = scraped.markdown.slice(0, 6000);
-          title = title || scraped.title;
-          if (isUsableArticleContent(markdown)) {
-            scrapeStatus = "success";
-          } else if (markdown.length > 0) {
-            scrapeStatus = "boilerplate";
-          } else {
-            scrapeStatus = "empty";
-          }
-          console.log("[agent] Scraped:", finalUrl, "len:", markdown.length, "status:", scrapeStatus);
-        } catch (e) {
-          scrapeError = e instanceof Error ? e.message : "scrape failed";
-          console.log("[agent] Scrape failed:", finalUrl, scrapeError);
-        }
+      try {
+        const scraped = await scrapeUrl(finalUrl!);
+        markdown = scraped.markdown.slice(0, 6000);
+        title = title || scraped.title;
+        scrapeStatus = isUsableArticleContent(markdown) ? "success" : (markdown.length > 0 ? "boilerplate" : "empty");
+        console.log("[agent] Scraped:", finalUrl!.slice(0, 80), "type:", item.acquisitionType, "len:", markdown.length, "status:", scrapeStatus, "source:", item.searchSource);
+      } catch (e) {
+        scrapeError = e instanceof Error ? e.message : "scrape failed";
+        console.log("[agent] Scrape failed:", finalUrl, scrapeError);
       }
 
-      const displayUrl = finalUrl || item.sourceUrl || item.url;
       sources.push({
-        sourceUrl: item.sourceUrl,
-        finalUrl,
-        title: title || extractDomain(displayUrl),
-        publisher: extractDomain(displayUrl),
+        sourceUrl: item.sourceUrl, finalUrl,
+        title: title || extractDomain(finalUrl || item.url),
+        publisher: extractDomain(finalUrl || item.url),
         excerpt: item.snippet || markdown.slice(0, 200),
-        markdown,
-        contentLength: markdown.length,
-        resolveStatus,
-        scrapeStatus,
-        error: scrapeError || resolveError,
+        markdown, contentLength: markdown.length,
+        acquisitionType: item.acquisitionType,
+        resolveStatus, scrapeStatus,
+        error: scrapeError,
       });
 
-      // Progress update
+      // Progress
       await svc.from("mcp_jobs").update({
-        output: {
-          step: "scraping",
-          sourcesCollected: collectedCount,
-          scrapedCount: sources.filter(s => s.scrapeStatus === "success").length,
-          totalSources: collectedCount,
-        },
+        output: { step: "scraping", sourcesCollected: collectedCount, scrapedCount: sources.filter(s => s.scrapeStatus === "success").length, totalSources: collectedCount },
       }).eq("id", jobId);
     }
 
@@ -903,43 +880,32 @@ async function processAgentJob(jobId: string, args: Record<string, unknown>, aiS
     const metrics: EvidenceMetrics = {
       sourcesCollected: collectedCount,
       sourcesResolved: sources.filter(s => s.resolveStatus === "resolved").length,
+      sourcesUnresolvedWrapper: sources.filter(s => s.acquisitionType === "unresolved_wrapper").length,
       sourcesScrapedSuccessfully: sources.filter(s => s.scrapeStatus === "success").length,
       sourcesUsableForSynthesis: sources.filter(s => s.scrapeStatus === "success").length,
-      failedSources: sources.filter(s => s.scrapeStatus === "failed" || s.resolveStatus === "failed" || s.resolveStatus === "unresolved_wrapper" || s.scrapeStatus === "unresolved_wrapper").length,
-      emptyContentSources: sources.filter(s => s.scrapeStatus === "empty" || s.scrapeStatus === "boilerplate").length,
+      sourcesFailed: sources.filter(s => s.scrapeStatus === "failed").length,
+      sourcesEmpty: sources.filter(s => s.scrapeStatus === "empty").length,
+      sourcesBoilerplate: sources.filter(s => s.scrapeStatus === "boilerplate").length,
     };
 
     console.log("[agent] Evidence metrics:", JSON.stringify(metrics));
 
-    // Build source summary (without full markdown) for status display
+    // Build source summary for status display
     const sourceSummary = sources.map(s => ({
-      sourceUrl: s.sourceUrl,
-      finalUrl: s.finalUrl,
-      title: s.title,
-      publisher: s.publisher,
-      contentLength: s.contentLength,
-      resolveStatus: s.resolveStatus,
-      scrapeStatus: s.scrapeStatus,
-      error: s.error,
+      sourceUrl: s.sourceUrl, finalUrl: s.finalUrl,
+      title: s.title, publisher: s.publisher,
+      contentLength: s.contentLength, acquisitionType: s.acquisitionType,
+      resolveStatus: s.resolveStatus, scrapeStatus: s.scrapeStatus, error: s.error,
     }));
 
-    // Step 3: Synthesis quality gate — only "success" sources are usable
+    // Step 3: Synthesis quality gate
     const usableSources = sources.filter(s => s.scrapeStatus === "success");
 
     if (usableSources.length === 0) {
-      // No usable evidence — do not synthesize
       console.log("[agent] No usable article content — returning low-evidence result");
       await svc.from("mcp_jobs").update({
         status: "completed",
-        output: {
-          step: "completed",
-          synthesis: null,
-          groundedness: "none",
-          warning: "No usable article content could be extracted. All sources either failed to scrape, returned empty content, or were redirect/RSS URLs that could not be resolved to final articles.",
-          evidenceMetrics: metrics,
-          sources: sourceSummary,
-          scrapedCount: metrics.sourcesScrapedSuccessfully,
-        },
+        output: { step: "completed", synthesis: null, groundedness: "none", warning: "No usable article content could be extracted from any source.", evidenceMetrics: metrics, sources: sourceSummary, scrapedCount: 0 },
       }).eq("id", jobId);
       return;
     }
@@ -947,12 +913,7 @@ async function processAgentJob(jobId: string, args: Record<string, unknown>, aiS
     const isWeakEvidence = usableSources.length <= 1 || usableSources.length < collectedCount * 0.3;
 
     await svc.from("mcp_jobs").update({
-      output: {
-        step: "synthesizing",
-        scrapedCount: metrics.sourcesScrapedSuccessfully,
-        evidenceMetrics: metrics,
-        sources: sourceSummary,
-      },
+      output: { step: "synthesizing", scrapedCount: metrics.sourcesScrapedSuccessfully, evidenceMetrics: metrics, sources: sourceSummary },
     }).eq("id", jobId);
 
     // Build evidence text from usable sources only
