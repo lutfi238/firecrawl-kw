@@ -196,25 +196,33 @@ function ProgressStepper({ currentStep, status }: { currentStep?: string; status
   const isFailed = status === "failed";
   const isCompleted = status === "completed";
 
-  // For failed: highlight the step where it failed, mark prior as done
-  // For completed: all steps done
-  // For in-progress: active step highlighted, prior done
+  const failedIdx = AGENT_STEPS.findIndex((s) => s.key === "failed");
+  const completedIdx = AGENT_STEPS.findIndex((s) => s.key === "completed");
+
   const activeIdx = isCompleted
-    ? AGENT_STEPS.length - 1
+    ? completedIdx
     : isFailed
-      ? getStepIndex(currentStep)
+      ? failedIdx
       : getStepIndex(currentStep);
+
+  // The step the job was on when it failed
+  const failedAtIdx = isFailed ? getStepIndex(currentStep) : -1;
 
   return (
     <div className="flex items-center gap-1 w-full overflow-x-auto py-2">
       {AGENT_STEPS.map((step, i) => {
+        // Hide "failed" step unless job actually failed
+        if (step.key === "failed" && !isFailed) return null;
+        // Hide "completed" step if job failed
+        if (step.key === "completed" && isFailed) return null;
+
         const isDone = isCompleted
-          ? true
+          ? i <= completedIdx
           : isFailed
-            ? i < activeIdx // steps before the failed step are done
+            ? i < failedAtIdx || (failedAtIdx === -1 && i < failedIdx)
             : i < activeIdx;
-        const isActive = !isCompleted && i === activeIdx;
-        const isFailedStep = isFailed && i === activeIdx;
+        const isActive = i === activeIdx;
+        const isFailedStep = isFailed && step.key === "failed";
 
         return (
           <div key={step.key} className="flex items-center gap-1 flex-1 min-w-0">
