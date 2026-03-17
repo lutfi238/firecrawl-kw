@@ -260,10 +260,8 @@ function checkMcpSecret(c: any): Response | null {
   return null;
 }
 
-// Health check GET handler (override to also check secret)
+// Health check GET handler - no auth needed
 app.get("/*", (c) => {
-  const denied = checkMcpSecret(c);
-  if (denied) return denied;
   return c.json(
     { status: "ok", server: "personal-firecrawl", version: "1.0.0", tools: 10 },
     200,
