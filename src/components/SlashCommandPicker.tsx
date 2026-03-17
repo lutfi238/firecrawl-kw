@@ -9,8 +9,12 @@ const SLASH_COMMANDS = [
   { command: "/map", description: "Map all URLs on a site", example: "/map https://example.com", icon: "🗺️" },
   { command: "/extract", description: "Extract structured data with AI", example: "/extract https://example.com get all prices", icon: "🤖" },
   { command: "/screenshot", description: "Screenshot a webpage", example: "/screenshot https://example.com", icon: "📸" },
+  { command: "/search_and_scrape", description: "Search + scrape results", example: "/search_and_scrape React hooks tutorial", icon: "🔎" },
   { command: "/batch", description: "Scrape multiple URLs", example: "/batch url1, url2, url3", icon: "📦" },
   { command: "/html", description: "Convert HTML to Markdown", example: "/html <h1>Hello</h1>", icon: "🔄" },
+  { command: "/agent", description: "AI research agent", example: "/agent Research latest trends in AI", icon: "🧠" },
+  { command: "/status", description: "Check async job status", example: "/status <job-uuid>", icon: "⏱️" },
+  { command: "/chat", description: "Direct chat (no tools)", example: "/chat Hello, how are you?", icon: "💬" },
 ];
 
 interface SlashCommandPickerProps {
@@ -32,7 +36,6 @@ export function SlashCommandPicker({ input, onSelect, onDismiss, visible }: Slas
     setActiveIndex(0);
   }, [input]);
 
-  // Scroll active item into view
   useEffect(() => {
     if (!listRef.current) return;
     const active = listRef.current.children[activeIndex] as HTMLElement;
@@ -67,19 +70,14 @@ export function SlashCommandPicker({ input, onSelect, onDismiss, visible }: Slas
   if (!visible) return null;
 
   return (
-    <div
-      className={cn(
-        "absolute bottom-full left-0 right-0 mb-2 z-50",
-        "animate-fade-in"
-      )}
-    >
+    <div className={cn("absolute bottom-full left-0 right-0 mb-2 z-50", "animate-fade-in")}>
       <div className="glass rounded-lg border border-border/50 shadow-[0_0_20px_hsl(var(--primary)/0.1)] overflow-hidden">
         {filtered.length === 0 ? (
           <div className="px-4 py-3 text-xs font-mono text-muted-foreground/50 text-center">
             No commands found
           </div>
         ) : (
-          <div ref={listRef} className="max-h-[220px] overflow-y-auto scrollbar-cyber">
+          <div ref={listRef} className="max-h-[260px] overflow-y-auto scrollbar-cyber">
             {filtered.map((cmd, i) => (
               <button
                 key={cmd.command}
