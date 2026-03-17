@@ -38,7 +38,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     name: "scrape_js",
-    description: "Scrape a JavaScript-rendered page using a headless browser via Railway renderer.",
+    description: "Scrape a JavaScript-rendered page using a headless browser via Render renderer.",
+    requiresRenderer: true,
     icon: "Globe",
     category: "scrape",
     inputs: [
