@@ -5,6 +5,7 @@ export interface UptimeLog {
   id: string;
   status: string;
   response_ms: number;
+  status_code: number | null;
   checked_at: string;
 }
 
