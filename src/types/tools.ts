@@ -81,7 +81,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     name: "screenshot",
-    description: "Take a screenshot of a URL using headless browser via Railway renderer.",
+    description: "Take a screenshot of a URL using headless browser via Render renderer.",
+    requiresRenderer: true,
     icon: "Camera",
     category: "utility",
     inputs: [
