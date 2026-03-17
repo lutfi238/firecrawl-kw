@@ -40,10 +40,6 @@ function getAiSettingsFromMap(map: Record<string, string>): { baseUrl: string; a
   };
 }
 
-// Module-level store for current request's auth header and GitHub PAT
-let currentAuthHeader: string | null = null;
-let currentGithubToken: string | null = null;
-
 // ========== HTML → Markdown ==========
 function htmlToMarkdown(html: string): string {
   let md = html;
