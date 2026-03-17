@@ -91,7 +91,7 @@ export function useMCPServer() {
         setLoading(false);
       }
     },
-    [githubToken]
+    [githubToken, settings]
   );
 
   const pingServer = useCallback(async (): Promise<boolean> => {
