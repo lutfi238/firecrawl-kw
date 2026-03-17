@@ -442,11 +442,12 @@ app.post("/*", async (c) => {
           break;
         }
         case "screenshot": {
-          const rendererUrl = Deno.env.get("RAILWAY_RENDERER_URL");
+          const sSettings = await getUserSettings(currentAuthHeader);
+          const rendererUrl = sSettings.renderer_url;
           if (!rendererUrl) {
-            result = { content: [{ type: "text", text: "Error: RAILWAY_RENDERER_URL not configured." }], isError: true };
+            result = { content: [{ type: "text", text: "Error: Renderer URL not configured in Settings." }], isError: true };
           } else {
-            const secret = Deno.env.get("RAILWAY_SECRET") || "";
+            const secret = sSettings.renderer_secret || "";
             const res = await fetch(`${rendererUrl}/screenshot`, {
               method: "POST",
               headers: { "Content-Type": "application/json", "X-Secret": secret },
