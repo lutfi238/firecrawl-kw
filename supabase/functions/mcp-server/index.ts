@@ -307,6 +307,15 @@ app.post("/*", async (c) => {
       const { name, arguments: args } = params;
       let result;
 
+      // For renderer-dependent tools, check user settings
+      if (name === "scrape_js" || name === "screenshot") {
+        const userSettings = await getUserSettings(currentAuthHeader);
+        if (userSettings.renderer_enabled !== "true") {
+          result = { content: [{ type: "text", text: "Tool disabled. Configure Render renderer URL in Settings to enable JS rendering." }], isError: true };
+          return c.json({ jsonrpc: "2.0", id, result }, 200, corsHeaders);
+        }
+      }
+
       switch (name) {
         case "search": {
           const results = await searchWeb(args.query, args.maxResults || 10);
@@ -319,11 +328,12 @@ app.post("/*", async (c) => {
           break;
         }
         case "scrape_js": {
-          const rendererUrl = Deno.env.get("RAILWAY_RENDERER_URL");
+          const userSettings = await getUserSettings(currentAuthHeader);
+          const rendererUrl = userSettings.renderer_url;
           if (!rendererUrl) {
-            result = { content: [{ type: "text", text: "Error: RAILWAY_RENDERER_URL not configured." }], isError: true };
+            result = { content: [{ type: "text", text: "Error: Renderer URL not configured in Settings." }], isError: true };
           } else {
-            const secret = Deno.env.get("RAILWAY_SECRET") || "";
+            const secret = userSettings.renderer_secret || "";
             const res = await fetch(`${rendererUrl}/render`, {
               method: "POST",
               headers: { "Content-Type": "application/json", "X-Secret": secret },
