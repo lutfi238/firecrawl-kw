@@ -168,7 +168,8 @@ async function resolveRedirect(url: string): Promise<{ finalUrl: string; resolve
       signal: AbortSignal.timeout(8000),
     });
     const finalUrl = res.url || url;
-    return { finalUrl, resolved: finalUrl !== url };
+    const didChange = finalUrl !== url;
+    return { finalUrl, resolved: didChange };
   } catch (e) {
     try {
       const res = await fetch(url, {
@@ -178,7 +179,8 @@ async function resolveRedirect(url: string): Promise<{ finalUrl: string; resolve
       });
       const finalUrl = res.url || url;
       await res.body?.cancel();
-      return { finalUrl, resolved: finalUrl !== url };
+      const didChange = finalUrl !== url;
+      return { finalUrl, resolved: didChange };
     } catch {
       return { finalUrl: url, resolved: false, error: e instanceof Error ? e.message : "resolve failed" };
     }
@@ -187,6 +189,33 @@ async function resolveRedirect(url: string): Promise<{ finalUrl: string; resolve
 
 function extractDomain(url: string): string {
   try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; }
+}
+
+// ========== Article content quality heuristic ==========
+// Checks if scraped markdown looks like actual article body vs boilerplate/nav/login page
+function isUsableArticleContent(markdown: string): boolean {
+  if (markdown.length < 300) return false;
+
+  // Count paragraphs (sequences of 50+ chars separated by newlines)
+  const paragraphs = markdown.split(/\n\n+/).filter(p => p.trim().length > 50);
+  if (paragraphs.length < 2) return false;
+
+  // Avg sentence length heuristic: real articles have longer average text blocks
+  const totalTextLength = paragraphs.reduce((sum, p) => sum + p.length, 0);
+  const avgParagraphLength = totalTextLength / paragraphs.length;
+  if (avgParagraphLength < 40) return false;
+
+  // Check for boilerplate signals
+  const lower = markdown.toLowerCase();
+  const boilerplateSignals = [
+    "sign in", "log in", "subscribe now", "cookie policy",
+    "accept cookies", "privacy policy", "terms of service",
+  ];
+  const boilerplateHits = boilerplateSignals.filter(s => lower.includes(s)).length;
+  // If more than half the content is boilerplate indicators, reject
+  if (boilerplateHits >= 3 && markdown.length < 1000) return false;
+
+  return true;
 }
 
 // ========== Source evidence types ==========
@@ -199,7 +228,7 @@ interface NormalizedSource {
   markdown: string;
   contentLength: number;
   resolveStatus: "resolved" | "unchanged" | "failed";
-  scrapeStatus: "success" | "failed" | "empty";
+  scrapeStatus: "success" | "failed" | "empty" | "boilerplate";
   error?: string;
 }
 
@@ -212,7 +241,7 @@ interface EvidenceMetrics {
   emptyContentSources: number;
 }
 
-const MIN_USABLE_CONTENT_LENGTH = 200;
+const MIN_USABLE_CONTENT_LENGTH = 300;
 
 // ========== Web Search (RSS-based) ==========
 async function searchWeb(query: string, maxResults: number): Promise<Array<{ title: string; url: string; snippet: string }>> {
@@ -383,12 +412,6 @@ async function processBatchScrapeJob(jobId: string, args: Record<string, unknown
 // ========== Background agent processor ==========
 async function processAgentJob(jobId: string, args: Record<string, unknown>, aiSettings: { baseUrl: string; apiKey: string; model: string }) {
   const svc = getServiceClient();
-  const FALLBACK_SOURCES = [
-    "https://techcrunch.com",
-    "https://www.theverge.com",
-    "https://arstechnica.com",
-    "https://news.ycombinator.com",
-  ];
 
   try {
     await svc.from("mcp_jobs").update({ status: "processing", output: { step: "searching" } }).eq("id", jobId);
@@ -420,11 +443,22 @@ async function processAgentJob(jobId: string, args: Record<string, unknown>, aiS
       }
     }
 
+    // No fallback to generic homepages — return early with low-evidence result
     if (discoveredUrls.length === 0) {
-      console.log("[agent] Search empty — using fallback sources");
-      for (const u of FALLBACK_SOURCES) {
-        discoveredUrls.push({ title: "", url: u, sourceUrl: u, snippet: "" });
-      }
+      console.log("[agent] No URLs discovered — returning low-evidence result immediately");
+      await svc.from("mcp_jobs").update({
+        status: "completed",
+        output: {
+          step: "completed",
+          synthesis: null,
+          groundedness: "none",
+          warning: "Web search returned no relevant URLs for this query. No article content could be collected or synthesized.",
+          evidenceMetrics: { sourcesCollected: 0, sourcesResolved: 0, sourcesScrapedSuccessfully: 0, sourcesUsableForSynthesis: 0, failedSources: 0, emptyContentSources: 0 },
+          sources: [],
+          scrapedCount: 0,
+        },
+      }).eq("id", jobId);
+      return;
     }
 
     discoveredUrls = discoveredUrls.slice(0, maxSteps);
@@ -458,8 +492,14 @@ async function processAgentJob(jobId: string, args: Record<string, unknown>, aiS
         const scraped = await scrapeUrl(finalUrl);
         markdown = scraped.markdown.slice(0, 6000);
         title = title || scraped.title;
-        scrapeStatus = markdown.length >= MIN_USABLE_CONTENT_LENGTH ? "success" : "empty";
-        console.log("[agent] Scraped OK:", finalUrl, "len:", markdown.length);
+        if (isUsableArticleContent(markdown)) {
+          scrapeStatus = "success";
+        } else if (markdown.length > 0) {
+          scrapeStatus = "boilerplate";
+        } else {
+          scrapeStatus = "empty";
+        }
+        console.log("[agent] Scraped:", finalUrl, "len:", markdown.length, "status:", scrapeStatus);
       } catch (e) {
         scrapeError = e instanceof Error ? e.message : "scrape failed";
         console.log("[agent] Scrape failed:", finalUrl, scrapeError);
@@ -494,9 +534,9 @@ async function processAgentJob(jobId: string, args: Record<string, unknown>, aiS
       sourcesCollected: collectedCount,
       sourcesResolved: sources.filter(s => s.resolveStatus === "resolved" || s.resolveStatus === "unchanged").length,
       sourcesScrapedSuccessfully: sources.filter(s => s.scrapeStatus === "success").length,
-      sourcesUsableForSynthesis: sources.filter(s => s.scrapeStatus === "success" && s.contentLength >= MIN_USABLE_CONTENT_LENGTH).length,
+      sourcesUsableForSynthesis: sources.filter(s => s.scrapeStatus === "success").length,
       failedSources: sources.filter(s => s.scrapeStatus === "failed").length,
-      emptyContentSources: sources.filter(s => s.scrapeStatus === "empty").length,
+      emptyContentSources: sources.filter(s => s.scrapeStatus === "empty" || s.scrapeStatus === "boilerplate").length,
     };
 
     console.log("[agent] Evidence metrics:", JSON.stringify(metrics));
@@ -513,8 +553,8 @@ async function processAgentJob(jobId: string, args: Record<string, unknown>, aiS
       error: s.error,
     }));
 
-    // Step 3: Synthesis quality gate
-    const usableSources = sources.filter(s => s.scrapeStatus === "success" && s.contentLength >= MIN_USABLE_CONTENT_LENGTH);
+    // Step 3: Synthesis quality gate — only "success" sources are usable
+    const usableSources = sources.filter(s => s.scrapeStatus === "success");
 
     if (usableSources.length === 0) {
       // No usable evidence — do not synthesize

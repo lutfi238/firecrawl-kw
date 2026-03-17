@@ -178,11 +178,22 @@ function getStepIndex(step?: string): number {
 
 function getStatusSentence(data: AgentJobData): string {
   const count = data.scrapedCount;
+  const usable = data.evidenceMetrics?.sourcesUsableForSynthesis;
   const countStr = count != null && count > 0
     ? `${count} scraped source${count !== 1 ? "s" : ""}`
     : null;
 
   if (data.status === "completed") {
+    // Low/no evidence completions
+    if (data.groundedness === "none") {
+      return data.warning || "The job completed but no usable article content was found.";
+    }
+    if (data.groundedness === "low") {
+      return `The job completed with limited evidence (${usable ?? 0} usable source${(usable ?? 0) !== 1 ? "s" : ""}). Synthesis may lack grounding.`;
+    }
+    if (data.warning) {
+      return `The job completed with warnings: ${data.warning}`;
+    }
     return countStr
       ? `The job has completed successfully with ${countStr}.`
       : "The job has completed successfully.";
@@ -470,11 +481,18 @@ export function AgentJobMonitor({
               {/* Status sentence */}
               <div className={cn(
                 "rounded-md border p-3",
-                data.status === "failed" ? "border-cyber-red/30 bg-cyber-red/5" : "border-border bg-muted/10"
+                data.status === "failed" ? "border-cyber-red/30 bg-cyber-red/5" :
+                data.groundedness === "none" ? "border-cyber-red/30 bg-cyber-red/5" :
+                data.groundedness === "low" ? "border-cyber-amber/30 bg-cyber-amber/5" :
+                data.warning ? "border-cyber-amber/30 bg-cyber-amber/5" :
+                "border-border bg-muted/10"
               )}>
                 <p className={cn(
                   "text-sm leading-relaxed",
-                  data.status === "failed" ? "text-cyber-red/90" : "text-foreground/80"
+                  data.status === "failed" ? "text-cyber-red/90" :
+                  data.groundedness === "none" ? "text-cyber-red/90" :
+                  data.groundedness === "low" || data.warning ? "text-cyber-amber/90" :
+                  "text-foreground/80"
                 )}>
                   {getStatusSentence(data)}
                 </p>
@@ -590,6 +608,7 @@ export function AgentJobMonitor({
                           "mt-0.5 h-2 w-2 rounded-full flex-shrink-0",
                           src.scrapeStatus === "success" && "bg-cyber-green",
                           src.scrapeStatus === "empty" && "bg-cyber-amber",
+                          src.scrapeStatus === "boilerplate" && "bg-cyber-amber",
                           src.scrapeStatus === "failed" && "bg-cyber-red",
                         )} />
                         <div className="min-w-0 flex-1">
