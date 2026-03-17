@@ -197,26 +197,70 @@ function decodeEscapedUrl(value: string): string {
     .replace(/\\\//g, "/");
 }
 
-async function resolveGoogleNewsRssUrl(url: string): Promise<{ finalUrl?: string; resolveStatus: "resolved" | "unresolved_wrapper" | "failed"; error?: string }> {
+async function resolveGoogleNewsRssUrl(url: string, rawDesc?: string): Promise<{ finalUrl?: string; resolveStatus: "resolved" | "unresolved_wrapper" | "failed"; error?: string; method?: string }> {
   try {
+    // Strategy 1: Extract publisher URL from RSS <description> HTML
+    // Google News RSS descriptions contain: <a href="https://real-publisher.com/article">Title</a>
+    if (rawDesc) {
+      console.log("[gnews-resolve] rawDesc present, length:", rawDesc.length);
+      // Decode HTML entities first
+      const decoded = rawDesc
+        .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&")
+        .replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+      // Extract href from anchor tags
+      const hrefMatches = [...decoded.matchAll(/href="(https?:\/\/[^"]+)"/gi)];
+      for (const hm of hrefMatches) {
+        const candidate = normalizeResolvedUrl(hm[1]);
+        if (candidate) {
+          console.log("[gnews-resolve] Found publisher URL from description href:", candidate);
+          return { finalUrl: candidate, resolveStatus: "resolved", method: "desc_href" };
+        }
+      }
+      // Also try bare URLs in description text
+      const bareUrls = [...decoded.matchAll(/(https?:\/\/[^\s"'<>]+)/gi)];
+      for (const bu of bareUrls) {
+        const candidate = normalizeResolvedUrl(bu[1]);
+        if (candidate) {
+          console.log("[gnews-resolve] Found publisher URL from description text:", candidate);
+          return { finalUrl: candidate, resolveStatus: "resolved", method: "desc_text" };
+        }
+      }
+      console.log("[gnews-resolve] No publisher URL found in description");
+    } else {
+      console.log("[gnews-resolve] rawDesc is MISSING — cannot extract from description");
+    }
+
+    // Strategy 2: Try to decode the base64 token from the URL path
     const parsed = new URL(url);
     const token = parsed.pathname.split("/").filter(Boolean).pop() || "";
     const decodedCandidate = decodeGoogleNewsToken(token);
     if (decodedCandidate) {
-      return { finalUrl: decodedCandidate, resolveStatus: "resolved" };
+      console.log("[gnews-resolve] Decoded publisher URL from token:", decodedCandidate);
+      return { finalUrl: decodedCandidate, resolveStatus: "resolved", method: "token_decode" };
     }
+    console.log("[gnews-resolve] Token decode failed for:", token.slice(0, 30) + "...");
 
+    // Strategy 3: HTTP fetch the Google News page and extract redirect/canonical
+    console.log("[gnews-resolve] Trying HTTP fetch fallback");
     const res = await fetch(url, {
       redirect: "follow",
       headers: { "User-Agent": "Mozilla/5.0 (compatible; RSS/2.0)" },
       signal: AbortSignal.timeout(10000),
     });
 
+    // Check if the redirect itself resolved to a non-Google domain
+    if (res.url && normalizeResolvedUrl(res.url)) {
+      console.log("[gnews-resolve] HTTP redirect resolved to:", res.url);
+      return { finalUrl: res.url, resolveStatus: "resolved", method: "http_redirect" };
+    }
+
     const html = await res.text();
+    console.log("[gnews-resolve] Fetched page length:", html.length);
     const patterns = [
       /"canonicalUrl":"(https?:\/\/[^"\\]+)"/gi,
       /"url":"(https?:\/\/[^"\\]+)"/gi,
-      /(https?:\/\/[^"'\s<>{}\\]+(?:\?[^"'\s<>{}]*)?)/gi,
+      /data-url="(https?:\/\/[^"]+)"/gi,
+      /href="(https?:\/\/[^"]+)"/gi,
     ];
 
     for (const pattern of patterns) {
@@ -225,13 +269,16 @@ async function resolveGoogleNewsRssUrl(url: string): Promise<{ finalUrl?: string
         const candidate = decodeEscapedUrl(m[1] || m[0]);
         const normalized = normalizeResolvedUrl(candidate);
         if (normalized) {
-          return { finalUrl: normalized, resolveStatus: "resolved" };
+          console.log("[gnews-resolve] Found URL from page HTML:", normalized);
+          return { finalUrl: normalized, resolveStatus: "resolved", method: "html_extract" };
         }
       }
     }
 
+    console.log("[gnews-resolve] All strategies failed for:", url.slice(0, 80));
     return { resolveStatus: "unresolved_wrapper", error: "Could not extract publisher URL from Google News RSS wrapper" };
   } catch (e) {
+    console.log("[gnews-resolve] Error:", e instanceof Error ? e.message : "unknown");
     return { resolveStatus: "failed", error: e instanceof Error ? e.message : "google news resolve failed" };
   }
 }
@@ -321,7 +368,7 @@ interface EvidenceMetrics {
 const MIN_USABLE_CONTENT_LENGTH = 300;
 
 // ========== Web Search (RSS-based) ==========
-async function searchWeb(query: string, maxResults: number): Promise<Array<{ title: string; url: string; snippet: string }>> {
+async function searchWeb(query: string, maxResults: number): Promise<Array<{ title: string; url: string; sourceUrl: string; snippet: string; rawDesc: string }>> {
   const encoded = encodeURIComponent(query);
 
   const sources = [
@@ -360,11 +407,13 @@ async function searchWeb(query: string, maxResults: number): Promise<Array<{ tit
 
       if (rawItems.length === 0) continue;
 
+      // Resolve URLs — pass rawDesc to Google News resolver
       const items = await Promise.all(rawItems.map(async ({ title, rawLink, rawDesc }) => {
         let finalUrl = rawLink;
         if (isGoogleNewsRssWrapper(rawLink)) {
-          const resolved = await resolveGoogleNewsRssUrl(rawLink);
+          const resolved = await resolveGoogleNewsRssUrl(rawLink, rawDesc);
           finalUrl = resolved.finalUrl || rawLink;
+          console.log("[search] Google resolve:", rawLink.slice(0, 60), "→", finalUrl.slice(0, 80), "method:", resolved.method || "none");
         } else if (isRedirectUrl(rawLink)) {
           const resolved = await resolveRedirect(rawLink);
           finalUrl = resolved.finalUrl;
@@ -384,7 +433,7 @@ async function searchWeb(query: string, maxResults: number): Promise<Array<{ tit
           }
         }
 
-        return { title, url: finalUrl, sourceUrl: rawLink, snippet };
+        return { title, url: finalUrl, sourceUrl: rawLink, snippet, rawDesc };
       }));
 
       const seen = new Set<string>();
@@ -507,10 +556,10 @@ async function processAgentJob(jobId: string, args: Record<string, unknown>, aiS
     const schema = args.schema as string | undefined;
     const maxSteps = (args.maxSteps as number) || 5;
 
-    // Step 1: Search for relevant URLs
-    let discoveredUrls: Array<{ title: string; url: string; sourceUrl: string; snippet: string }> = [];
+    // Step 1: Search for relevant URLs (preserve rawDesc for Google News resolution)
+    let discoveredUrls: Array<{ title: string; url: string; sourceUrl: string; snippet: string; rawDesc: string }> = [];
     for (const u of focusUrls) {
-      discoveredUrls.push({ title: "", url: u, sourceUrl: u, snippet: "" });
+      discoveredUrls.push({ title: "", url: u, sourceUrl: u, snippet: "", rawDesc: "" });
     }
     console.log("[agent] Focus URLs:", focusUrls);
 
@@ -519,7 +568,13 @@ async function processAgentJob(jobId: string, args: Record<string, unknown>, aiS
       const searchResults = await searchWeb(prompt, maxSteps - discoveredUrls.length);
       console.log("[agent] Search returned", searchResults.length, "results");
       for (const r of searchResults) {
-        discoveredUrls.push({ title: r.title, url: r.url, sourceUrl: (r as any).sourceUrl || r.url, snippet: r.snippet });
+        discoveredUrls.push({
+          title: r.title,
+          url: r.url,
+          sourceUrl: r.sourceUrl || r.url,
+          snippet: r.snippet,
+          rawDesc: r.rawDesc || "",
+        });
       }
     }
 
@@ -544,7 +599,7 @@ async function processAgentJob(jobId: string, args: Record<string, unknown>, aiS
     discoveredUrls = discoveredUrls.slice(0, maxSteps);
     const collectedCount = discoveredUrls.length;
 
-    // Step 2: Resolve redirect URLs
+    // Step 2: Resolve redirect URLs and scrape
     await svc.from("mcp_jobs").update({ output: { step: "scraping", sourcesCollected: collectedCount } }).eq("id", jobId);
 
     const sources: NormalizedSource[] = [];
@@ -553,18 +608,27 @@ async function processAgentJob(jobId: string, args: Record<string, unknown>, aiS
       let resolveStatus: NormalizedSource["resolveStatus"] = "unchanged";
       let resolveError: string | undefined;
 
-      if (isGoogleNewsRssWrapper(item.url)) {
-        const resolved = await resolveGoogleNewsRssUrl(item.url);
+      // If searchWeb already resolved Google News (url !== sourceUrl), check if it's still a wrapper
+      const isStillWrapper = isGoogleNewsRssWrapper(item.url);
+      const wasAlreadyResolved = item.sourceUrl !== item.url && !isStillWrapper;
+
+      if (wasAlreadyResolved) {
+        resolveStatus = "resolved";
+        console.log("[agent] Already resolved by searchWeb:", item.sourceUrl.slice(0, 60), "→", item.url.slice(0, 80));
+      } else if (isStillWrapper) {
+        // Re-attempt resolution with rawDesc (searchWeb might have failed without it being used properly)
+        console.log("[agent] Google wrapper still present, re-resolving with rawDesc length:", item.rawDesc.length);
+        const resolved = await resolveGoogleNewsRssUrl(item.url, item.rawDesc);
         resolveStatus = resolved.resolveStatus;
         finalUrl = resolved.finalUrl;
         resolveError = resolved.error;
-        console.log("[agent] Google RSS resolve:", item.url, "→", finalUrl || "unresolved", resolveStatus);
+        console.log("[agent] Google RSS resolve result:", resolveStatus, "method:", (resolved as any).method || "none", "finalUrl:", finalUrl?.slice(0, 80) || "none");
       } else if (isRedirectUrl(item.url)) {
         const resolved = await resolveRedirect(item.url);
         finalUrl = resolved.finalUrl;
         resolveStatus = resolved.error ? "failed" : (resolved.resolved ? "resolved" : "unchanged");
         resolveError = resolved.error;
-        console.log("[agent] Resolved:", item.url, "→", finalUrl, resolveStatus);
+        console.log("[agent] Redirect resolved:", item.url.slice(0, 60), "→", finalUrl.slice(0, 80), resolveStatus);
       }
 
       // Scrape the final URL
