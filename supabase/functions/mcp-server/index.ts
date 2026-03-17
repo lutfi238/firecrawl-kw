@@ -324,36 +324,68 @@ async function processBatchScrapeJob(jobId: string, args: Record<string, unknown
 // ========== Background agent processor ==========
 async function processAgentJob(jobId: string, args: Record<string, unknown>, aiSettings: { baseUrl: string; apiKey: string; model: string }) {
   const svc = getServiceClient();
+  const FALLBACK_SOURCES = [
+    "https://techcrunch.com",
+    "https://www.theverge.com",
+    "https://arstechnica.com",
+    "https://news.ycombinator.com",
+  ];
+
   try {
     await svc.from("mcp_jobs").update({ status: "processing", output: { step: "searching" } }).eq("id", jobId);
 
     const prompt = args.prompt as string;
-    const focusUrls = (args.urls as string[] | undefined) ?? [];
+    // Parse focusUrls: could be array or comma-separated string
+    const rawUrls = args.urls;
+    let focusUrls: string[] = [];
+    if (Array.isArray(rawUrls)) {
+      focusUrls = rawUrls.filter(Boolean);
+    } else if (typeof rawUrls === "string" && rawUrls.trim()) {
+      focusUrls = rawUrls.split(",").map((u: string) => u.trim()).filter(Boolean);
+    }
     const schema = args.schema as string | undefined;
     const maxSteps = (args.maxSteps as number) || 5;
 
     // Step 1: Search for relevant URLs
     let urlsToScrape: string[] = [...focusUrls];
+    console.log("[agent] Focus URLs:", focusUrls);
+
     if (urlsToScrape.length < maxSteps) {
+      console.log("[agent] Searching web for:", prompt);
       const searchResults = await searchWeb(prompt, maxSteps - urlsToScrape.length);
+      console.log("[agent] Search returned", searchResults.length, "results:", searchResults.map(r => r.url));
       urlsToScrape.push(...searchResults.map(r => r.url));
     }
+
+    // Fallback: if search returned nothing and no focus URLs, use hardcoded news sources
+    if (urlsToScrape.length === 0) {
+      console.log("[agent] Search empty and no focus URLs — using fallback sources");
+      urlsToScrape = [...FALLBACK_SOURCES];
+    }
+
     urlsToScrape = urlsToScrape.slice(0, maxSteps);
+    console.log("[agent] Final URLs to scrape:", urlsToScrape);
+    console.log("[agent] Scraping:", urlsToScrape.length, "URLs");
 
     await svc.from("mcp_jobs").update({ output: { step: "scraping", urls: urlsToScrape } }).eq("id", jobId);
 
     // Step 2: Scrape URLs
     const scrapedContent: string[] = [];
+    const successfulUrls: string[] = [];
     for (const url of urlsToScrape) {
       try {
         const { markdown, title } = await scrapeUrl(url);
         scrapedContent.push(`# ${title}\nURL: ${url}\n\n${markdown.slice(0, 4000)}`);
-      } catch {
+        successfulUrls.push(url);
+        console.log("[agent] Scraped OK:", url);
+      } catch (e) {
+        console.log("[agent] Scrape failed:", url, e instanceof Error ? e.message : "unknown");
         scrapedContent.push(`URL: ${url}\nFailed to scrape.`);
       }
     }
 
-    await svc.from("mcp_jobs").update({ output: { step: "synthesizing", scrapedCount: scrapedContent.length } }).eq("id", jobId);
+    console.log("[agent] Successfully scraped", successfulUrls.length, "of", urlsToScrape.length, "URLs");
+    await svc.from("mcp_jobs").update({ output: { step: "synthesizing", scrapedCount: successfulUrls.length } }).eq("id", jobId);
 
     // Step 3: Synthesize with AI
     const systemPrompt = schema
@@ -390,8 +422,8 @@ async function processAgentJob(jobId: string, args: Record<string, unknown>, aiS
       status: "completed",
       output: {
         synthesis: answer || "No response from AI",
-        sourcesUsed: urlsToScrape,
-        scrapedCount: scrapedContent.length,
+        sourcesUsed: successfulUrls,
+        scrapedCount: successfulUrls.length,
       },
     }).eq("id", jobId);
   } catch (err) {
