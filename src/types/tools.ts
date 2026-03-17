@@ -13,6 +13,7 @@ export interface ToolDefinition {
   icon: string;
   category: "search" | "scrape" | "crawl" | "ai" | "utility";
   inputs: ToolInputField[];
+  requiresRenderer?: boolean;
 }
 
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
