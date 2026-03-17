@@ -62,6 +62,7 @@ export default function Settings() {
     if (settings.renderer_secret) setRenderSecret(settings.renderer_secret);
     setRendererEnabled(settings.renderer_enabled === "true");
     if (settings.github_pat) setGithubPat(settings.github_pat);
+    if (settings.mcp_secret) setMcpSecret(settings.mcp_secret);
     if (settings.ai_provider) setAiProvider(settings.ai_provider);
     if (settings.ai_base_url) setAiBaseUrl(settings.ai_base_url);
     if (settings.ai_api_key) setAiApiKey(settings.ai_api_key);
