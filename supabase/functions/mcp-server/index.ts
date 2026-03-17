@@ -291,7 +291,7 @@ app.post("/*", async (c) => {
     }
 
     if (method === "tools/list") {
-      const userSettings = await getUserSettings(currentAuthHeader);
+      const userSettings = await getUserSettings(authHeader);
       const aiSettings = getAiSettingsFromMap(userSettings);
       const extractDesc = aiSettings
         ? `Scrape URL and use AI (${aiSettings.model}) to extract structured data`
