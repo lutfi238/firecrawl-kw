@@ -6,7 +6,7 @@ import {
 import { cn } from "@/lib/utils";
 
 const iconMap: Record<string, React.ElementType> = {
-  Search, FileText, Globe, Network, Map, Brain, Camera, SearchCode, Code, Layers,
+  Search, FileText, Globe, Network, Map, Brain, Camera, SearchCode, Code, Layers, Timer, Bot, MessageSquare,
 };
 
 interface ToolCardProps {
