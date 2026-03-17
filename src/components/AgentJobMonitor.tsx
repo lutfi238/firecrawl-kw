@@ -56,6 +56,7 @@ const AGENT_STEPS = [
   { key: "extracting", label: "Extracting" },
   { key: "synthesizing", label: "Synthesizing" },
   { key: "completed", label: "Completed" },
+  { key: "failed", label: "Failed" },
 ] as const;
 
 const TERMINAL_STATUSES = new Set(["completed", "failed"]);
