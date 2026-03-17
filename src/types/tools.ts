@@ -13,6 +13,7 @@ export interface ToolDefinition {
   icon: string;
   category: "search" | "scrape" | "crawl" | "ai" | "utility";
   inputs: ToolInputField[];
+  requiresRenderer?: boolean;
 }
 
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
@@ -38,7 +39,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     name: "scrape_js",
-    description: "Scrape a JavaScript-rendered page using a headless browser via Railway renderer.",
+    description: "Scrape a JavaScript-rendered page using a headless browser via Render renderer.",
+    requiresRenderer: true,
     icon: "Globe",
     category: "scrape",
     inputs: [
@@ -80,7 +82,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     name: "screenshot",
-    description: "Take a screenshot of a URL using headless browser via Railway renderer.",
+    description: "Take a screenshot of a URL using headless browser via Render renderer.",
+    requiresRenderer: true,
     icon: "Camera",
     category: "utility",
     inputs: [

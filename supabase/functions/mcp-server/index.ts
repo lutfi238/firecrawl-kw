@@ -2,10 +2,10 @@ import { Hono } from "hono";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 // ========== Get AI provider settings from settings table ==========
-async function getAiSettings(authHeader: string | null): Promise<{ baseUrl: string; apiKey: string; model: string } | null> {
+async function getUserSettings(authHeader: string | null): Promise<Record<string, string>> {
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
   const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY");
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !authHeader) return null;
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !authHeader) return {};
 
   try {
     const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
@@ -14,29 +14,30 @@ async function getAiSettings(authHeader: string | null): Promise<{ baseUrl: stri
     });
 
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return null;
+    if (!user) return {};
 
     const { data, error } = await supabase
       .from("settings")
       .select("key, value")
-      .eq("user_id", user.id)
-      .in("key", ["ai_base_url", "ai_api_key", "ai_model"]);
+      .eq("user_id", user.id);
 
-    if (error || !data) return null;
+    if (error || !data) return {};
 
     const map: Record<string, string> = {};
     for (const row of data) map[row.key] = row.value ?? "";
-
-    if (!map.ai_api_key) return null;
-
-    return {
-      baseUrl: map.ai_base_url || "https://api.openai.com/v1",
-      apiKey: map.ai_api_key,
-      model: map.ai_model || "gpt-4o-mini",
-    };
+    return map;
   } catch {
-    return null;
+    return {};
   }
+}
+
+function getAiSettingsFromMap(map: Record<string, string>): { baseUrl: string; apiKey: string; model: string } | null {
+  if (!map.ai_api_key) return null;
+  return {
+    baseUrl: map.ai_base_url || "https://api.openai.com/v1",
+    apiKey: map.ai_api_key,
+    model: map.ai_model || "gpt-4o-mini",
+  };
 }
 
 // Module-level store for current request's auth header and GitHub PAT
@@ -274,19 +275,26 @@ app.post("/*", async (c) => {
     }
 
     if (method === "tools/list") {
-      // Get AI provider info for dynamic extract description
-      const aiSettings = await getAiSettings(currentAuthHeader);
+      const userSettings = await getUserSettings(currentAuthHeader);
+      const aiSettings = getAiSettingsFromMap(userSettings);
       const extractDesc = aiSettings
         ? `Scrape URL and use AI (${aiSettings.model}) to extract structured data`
         : "Scrape URL and use AI to extract structured data (not configured)";
+      const rendererEnabled = userSettings.renderer_enabled === "true";
+      const scrapeJsDesc = rendererEnabled
+        ? "Scrape a JS-rendered page via Render renderer"
+        : "Scrape a JS-rendered page (disabled - configure Render renderer in Settings)";
+      const screenshotDesc = rendererEnabled
+        ? "Take a screenshot via Render renderer"
+        : "Take a screenshot (disabled - configure Render renderer in Settings)";
       const toolDefs = [
         { name: "search", description: "Search the web using DuckDuckGo", inputSchema: { type: "object", properties: { query: { type: "string" }, maxResults: { type: "number" } }, required: ["query"] } },
         { name: "scrape", description: "Fetch a URL and convert HTML to Markdown", inputSchema: { type: "object", properties: { url: { type: "string" } }, required: ["url"] } },
-        { name: "scrape_js", description: "Scrape a JS-rendered page via Railway renderer", inputSchema: { type: "object", properties: { url: { type: "string" }, waitFor: { type: "number" } }, required: ["url"] } },
+        { name: "scrape_js", description: scrapeJsDesc, inputSchema: { type: "object", properties: { url: { type: "string" }, waitFor: { type: "number" } }, required: ["url"] } },
         { name: "crawl", description: "BFS crawl a website staying on the same domain", inputSchema: { type: "object", properties: { url: { type: "string" }, maxPages: { type: "number" }, extractContent: { type: "boolean" } }, required: ["url"] } },
         { name: "map", description: "Fast URL-only crawl to map all links on a domain", inputSchema: { type: "object", properties: { url: { type: "string" }, maxPages: { type: "number" } }, required: ["url"] } },
         { name: "extract", description: extractDesc, inputSchema: { type: "object", properties: { url: { type: "string" }, prompt: { type: "string" }, schema: { type: "string" } }, required: ["url", "prompt"] } },
-        { name: "screenshot", description: "Take a screenshot via Railway renderer", inputSchema: { type: "object", properties: { url: { type: "string" }, width: { type: "number" }, height: { type: "number" } }, required: ["url"] } },
+        { name: "screenshot", description: screenshotDesc, inputSchema: { type: "object", properties: { url: { type: "string" }, width: { type: "number" }, height: { type: "number" } }, required: ["url"] } },
         { name: "search_and_scrape", description: "Search then scrape top results", inputSchema: { type: "object", properties: { query: { type: "string" }, maxResults: { type: "number" } }, required: ["query"] } },
         { name: "html_to_markdown", description: "Convert HTML string to Markdown", inputSchema: { type: "object", properties: { html: { type: "string" } }, required: ["html"] } },
         { name: "batch_scrape", description: "Scrape multiple URLs in parallel", inputSchema: { type: "object", properties: { urls: { type: "string" } }, required: ["urls"] } },
@@ -298,6 +306,15 @@ app.post("/*", async (c) => {
     if (method === "tools/call") {
       const { name, arguments: args } = params;
       let result;
+
+      // For renderer-dependent tools, check user settings
+      if (name === "scrape_js" || name === "screenshot") {
+        const userSettings = await getUserSettings(currentAuthHeader);
+        if (userSettings.renderer_enabled !== "true") {
+          result = { content: [{ type: "text", text: "Tool disabled. Configure Render renderer URL in Settings to enable JS rendering." }], isError: true };
+          return c.json({ jsonrpc: "2.0", id, result }, 200, corsHeaders);
+        }
+      }
 
       switch (name) {
         case "search": {
@@ -311,11 +328,12 @@ app.post("/*", async (c) => {
           break;
         }
         case "scrape_js": {
-          const rendererUrl = Deno.env.get("RAILWAY_RENDERER_URL");
+          const userSettings = await getUserSettings(currentAuthHeader);
+          const rendererUrl = userSettings.renderer_url;
           if (!rendererUrl) {
-            result = { content: [{ type: "text", text: "Error: RAILWAY_RENDERER_URL not configured." }], isError: true };
+            result = { content: [{ type: "text", text: "Error: Renderer URL not configured in Settings." }], isError: true };
           } else {
-            const secret = Deno.env.get("RAILWAY_SECRET") || "";
+            const secret = userSettings.renderer_secret || "";
             const res = await fetch(`${rendererUrl}/render`, {
               method: "POST",
               headers: { "Content-Type": "application/json", "X-Secret": secret },
@@ -374,7 +392,8 @@ app.post("/*", async (c) => {
           break;
         }
         case "extract": {
-          const aiSettings = await getAiSettings(currentAuthHeader);
+          const uSettings = await getUserSettings(currentAuthHeader);
+          const aiSettings = getAiSettingsFromMap(uSettings);
           if (!aiSettings) {
             result = { content: [{ type: "text", text: "Error: AI provider not configured. Go to Settings → AI Provider and add your API key." }], isError: true };
           } else {
@@ -423,11 +442,12 @@ app.post("/*", async (c) => {
           break;
         }
         case "screenshot": {
-          const rendererUrl = Deno.env.get("RAILWAY_RENDERER_URL");
+          const sSettings = await getUserSettings(currentAuthHeader);
+          const rendererUrl = sSettings.renderer_url;
           if (!rendererUrl) {
-            result = { content: [{ type: "text", text: "Error: RAILWAY_RENDERER_URL not configured." }], isError: true };
+            result = { content: [{ type: "text", text: "Error: Renderer URL not configured in Settings." }], isError: true };
           } else {
-            const secret = Deno.env.get("RAILWAY_SECRET") || "";
+            const secret = sSettings.renderer_secret || "";
             const res = await fetch(`${rendererUrl}/screenshot`, {
               method: "POST",
               headers: { "Content-Type": "application/json", "X-Secret": secret },
@@ -473,7 +493,8 @@ app.post("/*", async (c) => {
           break;
         }
         case "chat": {
-          const aiSettings = await getAiSettings(currentAuthHeader);
+          const cSettings = await getUserSettings(currentAuthHeader);
+          const aiSettings = getAiSettingsFromMap(cSettings);
           if (!aiSettings) {
             result = { content: [{ type: "text", text: "Error: AI provider not configured. Go to Settings → AI Provider and add your API key." }], isError: true };
           } else {
