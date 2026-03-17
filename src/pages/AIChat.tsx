@@ -378,7 +378,10 @@ export default function AIChat() {
           setCurrentStep("💬 Synthesizing grounded answer...");
           addMessage({ role: "tool", content: "💬 Synthesizing answer from evidence...", toolName: "synthesis" });
 
-          const synthesisPrompt = [
+          const isRanking = isRankingQuery(text);
+          const sourceCount = allSourceUrls.length;
+
+          const baseRules = [
             "You are a research assistant. Answer the user's question based ONLY on the evidence provided below.",
             "CRITICAL RULES:",
             "1. Use ONLY the evidence below. Do NOT fill gaps with your own knowledge or training data.",
@@ -388,7 +391,24 @@ export default function AIChat() {
             "5. If evidence contains conflicting information, note the discrepancy.",
             `6. Evidence was gathered using: ${toolsUsed.join(", ")}`,
             allSourceUrls.length > 0 ? `7. Available source URLs: ${allSourceUrls.slice(0, 10).join(", ")}` : "",
-          ].filter(Boolean).join("\n");
+          ];
+
+          const rankingRules = isRanking ? [
+            "",
+            "RANKING/COMPARISON ANSWER RULES (this is a ranking or comparison query):",
+            `8. SOURCE STRENGTH: You have evidence from ${sourceCount} source(s). Be explicit about whether a ranking comes from one primary source or multiple independent sources. Do NOT present a single source's ranking as universal consensus.`,
+            "9. SOURCE ROLES: Distinguish between (a) a primary ranking source that provides a numbered list, (b) supporting sources that mention some of the same items, and (c) commentary/benchmark sources. Label which role each source plays.",
+            "10. CATEGORY MIXING: If sources mix foundation models (GPT, Claude, Gemini, Qwen, etc.) with tools/products/agents (Cursor, GitHub Copilot, Devin, etc.), explicitly note the distinction. Do not silently blend them into one list.",
+            "11. CONFIDENCE FRAMING: Use language like 'Based on the scraped sources...', 'One ranking source lists...', 'Supporting sources also mention...'. Never say 'the definitive top 10' or 'universally ranked' unless multiple independent sources agree.",
+            "12. STRUCTURE: Use this format:",
+            "   - Brief qualification about source strength and coverage",
+            "   - The ranked list (attributed to source)",
+            "   - Supporting mentions from other sources",
+            "   - Discrepancies or disagreements between sources",
+            "   - Brief bottom-line conclusion",
+          ] : [];
+
+          const synthesisPrompt = [...baseRules, ...rankingRules].filter(Boolean).join("\n");
 
           const synthesisResult = await callTool("chat", {
             message: `User question: ${text}\n\n${combinedEvidence.slice(0, 14000)}`,
