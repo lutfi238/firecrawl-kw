@@ -10,6 +10,27 @@ import { supabase } from "@/integrations/supabase/client";
 import { SlashCommandPicker } from "@/components/SlashCommandPicker";
 import { classifyIntent, registerJob, type JobType } from "@/lib/intentClassifier";
 
+// ========== Escalation helpers ==========
+const RANKING_KEYWORDS = [
+  "top ", "top-", "best ", "ranking", "compare", "comparison", "versus", " vs ",
+  "alternatives", "leaderboard", "list of", "which is better", "recommend",
+];
+
+function isRankingQuery(text: string): boolean {
+  const lower = text.toLowerCase();
+  return RANKING_KEYWORDS.some(kw => lower.includes(kw));
+}
+
+function isSearchEvidenceThin(evidence: string): boolean {
+  // Search results are thin if they're mostly titles/snippets with no article body content
+  // Each search result is ~3 lines (title, URL, snippet). If average content per result < 200 chars, it's thin.
+  const lines = evidence.split("\n").filter(l => l.trim().length > 0);
+  // Count lines that look like actual content (not just "[1] Title" or "URL: ...")
+  const contentLines = lines.filter(l => !l.match(/^\[?\d+\]?\s/) && !l.match(/^\s*URL:/i));
+  const contentLength = contentLines.join(" ").length;
+  return contentLength < 500;
+}
+
 // ========== Tool display metadata ==========
 const TOOL_META: Record<string, { icon: string; label: string }> = {
   search: { icon: "🔍", label: "Searching the web" },
