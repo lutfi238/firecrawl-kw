@@ -11,24 +11,28 @@ import { SlashCommandPicker } from "@/components/SlashCommandPicker";
 import { classifyIntent, registerJob, type JobType } from "@/lib/intentClassifier";
 
 // ========== Escalation helpers ==========
-const RANKING_KEYWORDS = [
-  "top ", "top-", "best ", "ranking", "compare", "comparison", "versus", " vs ",
-  "alternatives", "leaderboard", "list of", "which is better", "recommend",
+const RANKING_PATTERNS = [
+  /\btop\s*\d+/i, /\btop[\s-]rated/i, /\bbest\b/i, /\branking/i, /\branked\b/i,
+  /\bcompare\b/i, /\bcomparison/i, /\bversus\b/i, /\bvs\b/i,
+  /\balternatives?\b/i, /\bleaderboard/i, /\blist\s+of\b/i,
+  /\bwhich\s+is\s+better/i, /\brecommend/i,
 ];
 
 function isRankingQuery(text: string): boolean {
-  const lower = text.toLowerCase();
-  return RANKING_KEYWORDS.some(kw => lower.includes(kw));
+  return RANKING_PATTERNS.some(p => p.test(text));
 }
 
-function isSearchEvidenceThin(evidence: string): boolean {
-  // Search results are thin if they're mostly titles/snippets with no article body content
-  // Each search result is ~3 lines (title, URL, snippet). If average content per result < 200 chars, it's thin.
-  const lines = evidence.split("\n").filter(l => l.trim().length > 0);
-  // Count lines that look like actual content (not just "[1] Title" or "URL: ...")
-  const contentLines = lines.filter(l => !l.match(/^\[?\d+\]?\s/) && !l.match(/^\s*URL:/i));
-  const contentLength = contentLines.join(" ").length;
-  return contentLength < 500;
+/** Search evidence is considered "deep enough" only if it contains substantial article body text,
+ *  not just titles/URLs/snippets. For ranking queries we need actual article content. */
+function searchEvidenceHasDepth(evidence: string): boolean {
+  // Strip out the structured search result lines (titles, URLs)
+  const stripped = evidence
+    .split("\n")
+    .filter(l => !l.match(/^\[?\d+\]/) && !l.match(/^\s*URL:/i) && !l.match(/^---\s/))
+    .join(" ")
+    .trim();
+  // Need at least 2000 chars of actual prose to consider it deep enough for a ranked answer
+  return stripped.length > 2000;
 }
 
 // ========== Tool display metadata ==========
