@@ -10,6 +10,27 @@ import { supabase } from "@/integrations/supabase/client";
 import { SlashCommandPicker } from "@/components/SlashCommandPicker";
 import { classifyIntent, registerJob, type JobType } from "@/lib/intentClassifier";
 
+// ========== Escalation helpers ==========
+const RANKING_KEYWORDS = [
+  "top ", "top-", "best ", "ranking", "compare", "comparison", "versus", " vs ",
+  "alternatives", "leaderboard", "list of", "which is better", "recommend",
+];
+
+function isRankingQuery(text: string): boolean {
+  const lower = text.toLowerCase();
+  return RANKING_KEYWORDS.some(kw => lower.includes(kw));
+}
+
+function isSearchEvidenceThin(evidence: string): boolean {
+  // Search results are thin if they're mostly titles/snippets with no article body content
+  // Each search result is ~3 lines (title, URL, snippet). If average content per result < 200 chars, it's thin.
+  const lines = evidence.split("\n").filter(l => l.trim().length > 0);
+  // Count lines that look like actual content (not just "[1] Title" or "URL: ...")
+  const contentLines = lines.filter(l => !l.match(/^\[?\d+\]?\s/) && !l.match(/^\s*URL:/i));
+  const contentLength = contentLines.join(" ").length;
+  return contentLength < 500;
+}
+
 // ========== Tool display metadata ==========
 const TOOL_META: Record<string, { icon: string; label: string }> = {
   search: { icon: "🔍", label: "Searching the web" },
@@ -293,18 +314,55 @@ export default function AIChat() {
       // === SYNTHESIS PATH ===
       // When synthesize=true and we have tool evidence, pass it through AI for a grounded answer
       if (intent.synthesize && !lastResult.result.isError) {
-        const allEvidence = toolResults
+        let allEvidence = toolResults
           .filter(r => r.tool !== "chat")
           .map(r => {
             const norm = normalizeEvidence(r.tool, r.result);
             return { tool: r.tool, ...norm };
           });
 
-        const combinedEvidence = allEvidence
+        let combinedEvidence = allEvidence
           .map(e => `--- Evidence from ${e.tool} ---\n${e.evidence}`)
           .join("\n\n");
+
+        // === AUTO-ESCALATION ===
+        // If search returned only thin snippets and the query needs ranked/list/comparison data,
+        // escalate to search_and_scrape for deeper evidence before synthesizing.
+        const onlySearchSoFar = toolResults.every(r => r.tool === "search");
+        const evidenceThin = onlySearchSoFar && isSearchEvidenceThin(combinedEvidence);
+        const queryNeedsDepth = isRankingQuery(text);
+
+        if (evidenceThin && queryNeedsDepth && !controller.signal.aborted) {
+          setCurrentStep("🔎 Search snippets too thin — escalating to deeper scrape...");
+          addMessage({
+            role: "tool",
+            content: "🔎 Search snippets insufficient for a ranked answer. Escalating to search_and_scrape for deeper evidence...",
+            toolName: "escalation",
+          });
+
+          const escalationStart = Date.now();
+          const escalationResult = await callTool("search_and_scrape", {
+            query: text,
+            maxResults: 3,
+          });
+          const escalationDuration = Date.now() - escalationStart;
+
+          if (controller.signal.aborted) return;
+
+          await logToMonitor("search_and_scrape", { query: text, maxResults: 3 }, escalationResult, escalationDuration);
+          maybeRegisterJob("search_and_scrape", escalationResult);
+
+          if (!escalationResult.isError) {
+            const escalationEvidence = normalizeEvidence("search_and_scrape", escalationResult);
+            allEvidence.push({ tool: "search_and_scrape", ...escalationEvidence });
+            combinedEvidence = allEvidence
+              .map(e => `--- Evidence from ${e.tool} ---\n${e.evidence}`)
+              .join("\n\n");
+          }
+        }
+
         const allSourceUrls = [...new Set(allEvidence.flatMap(e => e.sourceUrls))];
-        const toolsUsed = toolResults.map(r => r.tool);
+        const toolsUsed = [...new Set(toolResults.map(r => r.tool).concat(evidenceThin && queryNeedsDepth ? ["search_and_scrape"] : []))];
         const evidenceIsSubstantial = combinedEvidence.length > 100;
 
         if (evidenceIsSubstantial) {
@@ -341,7 +399,7 @@ export default function AIChat() {
           addMessage({ role: "assistant", content: answer + sourcesFooter });
           return;
         }
-        // Evidence too thin — fall through to direct display with a note
+        // Evidence too thin even after escalation — fall through to direct display with a note
       }
 
       // === ASYNC JOB RESULT FORMATTING ===
