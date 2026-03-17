@@ -31,9 +31,29 @@ Deno.serve(async (req) => {
 
   const callbackUrl = `${SUPABASE_URL}/functions/v1/github-auth`;
 
+  const ALLOWED_ORIGINS = [
+    "https://firecrawl-a-like.lovable.app",
+    "http://localhost:5173",
+  ];
+
+  const validateOrigin = (raw: string | null | undefined): string => {
+    const candidate = raw || "http://localhost:5173";
+    const isAllowed = ALLOWED_ORIGINS.some((o) => candidate.startsWith(o));
+    if (!isAllowed) throw new Error("INVALID_ORIGIN");
+    return candidate;
+  };
+
   // ── Step 1: No code → redirect to GitHub ──
   if (!code) {
-    const origin = redirectUri || req.headers.get("origin") || "http://localhost:5173";
+    let origin: string;
+    try {
+      origin = validateOrigin(redirectUri || req.headers.get("origin"));
+    } catch {
+      return new Response(JSON.stringify({ error: "Invalid redirect origin" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
     const ghUrl = new URL("https://github.com/login/oauth/authorize");
     ghUrl.searchParams.set("client_id", GITHUB_CLIENT_ID);
     ghUrl.searchParams.set("redirect_uri", callbackUrl);
@@ -43,7 +63,15 @@ Deno.serve(async (req) => {
   }
 
   // ── Step 2: GitHub callback with code ──
-  const frontendOrigin = state || "http://localhost:5173";
+  let frontendOrigin: string;
+  try {
+    frontendOrigin = validateOrigin(state);
+  } catch {
+    return new Response(JSON.stringify({ error: "Invalid redirect origin" }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
 
   try {
     // Exchange code for GitHub access token
