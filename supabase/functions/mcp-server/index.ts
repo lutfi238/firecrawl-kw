@@ -556,10 +556,10 @@ async function processAgentJob(jobId: string, args: Record<string, unknown>, aiS
     const schema = args.schema as string | undefined;
     const maxSteps = (args.maxSteps as number) || 5;
 
-    // Step 1: Search for relevant URLs
-    let discoveredUrls: Array<{ title: string; url: string; sourceUrl: string; snippet: string }> = [];
+    // Step 1: Search for relevant URLs (preserve rawDesc for Google News resolution)
+    let discoveredUrls: Array<{ title: string; url: string; sourceUrl: string; snippet: string; rawDesc: string }> = [];
     for (const u of focusUrls) {
-      discoveredUrls.push({ title: "", url: u, sourceUrl: u, snippet: "" });
+      discoveredUrls.push({ title: "", url: u, sourceUrl: u, snippet: "", rawDesc: "" });
     }
     console.log("[agent] Focus URLs:", focusUrls);
 
@@ -568,7 +568,13 @@ async function processAgentJob(jobId: string, args: Record<string, unknown>, aiS
       const searchResults = await searchWeb(prompt, maxSteps - discoveredUrls.length);
       console.log("[agent] Search returned", searchResults.length, "results");
       for (const r of searchResults) {
-        discoveredUrls.push({ title: r.title, url: r.url, sourceUrl: (r as any).sourceUrl || r.url, snippet: r.snippet });
+        discoveredUrls.push({
+          title: r.title,
+          url: r.url,
+          sourceUrl: r.sourceUrl || r.url,
+          snippet: r.snippet,
+          rawDesc: r.rawDesc || "",
+        });
       }
     }
 
@@ -593,7 +599,7 @@ async function processAgentJob(jobId: string, args: Record<string, unknown>, aiS
     discoveredUrls = discoveredUrls.slice(0, maxSteps);
     const collectedCount = discoveredUrls.length;
 
-    // Step 2: Resolve redirect URLs
+    // Step 2: Resolve redirect URLs and scrape
     await svc.from("mcp_jobs").update({ output: { step: "scraping", sourcesCollected: collectedCount } }).eq("id", jobId);
 
     const sources: NormalizedSource[] = [];
@@ -602,18 +608,27 @@ async function processAgentJob(jobId: string, args: Record<string, unknown>, aiS
       let resolveStatus: NormalizedSource["resolveStatus"] = "unchanged";
       let resolveError: string | undefined;
 
-      if (isGoogleNewsRssWrapper(item.url)) {
-        const resolved = await resolveGoogleNewsRssUrl(item.url);
+      // If searchWeb already resolved Google News (url !== sourceUrl), check if it's still a wrapper
+      const isStillWrapper = isGoogleNewsRssWrapper(item.url);
+      const wasAlreadyResolved = item.sourceUrl !== item.url && !isStillWrapper;
+
+      if (wasAlreadyResolved) {
+        resolveStatus = "resolved";
+        console.log("[agent] Already resolved by searchWeb:", item.sourceUrl.slice(0, 60), "→", item.url.slice(0, 80));
+      } else if (isStillWrapper) {
+        // Re-attempt resolution with rawDesc (searchWeb might have failed without it being used properly)
+        console.log("[agent] Google wrapper still present, re-resolving with rawDesc length:", item.rawDesc.length);
+        const resolved = await resolveGoogleNewsRssUrl(item.url, item.rawDesc);
         resolveStatus = resolved.resolveStatus;
         finalUrl = resolved.finalUrl;
         resolveError = resolved.error;
-        console.log("[agent] Google RSS resolve:", item.url, "→", finalUrl || "unresolved", resolveStatus);
+        console.log("[agent] Google RSS resolve result:", resolveStatus, "method:", (resolved as any).method || "none", "finalUrl:", finalUrl?.slice(0, 80) || "none");
       } else if (isRedirectUrl(item.url)) {
         const resolved = await resolveRedirect(item.url);
         finalUrl = resolved.finalUrl;
         resolveStatus = resolved.error ? "failed" : (resolved.resolved ? "resolved" : "unchanged");
         resolveError = resolved.error;
-        console.log("[agent] Resolved:", item.url, "→", finalUrl, resolveStatus);
+        console.log("[agent] Redirect resolved:", item.url.slice(0, 60), "→", finalUrl.slice(0, 80), resolveStatus);
       }
 
       // Scrape the final URL
