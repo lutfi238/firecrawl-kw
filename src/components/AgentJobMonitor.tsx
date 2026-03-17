@@ -74,13 +74,13 @@ interface AgentJobMonitorProps {
 /* ── Constants ─────────────────────────────────────── */
 
 const AGENT_STEPS = [
-  { key: "queued", label: "Queued" },
-  { key: "searching", label: "Searching" },
-  { key: "scraping", label: "Scraping" },
-  { key: "extracting", label: "Extracting" },
-  { key: "synthesizing", label: "Synthesizing" },
-  { key: "completed", label: "Completed" },
-  { key: "failed", label: "Failed" },
+  { key: "queued", label: "Queued", shortLabel: "Queue" },
+  { key: "searching", label: "Searching", shortLabel: "Search" },
+  { key: "scraping", label: "Scraping", shortLabel: "Scrape" },
+  { key: "extracting", label: "Extracting", shortLabel: "Extract" },
+  { key: "synthesizing", label: "Synthesizing", shortLabel: "Synth" },
+  { key: "completed", label: "Completed", shortLabel: "Done" },
+  { key: "failed", label: "Failed", shortLabel: "Fail" },
 ] as const;
 
 const TERMINAL_STATUSES = new Set(["completed", "failed"]);
