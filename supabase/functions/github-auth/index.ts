@@ -39,9 +39,14 @@ Deno.serve(async (req) => {
 
   const validateOrigin = (raw: string | null | undefined): string => {
     const candidate = raw || "http://localhost:5173";
-    const isAllowed = ALLOWED_ORIGINS.some((o) => candidate.startsWith(o));
-    if (!isAllowed) throw new Error("INVALID_ORIGIN");
-    return candidate;
+    try {
+      const url = new URL(candidate);
+      const origin = url.origin;
+      if (!ALLOWED_ORIGINS.includes(origin)) throw new Error("INVALID_ORIGIN");
+      return origin;
+    } catch {
+      throw new Error("INVALID_ORIGIN");
+    }
   };
 
   // ── Step 1: No code → redirect to GitHub ──
