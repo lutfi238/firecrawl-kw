@@ -458,7 +458,7 @@ app.post("/*", async (c) => {
           break;
         }
         case "screenshot": {
-          const sSettings = await getUserSettings(currentAuthHeader);
+          const sSettings = await getUserSettings(authHeader);
           const rendererUrl = sSettings.renderer_url;
           if (!rendererUrl) {
             result = { content: [{ type: "text", text: "Error: Renderer URL not configured in Settings." }], isError: true };
