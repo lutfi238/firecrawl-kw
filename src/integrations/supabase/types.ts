@@ -74,6 +74,27 @@ export type Database = {
         }
         Relationships: []
       }
+      uptime_logs: {
+        Row: {
+          checked_at: string
+          id: string
+          response_ms: number
+          status: string
+        }
+        Insert: {
+          checked_at?: string
+          id?: string
+          response_ms?: number
+          status?: string
+        }
+        Update: {
+          checked_at?: string
+          id?: string
+          response_ms?: number
+          status?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
