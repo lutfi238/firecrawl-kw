@@ -40,10 +40,6 @@ function getAiSettingsFromMap(map: Record<string, string>): { baseUrl: string; a
   };
 }
 
-// Module-level store for current request's auth header and GitHub PAT
-let currentAuthHeader: string | null = null;
-let currentGithubToken: string | null = null;
-
 // ========== HTML → Markdown ==========
 function htmlToMarkdown(html: string): string {
   let md = html;
@@ -274,8 +270,9 @@ app.post("/*", async (c) => {
   const denied = checkMcpSecret(c);
   if (denied) return denied;
 
-  currentGithubToken = c.req.header("x-github-token") || null;
-  currentAuthHeader = c.req.header("authorization") || null;
+  // Request-scoped tokens — never store at module level
+  const authHeader = c.req.header("authorization") || null;
+  const githubToken = c.req.header("x-github-token") || null;
 
   try {
     const body = await c.req.json();
@@ -294,7 +291,7 @@ app.post("/*", async (c) => {
     }
 
     if (method === "tools/list") {
-      const userSettings = await getUserSettings(currentAuthHeader);
+      const userSettings = await getUserSettings(authHeader);
       const aiSettings = getAiSettingsFromMap(userSettings);
       const extractDesc = aiSettings
         ? `Scrape URL and use AI (${aiSettings.model}) to extract structured data`
@@ -328,7 +325,7 @@ app.post("/*", async (c) => {
 
       // For renderer-dependent tools, check user settings
       if (name === "scrape_js" || name === "screenshot") {
-        const userSettings = await getUserSettings(currentAuthHeader);
+        const userSettings = await getUserSettings(authHeader);
         if (userSettings.renderer_enabled !== "true") {
           result = { content: [{ type: "text", text: "Tool disabled. Configure Render renderer URL in Settings to enable JS rendering." }], isError: true };
           return c.json({ jsonrpc: "2.0", id, result }, 200, corsHeaders);
@@ -347,7 +344,7 @@ app.post("/*", async (c) => {
           break;
         }
         case "scrape_js": {
-          const userSettings = await getUserSettings(currentAuthHeader);
+          const userSettings = await getUserSettings(authHeader);
           const rendererUrl = userSettings.renderer_url;
           if (!rendererUrl) {
             result = { content: [{ type: "text", text: "Error: Renderer URL not configured in Settings." }], isError: true };
@@ -411,7 +408,7 @@ app.post("/*", async (c) => {
           break;
         }
         case "extract": {
-          const uSettings = await getUserSettings(currentAuthHeader);
+          const uSettings = await getUserSettings(authHeader);
           const aiSettings = getAiSettingsFromMap(uSettings);
           if (!aiSettings) {
             result = { content: [{ type: "text", text: "Error: AI provider not configured. Go to Settings → AI Provider and add your API key." }], isError: true };
@@ -461,7 +458,7 @@ app.post("/*", async (c) => {
           break;
         }
         case "screenshot": {
-          const sSettings = await getUserSettings(currentAuthHeader);
+          const sSettings = await getUserSettings(authHeader);
           const rendererUrl = sSettings.renderer_url;
           if (!rendererUrl) {
             result = { content: [{ type: "text", text: "Error: Renderer URL not configured in Settings." }], isError: true };
@@ -512,7 +509,7 @@ app.post("/*", async (c) => {
           break;
         }
         case "chat": {
-          const cSettings = await getUserSettings(currentAuthHeader);
+          const cSettings = await getUserSettings(authHeader);
           const aiSettings = getAiSettingsFromMap(cSettings);
           if (!aiSettings) {
             result = { content: [{ type: "text", text: "Error: AI provider not configured. Go to Settings → AI Provider and add your API key." }], isError: true };
