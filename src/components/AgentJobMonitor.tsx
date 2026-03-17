@@ -24,6 +24,26 @@ import type { ActivityStep } from "./ActivityLog";
 
 /* ── Types ─────────────────────────────────────────── */
 
+interface SourceInfo {
+  sourceUrl?: string;
+  finalUrl?: string;
+  title?: string;
+  publisher?: string;
+  contentLength?: number;
+  resolveStatus?: string;
+  scrapeStatus?: string;
+  error?: string;
+}
+
+interface EvidenceMetrics {
+  sourcesCollected?: number;
+  sourcesResolved?: number;
+  sourcesScrapedSuccessfully?: number;
+  sourcesUsableForSynthesis?: number;
+  failedSources?: number;
+  emptyContentSources?: number;
+}
+
 interface AgentJobData {
   jobId?: string;
   type?: string;
@@ -35,6 +55,10 @@ interface AgentJobData {
   result?: unknown;
   error?: string;
   sourcesUsed?: string[];
+  sources?: SourceInfo[];
+  evidenceMetrics?: EvidenceMetrics;
+  groundedness?: string;
+  warning?: string;
 }
 
 interface AgentJobMonitorProps {
@@ -68,25 +92,23 @@ function parseAgentData(result: ToolCallResult | null): AgentJobData | null {
   try {
     const raw = result.content[0].text;
     let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      // If the text isn't JSON at all, wrap it
-      return null;
-    }
+    try { parsed = JSON.parse(raw); } catch { return null; }
     if (typeof parsed !== "object" || parsed === null) return null;
 
-    // Handle nested { result: { ... } } wrapper from MCP response
     const obj = parsed as Record<string, unknown>;
     const data = (typeof obj.result === "object" && obj.result !== null ? obj.result : obj) as Record<string, unknown>;
 
     const sourcesRaw = data.sourcesUsed ?? data.sources_used;
     const sourcesUsed = Array.isArray(sourcesRaw) ? sourcesRaw.filter((s): s is string => typeof s === "string") : undefined;
 
-    const scrapedRaw = data.scrapedCount ?? data.scraped_count ?? data.scraped_sources;
-    const scrapedCount = typeof scrapedRaw === "number"
-      ? scrapedRaw
-      : sourcesUsed?.length ?? undefined;
+    const sourcesDetailRaw = data.sources ?? data.source_details;
+    const sources = Array.isArray(sourcesDetailRaw) ? sourcesDetailRaw as SourceInfo[] : undefined;
+
+    const metricsRaw = data.evidenceMetrics ?? data.evidence_metrics;
+    const evidenceMetrics = (typeof metricsRaw === "object" && metricsRaw !== null) ? metricsRaw as EvidenceMetrics : undefined;
+
+    const scrapedRaw = data.scrapedCount ?? data.scraped_count;
+    const scrapedCount = typeof scrapedRaw === "number" ? scrapedRaw : sourcesUsed?.length ?? undefined;
 
     return {
       jobId: String(data.jobId ?? data.job_id ?? data.id ?? ""),
@@ -99,6 +121,10 @@ function parseAgentData(result: ToolCallResult | null): AgentJobData | null {
       result: data.result ?? data.output ?? data.synthesis,
       error: typeof data.error === "string" ? data.error : undefined,
       sourcesUsed,
+      sources,
+      evidenceMetrics,
+      groundedness: typeof data.groundedness === "string" ? data.groundedness : undefined,
+      warning: typeof data.warning === "string" ? data.warning : undefined,
     };
   } catch {
     return null;
