@@ -3,10 +3,11 @@ import { useRequestLogs } from "@/hooks/useRequestLogs";
 import { RequestLogTable } from "@/components/RequestLogTable";
 import { GlassCard } from "@/components/GlassCard";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TOOL_DEFINITIONS } from "@/types/tools";
 import { Download, Trash2, RefreshCw } from "lucide-react";
+import { UptimeMonitor } from "@/components/UptimeMonitor";
 
 export default function RequestMonitor() {
   const [toolFilter, setToolFilter] = useState<string>("all");
@@ -31,63 +32,78 @@ export default function RequestMonitor() {
 
   return (
     <div className="space-y-4 max-w-6xl">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <h1 className="font-display text-xl font-bold tracking-wider text-gradient-cyber">REQUEST MONITOR</h1>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => refetch()} className="gap-1.5 text-xs font-mono border-border">
-            <RefreshCw className="h-3 w-3" /> Refresh
-          </Button>
-          <Button variant="outline" size="sm" onClick={handleExport} className="gap-1.5 text-xs font-mono border-border">
-            <Download className="h-3 w-3" /> Export
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => clearLogs.mutate()}
-            className="gap-1.5 text-xs font-mono border-destructive/50 text-destructive hover:bg-destructive/10"
-          >
-            <Trash2 className="h-3 w-3" /> Clear
-          </Button>
-        </div>
-      </div>
+      <h1 className="font-display text-xl font-bold tracking-wider text-gradient-cyber">REQUEST MONITOR</h1>
 
-      {/* Filters */}
-      <GlassCard className="p-4">
-        <div className="flex items-center gap-3 flex-wrap">
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-mono text-muted-foreground">Tool:</span>
-            <Select value={toolFilter} onValueChange={setToolFilter}>
-              <SelectTrigger className="w-[140px] h-8 text-xs font-mono bg-background/50 border-border">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className="bg-card border-border">
-                <SelectItem value="all" className="text-xs font-mono">All Tools</SelectItem>
-                {TOOL_DEFINITIONS.map((t) => (
-                  <SelectItem key={t.name} value={t.name} className="text-xs font-mono">{t.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-mono text-muted-foreground">Status:</span>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-[120px] h-8 text-xs font-mono bg-background/50 border-border">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className="bg-card border-border">
-                <SelectItem value="all" className="text-xs font-mono">All</SelectItem>
-                <SelectItem value="success" className="text-xs font-mono">Success</SelectItem>
-                <SelectItem value="error" className="text-xs font-mono">Error</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <span className="text-xs font-mono text-muted-foreground ml-auto">
-            {logs?.length ?? 0} entries • Auto-refresh 3s
-          </span>
-        </div>
-      </GlassCard>
+      <Tabs defaultValue="logs" className="w-full">
+        <TabsList className="bg-muted/50 border border-border">
+          <TabsTrigger value="logs" className="text-xs font-mono data-[state=active]:text-primary">
+            Request Logs
+          </TabsTrigger>
+          <TabsTrigger value="uptime" className="text-xs font-mono data-[state=active]:text-primary">
+            Uptime Monitor
+          </TabsTrigger>
+        </TabsList>
 
-      <RequestLogTable logs={logs ?? []} />
+        <TabsContent value="logs" className="space-y-4">
+          <div className="flex items-center justify-end flex-wrap gap-2">
+            <Button variant="outline" size="sm" onClick={() => refetch()} className="gap-1.5 text-xs font-mono border-border">
+              <RefreshCw className="h-3 w-3" /> Refresh
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleExport} className="gap-1.5 text-xs font-mono border-border">
+              <Download className="h-3 w-3" /> Export
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => clearLogs.mutate()}
+              className="gap-1.5 text-xs font-mono border-destructive/50 text-destructive hover:bg-destructive/10"
+            >
+              <Trash2 className="h-3 w-3" /> Clear
+            </Button>
+          </div>
+
+          <GlassCard className="p-4">
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-mono text-muted-foreground">Tool:</span>
+                <Select value={toolFilter} onValueChange={setToolFilter}>
+                  <SelectTrigger className="w-[140px] h-8 text-xs font-mono bg-background/50 border-border">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-card border-border">
+                    <SelectItem value="all" className="text-xs font-mono">All Tools</SelectItem>
+                    {TOOL_DEFINITIONS.map((t) => (
+                      <SelectItem key={t.name} value={t.name} className="text-xs font-mono">{t.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-mono text-muted-foreground">Status:</span>
+                <Select value={statusFilter} onValueChange={setStatusFilter}>
+                  <SelectTrigger className="w-[120px] h-8 text-xs font-mono bg-background/50 border-border">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-card border-border">
+                    <SelectItem value="all" className="text-xs font-mono">All</SelectItem>
+                    <SelectItem value="success" className="text-xs font-mono">Success</SelectItem>
+                    <SelectItem value="error" className="text-xs font-mono">Error</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <span className="text-xs font-mono text-muted-foreground ml-auto">
+                {logs?.length ?? 0} entries • Auto-refresh 3s
+              </span>
+            </div>
+          </GlassCard>
+
+          <RequestLogTable logs={logs ?? []} />
+        </TabsContent>
+
+        <TabsContent value="uptime">
+          <UptimeMonitor />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
