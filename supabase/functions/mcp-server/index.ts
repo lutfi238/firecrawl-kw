@@ -167,14 +167,74 @@ function isRedirectUrl(url: string): boolean {
   }
 }
 
-function normalizeResolvedUrl(candidate: string): string | null {
+// Domains that are never valid article targets
+const REJECTED_HOSTS = [
+  "news.google.com",
+  "google.com",
+  "googleusercontent.com",
+  "lh3.googleusercontent.com",
+  "gstatic.com",
+  "googleapis.com",
+  "ggpht.com",
+  "googlesyndication.com",
+  "doubleclick.net",
+  "google-analytics.com",
+  "cloudfront.net",
+  "cdn.ampproject.org",
+  "amp.dev",
+];
+
+// File extensions that indicate media/assets, not articles
+const REJECTED_EXTENSIONS = [
+  ".jpg", ".jpeg", ".png", ".webp", ".gif", ".svg", ".ico",
+  ".mp4", ".mp3", ".wav", ".avi", ".mov", ".webm",
+  ".pdf", ".zip", ".gz", ".tar", ".woff", ".woff2", ".ttf", ".eot",
+  ".css", ".js", ".json", ".xml",
+];
+
+function isValidArticleUrl(candidate: string): { valid: boolean; reason?: string } {
   try {
     const parsed = new URL(candidate);
-    if (parsed.hostname.includes("news.google.com")) return null;
-    return parsed.href;
+
+    // Reject non-http(s)
+    if (!parsed.protocol.startsWith("http")) {
+      return { valid: false, reason: "non-http protocol" };
+    }
+
+    // Reject known CDN/asset/Google hosts
+    const host = parsed.hostname.toLowerCase();
+    for (const rejected of REJECTED_HOSTS) {
+      if (host === rejected || host.endsWith("." + rejected)) {
+        return { valid: false, reason: `rejected host: ${host}` };
+      }
+    }
+
+    // Reject media/asset file extensions
+    const pathLower = parsed.pathname.toLowerCase();
+    for (const ext of REJECTED_EXTENSIONS) {
+      if (pathLower.endsWith(ext)) {
+        return { valid: false, reason: `asset extension: ${ext}` };
+      }
+    }
+
+    // Reject very short paths that are likely homepages (e.g. just "/")
+    if (parsed.pathname.length <= 1 && !parsed.search) {
+      return { valid: false, reason: "homepage/root URL" };
+    }
+
+    return { valid: true };
   } catch {
+    return { valid: false, reason: "invalid URL" };
+  }
+}
+
+function normalizeResolvedUrl(candidate: string): string | null {
+  const check = isValidArticleUrl(candidate);
+  if (!check.valid) {
+    console.log("[gnews-resolve] Rejected candidate:", candidate.slice(0, 80), "—", check.reason);
     return null;
   }
+  return new URL(candidate).href;
 }
 
 function decodeGoogleNewsToken(token: string): string | null {
