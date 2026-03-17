@@ -466,6 +466,56 @@ app.post("/*", async (c) => {
           result = { content: [{ type: "text", text: batchResults.join("\n\n---\n\n") }] };
           break;
         }
+        case "chat": {
+          const aiSettings = await getAiSettings(currentAuthHeader);
+          if (!aiSettings) {
+            result = { content: [{ type: "text", text: "Error: AI provider not configured. Go to Settings → AI Provider and add your API key." }], isError: true };
+          } else {
+            const systemPrompt = "You are a helpful AI assistant for Personal Firecrawl MCP, a web intelligence server. Answer conversationally and helpfully. Only use tools when explicitly requested.";
+            const messages = [{ role: "system", content: systemPrompt }];
+            // Support conversation history if provided
+            if (args.history && Array.isArray(args.history)) {
+              for (const msg of args.history) {
+                messages.push({ role: msg.role, content: msg.content });
+              }
+            }
+            messages.push({ role: "user", content: args.message });
+            const aiHeaders: Record<string, string> = {
+              Authorization: `Bearer ${aiSettings.apiKey}`,
+              "Content-Type": "application/json",
+              "HTTP-Referer": "https://id-preview--4485e6f5-86ea-4999-acd7-7209fb13e21d.lovable.app",
+              "X-Title": "Personal Firecrawl MCP",
+            };
+            console.log("[chat] AI request:", aiSettings.baseUrl, aiSettings.model);
+            const aiRes = await fetch(`${aiSettings.baseUrl}/chat/completions`, {
+              method: "POST",
+              headers: aiHeaders,
+              body: JSON.stringify({ model: aiSettings.model, messages, max_tokens: 4096 }),
+            });
+            const aiBody = await aiRes.text();
+            console.log("[chat] AI response status:", aiRes.status, "body:", aiBody.slice(0, 500));
+            if (!aiRes.ok) {
+              let errorMsg = `AI API error ${aiRes.status}`;
+              try {
+                const errData = JSON.parse(aiBody);
+                errorMsg += `: ${errData.error?.message || errData.message || aiBody.slice(0, 300)}`;
+              } catch {
+                errorMsg += `: ${aiBody.slice(0, 300)}`;
+              }
+              result = { content: [{ type: "text", text: errorMsg }], isError: true };
+            } else {
+              const aiData = JSON.parse(aiBody);
+              const answer = aiData.choices?.[0]?.message?.content;
+              if (!answer) {
+                console.log("[chat] Full AI response:", JSON.stringify(aiData).slice(0, 1000));
+                result = { content: [{ type: "text", text: `AI returned no content. Raw response: ${JSON.stringify(aiData).slice(0, 500)}` }], isError: true };
+              } else {
+                result = { content: [{ type: "text", text: answer }] };
+              }
+            }
+          }
+          break;
+        }
         default:
           return c.json({ jsonrpc: "2.0", id, error: { code: -32601, message: `Unknown tool: ${name}` } }, 200, corsHeaders);
       }

@@ -118,7 +118,7 @@ export default function AIChat() {
       }
     }
 
-    // Non-slash: use extract with AI
+    // Non-slash: send as regular chat to AI provider
     if (settings.ai_api_key) {
       setLoading(true);
       setLoadingStartedAt(Date.now());
@@ -132,14 +132,20 @@ export default function AIChat() {
       }, 30000);
 
       const start = Date.now();
-      const result = await callTool("extract", { url: "https://example.com", prompt: text });
+      // Build conversation history from recent messages (last 10 user/assistant messages)
+      const history = messages
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .slice(-10)
+        .map((m) => ({ role: m.role, content: m.content }));
+      
+      const result = await callTool("chat", { message: text, history });
       clearTimeout(timeout);
 
       if (controller.signal.aborted) return;
 
       const duration = Date.now() - start;
       const resultText = result.content.map((c) => c.text ?? `[${c.type}]`).join("\n");
-      console.log("[AIChat] Full API result:", JSON.stringify(result));
+      console.log("[AIChat] Chat result:", JSON.stringify(result));
       addMessage({ role: result.isError ? "tool" : "assistant", content: resultText });
       await logToMonitor("ai_chat", { prompt: text }, result, duration);
 
