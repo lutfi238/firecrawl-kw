@@ -325,7 +325,7 @@ app.post("/*", async (c) => {
 
       // For renderer-dependent tools, check user settings
       if (name === "scrape_js" || name === "screenshot") {
-        const userSettings = await getUserSettings(currentAuthHeader);
+        const userSettings = await getUserSettings(authHeader);
         if (userSettings.renderer_enabled !== "true") {
           result = { content: [{ type: "text", text: "Tool disabled. Configure Render renderer URL in Settings to enable JS rendering." }], isError: true };
           return c.json({ jsonrpc: "2.0", id, result }, 200, corsHeaders);
