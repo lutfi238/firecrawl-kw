@@ -23,6 +23,7 @@ export default function AIChat() {
   const { githubToken } = useAuthStore();
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const [showSlashPicker, setShowSlashPicker] = useState(false);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
