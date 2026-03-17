@@ -198,8 +198,9 @@ async function searchWeb(query: string, maxResults: number): Promise<Array<{ tit
 
       const items = await Promise.all(rawItems.map(async ({ title, rawLink, rawDesc }) => {
         let finalUrl = rawLink;
-        if (rawLink.includes("news.google.com")) {
-          finalUrl = await resolveRedirect(rawLink);
+        if (isRedirectUrl(rawLink)) {
+          const resolved = await resolveRedirect(rawLink);
+          finalUrl = resolved.finalUrl;
         }
 
         let snippet = "";
@@ -216,7 +217,7 @@ async function searchWeb(query: string, maxResults: number): Promise<Array<{ tit
           }
         }
 
-        return { title, url: finalUrl, snippet };
+        return { title, url: finalUrl, sourceUrl: rawLink, snippet };
       }));
 
       const seen = new Set<string>();
