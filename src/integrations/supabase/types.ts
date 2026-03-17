@@ -80,18 +80,21 @@ export type Database = {
           id: string
           response_ms: number
           status: string
+          status_code: number | null
         }
         Insert: {
           checked_at?: string
           id?: string
           response_ms?: number
           status?: string
+          status_code?: number | null
         }
         Update: {
           checked_at?: string
           id?: string
           response_ms?: number
           status?: string
+          status_code?: number | null
         }
         Relationships: []
       }
