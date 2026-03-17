@@ -50,6 +50,8 @@ export default function Settings() {
   const [aiApiKey, setAiApiKey] = useState("");
   const [aiModel, setAiModel] = useState("gpt-4o-mini");
   const [savingAi, setSavingAi] = useState(false);
+  const [mcpSecret, setMcpSecret] = useState("");
+  const [savingSecret, setSavingSecret] = useState(false);
 
   const avatarUrl = user?.user_metadata?.avatar_url;
   const username = user?.user_metadata?.user_name ?? user?.email?.split("@")[0] ?? "User";
