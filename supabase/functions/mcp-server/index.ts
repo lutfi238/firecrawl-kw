@@ -1053,6 +1053,331 @@ async function checkJobStatus(authHeader: string | null, jobId: string): Promise
   };
 }
 
+// ========== Chat orchestration: intent classification + tool-first evidence ==========
+
+type ChatIntent =
+  | "casual"
+  | "factual"
+  | "ranking"
+  | "url_scrape"
+  | "multi_url"
+  | "crawl_request"
+  | "extract_request"
+  | "deep_research"
+  | "job_status";
+
+function classifyChatIntent(message: string): ChatIntent {
+  const msg = message.trim();
+  const lower = msg.toLowerCase();
+
+  // Job status: UUID pattern
+  if (/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i.test(msg)) {
+    return "job_status";
+  }
+
+  // Multiple URLs
+  const urls = msg.match(/https?:\/\/[^\s,]+/g);
+  if (urls && urls.length > 1) return "multi_url";
+
+  // Single URL
+  if (urls && urls.length === 1 && msg.split(/\s+/).length <= 10) return "url_scrape";
+
+  // Crawl/map requests
+  if (/\b(crawl|map|sitemap|all pages|spider)\b/i.test(lower)) return "crawl_request";
+
+  // Extract requests
+  if (/\b(extract)\b/i.test(lower) && urls && urls.length >= 1) return "extract_request";
+
+  // Deep research
+  if (/\b(research|in-depth|comprehensive|analyze|deep dive|investigate)\b/i.test(lower) && lower.length > 40) return "deep_research";
+
+  // Ranking / list / comparison queries
+  if (
+    /\btop\s*\d+/i.test(lower) ||
+    /\bbest\b/i.test(lower) ||
+    /\branking\b/i.test(lower) ||
+    /\branked\b/i.test(lower) ||
+    /\bcompare\b/i.test(lower) ||
+    /\bcomparison\b/i.test(lower) ||
+    /\balternatives?\b/i.test(lower) ||
+    /\bvs\.?\b/i.test(lower) ||
+    /\bleaderboard\b/i.test(lower) ||
+    /\bworst\b/i.test(lower)
+  ) {
+    return "ranking";
+  }
+
+  // Factual / current-events questions
+  if (
+    /\b(what|who|when|where|why|how|which|is|are|was|were|did|does|do|can|could|will|should)\b/i.test(lower) ||
+    /\b(latest|current|recent|new|2024|2025|2026|today|yesterday|this week|this month)\b/i.test(lower) ||
+    /\?$/.test(msg.trim())
+  ) {
+    return "factual";
+  }
+
+  // Casual: greetings, short messages, non-questions
+  if (lower.length < 30 || /^(hi|hello|hey|thanks|thank you|ok|sure|cool|great|bye|good morning|good night)/i.test(lower)) {
+    return "casual";
+  }
+
+  // Default: treat as factual to be safe
+  return "factual";
+}
+
+function chatSearchEvidenceHasDepth(evidence: string): boolean {
+  const stripped = evidence
+    .split("\n")
+    .filter((l: string) => !l.match(/^\s*"?(title|url|sourceUrl|snippet|rawDesc|acquisitionType|searchSource)"?\s*:/) && !l.match(/^\s*[\[\]{}],?\s*$/))
+    .join(" ")
+    .trim();
+  return stripped.length > 2000;
+}
+
+async function callAI(
+  aiSettings: { baseUrl: string; apiKey: string; model: string },
+  systemPrompt: string,
+  userContent: string,
+  maxTokens = 4096,
+): Promise<string> {
+  const res = await fetch(`${aiSettings.baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${aiSettings.apiKey}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": "https://id-preview--4485e6f5-86ea-4999-acd7-7209fb13e21d.lovable.app",
+      "X-Title": "Personal Firecrawl MCP",
+    },
+    body: JSON.stringify({
+      model: aiSettings.model,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userContent },
+      ],
+      max_tokens: maxTokens,
+    }),
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`AI API error ${res.status}: ${errText.slice(0, 300)}`);
+  }
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content || "";
+}
+
+async function handleChatWithOrchestration(
+  args: Record<string, unknown>,
+  aiSettings: { baseUrl: string; apiKey: string; model: string },
+  authHeader: string | null,
+): Promise<{ content: Array<{ type: string; text?: string }>; isError?: boolean }> {
+  const message = (args.message as string) || "";
+  const history = (args.history as Array<{ role: string; content: string }>) || [];
+  const intent = classifyChatIntent(message);
+  console.log("[chat-orchestrator] Message:", message.slice(0, 100), "| Intent:", intent);
+
+  const steps: string[] = [];
+  const addStep = (s: string) => { steps.push(s); console.log("[chat-orchestrator]", s); };
+
+  try {
+    // ========== CASUAL ==========
+    if (intent === "casual") {
+      addStep("Intent: casual — direct LLM response");
+      const answer = await callAI(
+        aiSettings,
+        "You are a helpful AI assistant for Personal Firecrawl MCP, a web intelligence server. Answer conversationally and helpfully.",
+        buildHistoryContext(history, message),
+      );
+      return { content: [{ type: "text", text: answer }] };
+    }
+
+    // ========== JOB STATUS ==========
+    if (intent === "job_status") {
+      const jobIdMatch = message.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+      if (jobIdMatch) {
+        addStep("Intent: job_status — checking job " + jobIdMatch[0]);
+        const status = await checkJobStatus(authHeader, jobIdMatch[0]);
+        return { content: [{ type: "text", text: JSON.stringify(status, null, 2) }] };
+      }
+    }
+
+    // ========== URL SCRAPE ==========
+    if (intent === "url_scrape") {
+      const urlMatch = message.match(/https?:\/\/[^\s,]+/);
+      if (urlMatch) {
+        addStep("Intent: url_scrape — scraping " + urlMatch[0]);
+        try {
+          const { markdown, title } = await scrapeUrl(urlMatch[0]);
+          return { content: [{ type: "text", text: `# ${title}\n\n${markdown}` }] };
+        } catch (e) {
+          return { content: [{ type: "text", text: `Failed to scrape ${urlMatch[0]}: ${e instanceof Error ? e.message : "unknown"}` }], isError: true };
+        }
+      }
+    }
+
+    // ========== MULTI URL ==========
+    if (intent === "multi_url") {
+      const urls = message.match(/https?:\/\/[^\s,]+/g) || [];
+      addStep("Intent: multi_url — batch scraping " + urls.length + " URLs");
+      const job = await createJob(authHeader, "batch_scrape", { urls: urls.join(", ") });
+      if (job.error) {
+        return { content: [{ type: "text", text: `Error creating batch job: ${job.error}` }], isError: true };
+      }
+      EdgeRuntime.waitUntil(processBatchScrapeJob(job.jobId, { urls: urls.join(", ") }));
+      return { content: [{ type: "text", text: `Batch scrape started for ${urls.length} URLs.\n\nJob ID: ${job.jobId}\n\nUse \`check_batch_status\` or send the job ID to check results.` }] };
+    }
+
+    // ========== CRAWL REQUEST ==========
+    if (intent === "crawl_request") {
+      const urlMatch = message.match(/https?:\/\/[^\s,]+/);
+      if (urlMatch) {
+        addStep("Intent: crawl — starting crawl for " + urlMatch[0]);
+        const job = await createJob(authHeader, "crawl", { url: urlMatch[0], maxPages: 10, extractContent: true });
+        if (job.error) {
+          return { content: [{ type: "text", text: `Error creating crawl job: ${job.error}` }], isError: true };
+        }
+        EdgeRuntime.waitUntil(processCrawlJob(job.jobId, { url: urlMatch[0], maxPages: 10, extractContent: true }));
+        return { content: [{ type: "text", text: `Crawl started for ${urlMatch[0]}.\n\nJob ID: ${job.jobId}\n\nUse \`check_crawl_status\` or send the job ID to check results.` }] };
+      }
+    }
+
+    // ========== EXTRACT REQUEST ==========
+    if (intent === "extract_request") {
+      const urlMatch = message.match(/https?:\/\/[^\s,]+/);
+      if (urlMatch) {
+        addStep("Intent: extract — extracting from " + urlMatch[0]);
+        try {
+          const { markdown } = await scrapeUrl(urlMatch[0]);
+          const truncated = markdown.slice(0, 12000);
+          const answer = await callAI(
+            aiSettings,
+            "Extract the requested data from the web page content. Return structured information.",
+            `User request: ${message}\n\n---PAGE CONTENT---\n${truncated}`,
+          );
+          return { content: [{ type: "text", text: answer }] };
+        } catch (e) {
+          return { content: [{ type: "text", text: `Failed to extract from ${urlMatch[0]}: ${e instanceof Error ? e.message : "unknown"}` }], isError: true };
+        }
+      }
+    }
+
+    // ========== DEEP RESEARCH ==========
+    if (intent === "deep_research") {
+      addStep("Intent: deep_research — starting agent");
+      const job = await createJob(authHeader, "agent", { prompt: message, maxSteps: 5 });
+      if (job.error) {
+        return { content: [{ type: "text", text: `Error creating research job: ${job.error}` }], isError: true };
+      }
+      EdgeRuntime.waitUntil(processAgentJob(job.jobId, { prompt: message, maxSteps: 5 }, aiSettings));
+      return { content: [{ type: "text", text: `Deep research started.\n\nJob ID: ${job.jobId}\n\nUse \`agent_status\` or send the job ID to check results.` }] };
+    }
+
+    // ========== FACTUAL / RANKING — tools-first with escalation ==========
+    const isRanking = intent === "ranking";
+    addStep(`Intent: ${intent} — searching web first`);
+
+    // Step 1: Search
+    const searchResults = await searchWeb(message, isRanking ? 10 : 5);
+    const searchEvidence = JSON.stringify(searchResults.map(r => ({
+      title: r.title, url: r.url, snippet: r.snippet,
+    })), null, 2);
+    addStep(`Search returned ${searchResults.length} results`);
+
+    let combinedEvidence = searchEvidence;
+    let escalated = false;
+
+    // Step 2: Escalation for ranking queries — always escalate unless search already has deep prose
+    if (isRanking && !chatSearchEvidenceHasDepth(searchEvidence)) {
+      addStep("Search evidence insufficient for ranking — escalating to search_and_scrape");
+      escalated = true;
+
+      const scraped: string[] = [];
+      const topResults = searchResults.slice(0, 3);
+      for (const r of topResults) {
+        if (r.acquisitionType === "unresolved_wrapper") continue;
+        try {
+          const { markdown, title } = await scrapeUrl(r.url);
+          if (isUsableArticleContent(markdown)) {
+            scraped.push(`# ${title}\nSource: ${r.url}\n\n${markdown.slice(0, 6000)}`);
+            addStep(`Scraped: ${r.url.slice(0, 60)} (${markdown.length} chars)`);
+          } else {
+            addStep(`Scraped but unusable: ${r.url.slice(0, 60)}`);
+          }
+        } catch (e) {
+          addStep(`Scrape failed: ${r.url.slice(0, 60)} — ${e instanceof Error ? e.message : "unknown"}`);
+        }
+      }
+
+      if (scraped.length > 0) {
+        combinedEvidence = scraped.join("\n\n---\n\n");
+        addStep(`Escalation produced ${scraped.length} usable article(s)`);
+      } else {
+        addStep("Escalation scraped 0 usable articles — using search snippets only");
+      }
+    } else if (isRanking) {
+      addStep("Search evidence has sufficient depth — skipping escalation");
+    }
+
+    // Step 3: Synthesis
+    addStep("Synthesizing from evidence");
+    const sourceCount = escalated
+      ? combinedEvidence.split("\n\n---\n\n").length
+      : searchResults.length;
+
+    const synthesisRules = [
+      "You are a research assistant that answers ONLY from the provided evidence.",
+      "CRITICAL RULES:",
+      "1. Base your answer ONLY on the evidence provided below. Do NOT use background knowledge to fill gaps.",
+      "2. If the evidence is insufficient, say so clearly. Do not invent or speculate.",
+      "3. Cite sources by title or URL when making claims.",
+      "4. If you cannot answer from the evidence, state that honestly.",
+      "5. Include a Sources section at the end with relevant URLs.",
+    ];
+
+    if (isRanking) {
+      synthesisRules.push(
+        "",
+        "RANKING/LIST RULES:",
+        `6. SOURCE STRENGTH: You have evidence from ${sourceCount} source(s). If the ranking mainly comes from one source, say so explicitly (e.g., "Based on one primary source..."). Do not present a single-source ranking as universal consensus.`,
+        "7. CATEGORY MIXING: If sources mix foundation models (GPT, Claude, Gemini) with tools/products (Cursor, Copilot, Devin), explicitly distinguish them.",
+        "8. CONFIDENCE: Use cautious language: 'Based on the scraped sources...', 'According to the evidence found...'. Do not claim universal or definitive rankings unless multiple independent sources agree.",
+        "9. STRUCTURE: Use this format:",
+        "   - Brief qualification about source strength",
+        "   - Ranked list with source attribution",
+        "   - Supporting mentions from other sources",
+        "   - Any discrepancies between sources",
+        "   - Conclusion",
+      );
+    }
+
+    const answer = await callAI(
+      aiSettings,
+      synthesisRules.join("\n"),
+      `Question: ${message}\n\n---EVIDENCE (${sourceCount} sources)---\n\n${combinedEvidence}`,
+      isRanking ? 8192 : 4096,
+    );
+
+    // Append orchestration metadata
+    const meta = [
+      "",
+      "",
+      "---",
+      `*Orchestration: ${steps.join(" → ")}*`,
+    ].join("\n");
+
+    return { content: [{ type: "text", text: answer + meta }] };
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : "Unknown orchestration error";
+    console.error("[chat-orchestrator] Error:", errMsg);
+    return { content: [{ type: "text", text: `Error during chat orchestration: ${errMsg}` }], isError: true };
+  }
+}
+
+function buildHistoryContext(history: Array<{ role: string; content: string }>, current: string): string {
+  if (history.length === 0) return current;
+  const ctx = history.map(m => `${m.role}: ${m.content}`).join("\n");
+  return `Previous conversation:\n${ctx}\n\nCurrent message: ${current}`;
+}
+
 // ========== Hono App ==========
 const app = new Hono();
 
