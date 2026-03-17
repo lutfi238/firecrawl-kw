@@ -481,11 +481,18 @@ export function AgentJobMonitor({
               {/* Status sentence */}
               <div className={cn(
                 "rounded-md border p-3",
-                data.status === "failed" ? "border-cyber-red/30 bg-cyber-red/5" : "border-border bg-muted/10"
+                data.status === "failed" ? "border-cyber-red/30 bg-cyber-red/5" :
+                data.groundedness === "none" ? "border-cyber-red/30 bg-cyber-red/5" :
+                data.groundedness === "low" ? "border-cyber-amber/30 bg-cyber-amber/5" :
+                data.warning ? "border-cyber-amber/30 bg-cyber-amber/5" :
+                "border-border bg-muted/10"
               )}>
                 <p className={cn(
                   "text-sm leading-relaxed",
-                  data.status === "failed" ? "text-cyber-red/90" : "text-foreground/80"
+                  data.status === "failed" ? "text-cyber-red/90" :
+                  data.groundedness === "none" ? "text-cyber-red/90" :
+                  data.groundedness === "low" || data.warning ? "text-cyber-amber/90" :
+                  "text-foreground/80"
                 )}>
                   {getStatusSentence(data)}
                 </p>
