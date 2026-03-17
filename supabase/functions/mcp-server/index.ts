@@ -197,26 +197,70 @@ function decodeEscapedUrl(value: string): string {
     .replace(/\\\//g, "/");
 }
 
-async function resolveGoogleNewsRssUrl(url: string): Promise<{ finalUrl?: string; resolveStatus: "resolved" | "unresolved_wrapper" | "failed"; error?: string }> {
+async function resolveGoogleNewsRssUrl(url: string, rawDesc?: string): Promise<{ finalUrl?: string; resolveStatus: "resolved" | "unresolved_wrapper" | "failed"; error?: string; method?: string }> {
   try {
+    // Strategy 1: Extract publisher URL from RSS <description> HTML
+    // Google News RSS descriptions contain: <a href="https://real-publisher.com/article">Title</a>
+    if (rawDesc) {
+      console.log("[gnews-resolve] rawDesc present, length:", rawDesc.length);
+      // Decode HTML entities first
+      const decoded = rawDesc
+        .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&")
+        .replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+      // Extract href from anchor tags
+      const hrefMatches = [...decoded.matchAll(/href="(https?:\/\/[^"]+)"/gi)];
+      for (const hm of hrefMatches) {
+        const candidate = normalizeResolvedUrl(hm[1]);
+        if (candidate) {
+          console.log("[gnews-resolve] Found publisher URL from description href:", candidate);
+          return { finalUrl: candidate, resolveStatus: "resolved", method: "desc_href" };
+        }
+      }
+      // Also try bare URLs in description text
+      const bareUrls = [...decoded.matchAll(/(https?:\/\/[^\s"'<>]+)/gi)];
+      for (const bu of bareUrls) {
+        const candidate = normalizeResolvedUrl(bu[1]);
+        if (candidate) {
+          console.log("[gnews-resolve] Found publisher URL from description text:", candidate);
+          return { finalUrl: candidate, resolveStatus: "resolved", method: "desc_text" };
+        }
+      }
+      console.log("[gnews-resolve] No publisher URL found in description");
+    } else {
+      console.log("[gnews-resolve] rawDesc is MISSING — cannot extract from description");
+    }
+
+    // Strategy 2: Try to decode the base64 token from the URL path
     const parsed = new URL(url);
     const token = parsed.pathname.split("/").filter(Boolean).pop() || "";
     const decodedCandidate = decodeGoogleNewsToken(token);
     if (decodedCandidate) {
-      return { finalUrl: decodedCandidate, resolveStatus: "resolved" };
+      console.log("[gnews-resolve] Decoded publisher URL from token:", decodedCandidate);
+      return { finalUrl: decodedCandidate, resolveStatus: "resolved", method: "token_decode" };
     }
+    console.log("[gnews-resolve] Token decode failed for:", token.slice(0, 30) + "...");
 
+    // Strategy 3: HTTP fetch the Google News page and extract redirect/canonical
+    console.log("[gnews-resolve] Trying HTTP fetch fallback");
     const res = await fetch(url, {
       redirect: "follow",
       headers: { "User-Agent": "Mozilla/5.0 (compatible; RSS/2.0)" },
       signal: AbortSignal.timeout(10000),
     });
 
+    // Check if the redirect itself resolved to a non-Google domain
+    if (res.url && normalizeResolvedUrl(res.url)) {
+      console.log("[gnews-resolve] HTTP redirect resolved to:", res.url);
+      return { finalUrl: res.url, resolveStatus: "resolved", method: "http_redirect" };
+    }
+
     const html = await res.text();
+    console.log("[gnews-resolve] Fetched page length:", html.length);
     const patterns = [
       /"canonicalUrl":"(https?:\/\/[^"\\]+)"/gi,
       /"url":"(https?:\/\/[^"\\]+)"/gi,
-      /(https?:\/\/[^"'\s<>{}\\]+(?:\?[^"'\s<>{}]*)?)/gi,
+      /data-url="(https?:\/\/[^"]+)"/gi,
+      /href="(https?:\/\/[^"]+)"/gi,
     ];
 
     for (const pattern of patterns) {
@@ -225,13 +269,16 @@ async function resolveGoogleNewsRssUrl(url: string): Promise<{ finalUrl?: string
         const candidate = decodeEscapedUrl(m[1] || m[0]);
         const normalized = normalizeResolvedUrl(candidate);
         if (normalized) {
-          return { finalUrl: normalized, resolveStatus: "resolved" };
+          console.log("[gnews-resolve] Found URL from page HTML:", normalized);
+          return { finalUrl: normalized, resolveStatus: "resolved", method: "html_extract" };
         }
       }
     }
 
+    console.log("[gnews-resolve] All strategies failed for:", url.slice(0, 80));
     return { resolveStatus: "unresolved_wrapper", error: "Could not extract publisher URL from Google News RSS wrapper" };
   } catch (e) {
+    console.log("[gnews-resolve] Error:", e instanceof Error ? e.message : "unknown");
     return { resolveStatus: "failed", error: e instanceof Error ? e.message : "google news resolve failed" };
   }
 }
