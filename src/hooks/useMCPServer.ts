@@ -41,6 +41,9 @@ export function useMCPServer() {
         if (githubToken) {
           headers["X-GitHub-Token"] = githubToken;
         }
+        if (settings?.mcp_secret) {
+          headers["X-MCP-Secret"] = settings.mcp_secret;
+        }
 
         const res = await fetch(MCP_ENDPOINT, {
           method: "POST",
