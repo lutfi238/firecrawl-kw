@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useToolExecutorWithActivity } from "@/hooks/useToolExecutorWithActivity";
+import { useSettings } from "@/hooks/useSettings";
 import { ToolForm } from "@/components/ToolForm";
 import { ResponseViewer } from "@/components/ResponseViewer";
 import { ActivityLog } from "@/components/ActivityLog";
@@ -8,6 +9,7 @@ import { TOOL_DEFINITIONS } from "@/types/tools";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { XCircle } from "lucide-react";
+import { Link } from "react-router-dom";
 
 export default function ToolTester() {
   const [selectedTool, setSelectedTool] = useState(TOOL_DEFINITIONS[0].name);
