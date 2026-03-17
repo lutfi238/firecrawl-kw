@@ -32,6 +32,7 @@ Deno.serve(async (req) => {
   const callbackUrl = `${SUPABASE_URL}/functions/v1/github-auth`;
 
   const ALLOWED_ORIGINS = [
+    "https://preview--firecrawl-a-like.lovable.app",
     "https://firecrawl-a-like.lovable.app",
     "http://localhost:5173",
   ];
