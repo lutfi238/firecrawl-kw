@@ -1,7 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMCPServer } from "@/hooks/useMCPServer";
 import { useLogStats } from "@/hooks/useRequestLogs";
+import { useSettings } from "@/hooks/useSettings";
 import { GlassCard } from "@/components/GlassCard";
 import { ConfigCopier } from "@/components/ConfigCopier";
 import { ToolCard } from "@/components/ToolCard";
@@ -17,6 +18,7 @@ export default function Overview() {
   const navigate = useNavigate();
   const { pingServer } = useMCPServer();
   const { data: stats } = useLogStats();
+  const { settings } = useSettings();
   const [online, setOnline] = useState<boolean | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -30,20 +32,21 @@ export default function Overview() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const claudeConfig = JSON.stringify(
-    {
+  const claudeConfig = useMemo(() => {
+    const config: Record<string, unknown> = {
       mcpServers: {
         "firecrawl-mcp": {
           url: MCP_ENDPOINT,
-          headers: {
-            "X-MCP-Secret": "your-secret-here",
-          },
+          ...(settings.mcp_secret ? {
+            headers: {
+              "X-MCP-Secret": settings.mcp_secret,
+            },
+          } : {}),
         },
       },
-    },
-    null,
-    2
-  );
+    };
+    return JSON.stringify(config, null, 2);
+  }, [settings.mcp_secret]);
 
   return (
     <div className="space-y-6 max-w-6xl">

@@ -2,6 +2,7 @@ import { useState, useCallback } from "react";
 import { useAuthStore } from "@/stores/authStore";
 import { supabase } from "@/integrations/supabase/client";
 import type { JsonRpcResponse, ToolCallResult } from "@/types/mcp";
+import { useSettings } from "@/hooks/useSettings";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
@@ -11,6 +12,7 @@ export function useMCPServer() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const githubToken = useAuthStore((s) => s.githubToken);
+  const { settings } = useSettings();
 
   const callTool = useCallback(
     async (toolName: string, args: Record<string, unknown>): Promise<ToolCallResult> => {
@@ -38,6 +40,9 @@ export function useMCPServer() {
         }
         if (githubToken) {
           headers["X-GitHub-Token"] = githubToken;
+        }
+        if (settings?.mcp_secret) {
+          headers["X-MCP-Secret"] = settings.mcp_secret;
         }
 
         const res = await fetch(MCP_ENDPOINT, {
@@ -86,7 +91,7 @@ export function useMCPServer() {
         setLoading(false);
       }
     },
-    [githubToken]
+    [githubToken, settings]
   );
 
   const pingServer = useCallback(async (): Promise<boolean> => {
