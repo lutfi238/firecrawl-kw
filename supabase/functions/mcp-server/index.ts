@@ -2,10 +2,10 @@ import { Hono } from "hono";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 // ========== Get AI provider settings from settings table ==========
-async function getAiSettings(authHeader: string | null): Promise<{ baseUrl: string; apiKey: string; model: string } | null> {
+async function getUserSettings(authHeader: string | null): Promise<Record<string, string>> {
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
   const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY");
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !authHeader) return null;
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !authHeader) return {};
 
   try {
     const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
@@ -14,29 +14,30 @@ async function getAiSettings(authHeader: string | null): Promise<{ baseUrl: stri
     });
 
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return null;
+    if (!user) return {};
 
     const { data, error } = await supabase
       .from("settings")
       .select("key, value")
-      .eq("user_id", user.id)
-      .in("key", ["ai_base_url", "ai_api_key", "ai_model"]);
+      .eq("user_id", user.id);
 
-    if (error || !data) return null;
+    if (error || !data) return {};
 
     const map: Record<string, string> = {};
     for (const row of data) map[row.key] = row.value ?? "";
-
-    if (!map.ai_api_key) return null;
-
-    return {
-      baseUrl: map.ai_base_url || "https://api.openai.com/v1",
-      apiKey: map.ai_api_key,
-      model: map.ai_model || "gpt-4o-mini",
-    };
+    return map;
   } catch {
-    return null;
+    return {};
   }
+}
+
+function getAiSettingsFromMap(map: Record<string, string>): { baseUrl: string; apiKey: string; model: string } | null {
+  if (!map.ai_api_key) return null;
+  return {
+    baseUrl: map.ai_base_url || "https://api.openai.com/v1",
+    apiKey: map.ai_api_key,
+    model: map.ai_model || "gpt-4o-mini",
+  };
 }
 
 // Module-level store for current request's auth header and GitHub PAT

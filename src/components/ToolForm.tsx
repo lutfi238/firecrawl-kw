@@ -71,7 +71,7 @@ export function ToolForm({ tool, onExecute, loading, disabled }: ToolFormProps) 
           <span className="text-[11px] text-muted-foreground/60">{input.description}</span>
         </div>
       ))}
-      <Button type="submit" disabled={loading} className="mt-2 bg-primary text-primary-foreground gap-2">
+      <Button type="submit" disabled={loading || disabled} className="mt-2 bg-primary text-primary-foreground gap-2">
         {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
         Execute
       </Button>
