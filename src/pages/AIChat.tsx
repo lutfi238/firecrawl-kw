@@ -332,15 +332,20 @@ export default function AIChat() {
         // === AUTO-ESCALATION ===
         // If search returned only thin snippets and the query needs ranked/list/comparison data,
         // escalate to search_and_scrape for deeper evidence before synthesizing.
+        // For ranking/list/comparison queries, search snippets are almost never sufficient.
+        // Always escalate unless the search result already contains deep article-body content.
         const onlySearchSoFar = toolResults.every(r => r.tool === "search");
-        const evidenceThin = onlySearchSoFar && isSearchEvidenceThin(combinedEvidence);
         const queryNeedsDepth = isRankingQuery(text);
+        const alreadyDeep = searchEvidenceHasDepth(combinedEvidence);
+        const shouldEscalate = onlySearchSoFar && queryNeedsDepth && !alreadyDeep;
 
-        if (evidenceThin && queryNeedsDepth && !controller.signal.aborted) {
-          setCurrentStep("🔎 Search snippets too thin — escalating to deeper scrape...");
+        console.log("[AIChat escalation]", { queryNeedsDepth, onlySearchSoFar, alreadyDeep, shouldEscalate, evidenceLen: combinedEvidence.length });
+
+        if (shouldEscalate && !controller.signal.aborted) {
+          setCurrentStep("🔎 Ranking query — escalating to deeper evidence...");
           addMessage({
             role: "tool",
-            content: "🔎 Search snippets insufficient for a ranked answer. Escalating to search_and_scrape for deeper evidence...",
+            content: "🔎 Ranking query detected — search snippets insufficient. Escalating to search_and_scrape for article-level evidence...",
             toolName: "escalation",
           });
 
