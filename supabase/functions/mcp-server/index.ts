@@ -239,14 +239,6 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
 };
 
-// Health check GET handler
-app.get("/*", (c) => {
-  return c.json(
-    { status: "ok", server: "personal-firecrawl", version: "1.0.0", tools: 10 },
-    200,
-    corsHeaders
-  );
-});
 
 // CORS preflight
 app.options("/*", (c) => {
