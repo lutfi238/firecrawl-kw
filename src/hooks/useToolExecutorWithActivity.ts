@@ -36,8 +36,8 @@ export function useToolExecutorWithActivity() {
     // Timeout at 30s
     const timeout = setTimeout(() => {
       controller.abort();
-      setError("Request timed out after 30s. Check your API key and Base URL in Settings.");
-      updateStep("call", { status: "error", detail: "Timeout", completedAt: Date.now() });
+      setError("Request timed out after 30s. The backend may still be processing — for heavy queries (rankings, research), the chat tool now delegates to async jobs automatically. If this persists for simple queries, check your AI provider settings.");
+      updateStep("call", { status: "error", detail: "Timeout — check if async job was created", completedAt: Date.now() });
       setLoading(false);
     }, 30000);
 

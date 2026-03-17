@@ -1165,6 +1165,10 @@ async function callAI(
   return data.choices?.[0]?.message?.content || "";
 }
 
+function isHeavyChatIntent(intent: ChatIntent): boolean {
+  return intent === "ranking" || intent === "deep_research";
+}
+
 async function handleChatWithOrchestration(
   args: Record<string, unknown>,
   aiSettings: { baseUrl: string; apiKey: string; model: string },
@@ -1173,7 +1177,7 @@ async function handleChatWithOrchestration(
   const message = (args.message as string) || "";
   const history = (args.history as Array<{ role: string; content: string }>) || [];
   const intent = classifyChatIntent(message);
-  console.log("[chat-orchestrator] Message:", message.slice(0, 100), "| Intent:", intent);
+  console.log("[chat-orchestrator] Message:", message.slice(0, 100), "| Intent:", intent, "| Mode:", isHeavyChatIntent(intent) ? "async" : "sync");
 
   const steps: string[] = [];
   const addStep = (s: string) => { steps.push(s); console.log("[chat-orchestrator]", s); };
@@ -1260,110 +1264,79 @@ async function handleChatWithOrchestration(
       }
     }
 
-    // ========== DEEP RESEARCH ==========
-    if (intent === "deep_research") {
-      addStep("Intent: deep_research — starting agent");
+    // ========== HEAVY: RANKING / DEEP RESEARCH → ASYNC AGENT JOB ==========
+    if (isHeavyChatIntent(intent)) {
+      addStep(`Intent: ${intent} — delegating to async agent job`);
       const job = await createJob(authHeader, "agent", { prompt: message, maxSteps: 5 });
       if (job.error) {
         return { content: [{ type: "text", text: `Error creating research job: ${job.error}` }], isError: true };
       }
       EdgeRuntime.waitUntil(processAgentJob(job.jobId, { prompt: message, maxSteps: 5 }, aiSettings));
-      return { content: [{ type: "text", text: `Deep research started.\n\nJob ID: ${job.jobId}\n\nUse \`agent_status\` or send the job ID to check results.` }] };
+
+      const modeLabel = intent === "ranking" ? "ranking/comparison research" : "deep research";
+      return {
+        content: [{
+          type: "text",
+          text: [
+            `🔬 **${modeLabel.charAt(0).toUpperCase() + modeLabel.slice(1)} started** (async)`,
+            "",
+            `This query requires multi-source evidence collection and synthesis, which would exceed the sync timeout. It has been delegated to the async research agent.`,
+            "",
+            `**Job ID:** \`${job.jobId}\``,
+            "",
+            `Check progress with the \`agent_status\` tool using this job ID, or paste the job ID in chat.`,
+          ].join("\n"),
+        }],
+      };
     }
 
-    // ========== FACTUAL / RANKING — tools-first with escalation ==========
-    const isRanking = intent === "ranking";
-    addStep(`Intent: ${intent} — searching web first`);
+    // ========== FACTUAL — lightweight sync: search + concise synthesis ==========
+    addStep("Intent: factual — lightweight sync search + synthesis");
 
-    // Step 1: Search
-    const searchResults = await searchWeb(message, isRanking ? 10 : 5);
+    const searchResults = await searchWeb(message, 5);
     const searchEvidence = JSON.stringify(searchResults.map(r => ({
       title: r.title, url: r.url, snippet: r.snippet,
     })), null, 2);
     addStep(`Search returned ${searchResults.length} results`);
 
+    // For factual sync: optionally scrape ONE top result if snippets seem thin
     let combinedEvidence = searchEvidence;
-    let escalated = false;
-
-    // Step 2: Escalation for ranking queries — always escalate unless search already has deep prose
-    if (isRanking && !chatSearchEvidenceHasDepth(searchEvidence)) {
-      addStep("Search evidence insufficient for ranking — escalating to search_and_scrape");
-      escalated = true;
-
-      const scraped: string[] = [];
-      const topResults = searchResults.slice(0, 3);
-      for (const r of topResults) {
-        if (r.acquisitionType === "unresolved_wrapper") continue;
+    if (!chatSearchEvidenceHasDepth(searchEvidence) && searchResults.length > 0) {
+      const top = searchResults.find(r => r.acquisitionType !== "unresolved_wrapper");
+      if (top) {
         try {
-          const { markdown, title } = await scrapeUrl(r.url);
+          addStep(`Snippets thin — scraping top result: ${top.url.slice(0, 60)}`);
+          const { markdown, title } = await scrapeUrl(top.url);
           if (isUsableArticleContent(markdown)) {
-            scraped.push(`# ${title}\nSource: ${r.url}\n\n${markdown.slice(0, 6000)}`);
-            addStep(`Scraped: ${r.url.slice(0, 60)} (${markdown.length} chars)`);
-          } else {
-            addStep(`Scraped but unusable: ${r.url.slice(0, 60)}`);
+            combinedEvidence = `# ${title}\nSource: ${top.url}\n\n${markdown.slice(0, 4000)}\n\n---\n\nAdditional search results:\n${searchEvidence}`;
+            addStep("Scraped 1 supporting article");
           }
-        } catch (e) {
-          addStep(`Scrape failed: ${r.url.slice(0, 60)} — ${e instanceof Error ? e.message : "unknown"}`);
+        } catch {
+          addStep("Single scrape failed — using snippets only");
         }
       }
-
-      if (scraped.length > 0) {
-        combinedEvidence = scraped.join("\n\n---\n\n");
-        addStep(`Escalation produced ${scraped.length} usable article(s)`);
-      } else {
-        addStep("Escalation scraped 0 usable articles — using search snippets only");
-      }
-    } else if (isRanking) {
-      addStep("Search evidence has sufficient depth — skipping escalation");
     }
 
-    // Step 3: Synthesis
+    // Synthesis
     addStep("Synthesizing from evidence");
-    const sourceCount = escalated
-      ? combinedEvidence.split("\n\n---\n\n").length
-      : searchResults.length;
-
     const synthesisRules = [
       "You are a research assistant that answers ONLY from the provided evidence.",
-      "CRITICAL RULES:",
-      "1. Base your answer ONLY on the evidence provided below. Do NOT use background knowledge to fill gaps.",
-      "2. If the evidence is insufficient, say so clearly. Do not invent or speculate.",
-      "3. Cite sources by title or URL when making claims.",
-      "4. If you cannot answer from the evidence, state that honestly.",
-      "5. Include a Sources section at the end with relevant URLs.",
+      "RULES:",
+      "1. Base your answer ONLY on the evidence below. Do NOT use background knowledge.",
+      "2. If evidence is insufficient, say so. Do not invent.",
+      "3. Cite sources by title or URL.",
+      "4. Be concise — this is a quick factual answer, not a research report.",
+      "5. Include relevant source URLs at the end.",
     ];
-
-    if (isRanking) {
-      synthesisRules.push(
-        "",
-        "RANKING/LIST RULES:",
-        `6. SOURCE STRENGTH: You have evidence from ${sourceCount} source(s). If the ranking mainly comes from one source, say so explicitly (e.g., "Based on one primary source..."). Do not present a single-source ranking as universal consensus.`,
-        "7. CATEGORY MIXING: If sources mix foundation models (GPT, Claude, Gemini) with tools/products (Cursor, Copilot, Devin), explicitly distinguish them.",
-        "8. CONFIDENCE: Use cautious language: 'Based on the scraped sources...', 'According to the evidence found...'. Do not claim universal or definitive rankings unless multiple independent sources agree.",
-        "9. STRUCTURE: Use this format:",
-        "   - Brief qualification about source strength",
-        "   - Ranked list with source attribution",
-        "   - Supporting mentions from other sources",
-        "   - Any discrepancies between sources",
-        "   - Conclusion",
-      );
-    }
 
     const answer = await callAI(
       aiSettings,
       synthesisRules.join("\n"),
-      `Question: ${message}\n\n---EVIDENCE (${sourceCount} sources)---\n\n${combinedEvidence}`,
-      isRanking ? 8192 : 4096,
+      `Question: ${message}\n\n---EVIDENCE---\n\n${combinedEvidence}`,
+      2048,
     );
 
-    // Append orchestration metadata
-    const meta = [
-      "",
-      "",
-      "---",
-      `*Orchestration: ${steps.join(" → ")}*`,
-    ].join("\n");
-
+    const meta = `\n\n---\n*Orchestration: ${steps.join(" → ")}*`;
     return { content: [{ type: "text", text: answer + meta }] };
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : "Unknown orchestration error";
