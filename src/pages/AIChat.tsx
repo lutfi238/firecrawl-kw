@@ -8,8 +8,9 @@ import { cn } from "@/lib/utils";
 import type { ChatMessage, ToolCallResult } from "@/types/mcp";
 import { supabase } from "@/integrations/supabase/client";
 import { SlashCommandPicker } from "@/components/SlashCommandPicker";
-import { classifyIntent, registerJob, type ToolAction, type JobType } from "@/lib/intentClassifier";
+import { classifyIntent, registerJob, type JobType } from "@/lib/intentClassifier";
 
+// ========== Tool display metadata ==========
 const TOOL_META: Record<string, { icon: string; label: string }> = {
   search: { icon: "🔍", label: "Searching the web" },
   scrape: { icon: "🕷️", label: "Scraping page" },
@@ -28,7 +29,7 @@ const TOOL_META: Record<string, { icon: string; label: string }> = {
   chat: { icon: "💬", label: "Thinking" },
 };
 
-/** Try to extract a jobId from a tool result and register it */
+// ========== Job registration from tool results ==========
 function maybeRegisterJob(toolName: string, result: ToolCallResult) {
   if (!["crawl", "batch_scrape", "agent"].includes(toolName)) return;
   try {
@@ -42,32 +43,109 @@ function maybeRegisterJob(toolName: string, result: ToolCallResult) {
   } catch { /* not json */ }
 }
 
-/** Normalize tool output into a flat evidence string with sources */
-function normalizeEvidence(toolName: string, result: ToolCallResult): { evidence: string; sourceUrls: string[] } {
+// ========== Per-tool evidence normalization ==========
+interface NormalizedEvidence {
+  evidence: string;
+  sourceUrls: string[];
+}
+
+function normalizeEvidence(toolName: string, result: ToolCallResult): NormalizedEvidence {
   const raw = result.content.map(c => c.text ?? "").join("\n");
   const sourceUrls: string[] = [];
 
+  // --- search: JSON array of {title, url, snippet} ---
   if (toolName === "search") {
-    // Search results are JSON array
     try {
-      const results = JSON.parse(raw);
-      if (Array.isArray(results)) {
-        const lines = results.map((r: any, i: number) => {
+      const items = JSON.parse(raw);
+      if (Array.isArray(items)) {
+        const lines = items.map((r: any, i: number) => {
           if (r.url) sourceUrls.push(r.url);
           return `[${i + 1}] ${r.title || "Untitled"}\n    URL: ${r.url || "N/A"}\n    ${r.snippet || ""}`;
         });
         return { evidence: lines.join("\n\n"), sourceUrls };
       }
-    } catch { /* not json, use raw */ }
+    } catch { /* fall through */ }
   }
 
-  // Extract URLs from raw text
+  // --- scrape / scrape_js: markdown prefixed with "# Title\n\n..." ---
+  if (toolName === "scrape" || toolName === "scrape_js") {
+    // Extract title from first heading
+    const titleMatch = raw.match(/^#\s+(.+)/m);
+    const title = titleMatch ? titleMatch[1] : "Scraped page";
+    // Truncate to useful length
+    const content = raw.slice(0, 8000);
+    return { evidence: `## ${title}\n\n${content}`, sourceUrls };
+  }
+
+  // --- search_and_scrape: multiple scraped pages separated by "---" ---
+  if (toolName === "search_and_scrape") {
+    const sections = raw.split(/\n---\n/).filter(Boolean);
+    const normalized = sections.map((section, i) => {
+      const urlMatch = section.match(/URL:\s*(https?:\/\/[^\s]+)/i);
+      if (urlMatch) sourceUrls.push(urlMatch[1]);
+      const titleMatch = section.match(/^#\s+(.+)/m);
+      const title = titleMatch ? titleMatch[1] : `Source ${i + 1}`;
+      return `### ${title}\n${urlMatch ? `Source: ${urlMatch[1]}` : ""}\n\n${section.slice(0, 4000)}`;
+    });
+    return { evidence: normalized.join("\n\n---\n\n"), sourceUrls };
+  }
+
+  // --- extract: AI-generated structured data (often JSON) ---
+  if (toolName === "extract") {
+    return { evidence: `## Extracted Data\n\n${raw.slice(0, 6000)}`, sourceUrls };
+  }
+
+  // --- agent_status: job result with synthesis ---
+  if (toolName === "agent_status") {
+    try {
+      const data = JSON.parse(raw);
+      if (data.synthesis) {
+        // Pull source URLs from the job output
+        if (Array.isArray(data.sourcesUsed)) sourceUrls.push(...data.sourcesUsed);
+        if (Array.isArray(data.sources)) {
+          for (const s of data.sources) {
+            if (s.finalUrl) sourceUrls.push(s.finalUrl);
+            else if (s.sourceUrl) sourceUrls.push(s.sourceUrl);
+          }
+        }
+        return {
+          evidence: `## Agent Research Result\n\nGroundedness: ${data.groundedness || "unknown"}\n${data.warning ? `⚠️ ${data.warning}\n` : ""}\n${data.synthesis}`,
+          sourceUrls: [...new Set(sourceUrls)],
+        };
+      }
+      // Still processing or no synthesis
+      return { evidence: `Agent job status: ${data.status || "unknown"}\n${JSON.stringify(data, null, 2).slice(0, 4000)}`, sourceUrls };
+    } catch { /* fall through */ }
+  }
+
+  // --- check_crawl_status / check_batch_status ---
+  if (toolName === "check_crawl_status" || toolName === "check_batch_status") {
+    try {
+      const data = JSON.parse(raw);
+      if (data.status === "completed") {
+        const pages = data.pages || data.results || [];
+        if (Array.isArray(pages)) {
+          const lines = pages.slice(0, 20).map((p: any, i: number) => {
+            if (p.url) sourceUrls.push(p.url);
+            const title = p.title || p.url || `Page ${i + 1}`;
+            const content = p.markdown ? p.markdown.slice(0, 500) : "";
+            return `[${i + 1}] ${title}\n    URL: ${p.url || "N/A"}\n    ${content}`;
+          });
+          return { evidence: `## ${toolName === "check_crawl_status" ? "Crawl" : "Batch Scrape"} Results (${pages.length} pages)\n\n${lines.join("\n\n")}`, sourceUrls };
+        }
+      }
+      return { evidence: `Job status: ${data.status || "unknown"}\n${JSON.stringify(data, null, 2).slice(0, 4000)}`, sourceUrls };
+    } catch { /* fall through */ }
+  }
+
+  // --- fallback: extract URLs from raw text ---
   const urlMatches = raw.match(/https?:\/\/[^\s<>"']+/g);
   if (urlMatches) sourceUrls.push(...urlMatches.slice(0, 10));
 
   return { evidence: raw.slice(0, 15000), sourceUrls };
 }
 
+// ========== Main component ==========
 export default function AIChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -81,10 +159,12 @@ export default function AIChat() {
   const abortRef = useRef<AbortController | null>(null);
   const [showSlashPicker, setShowSlashPicker] = useState(false);
 
+  // Auto-scroll on new messages
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages]);
 
+  // Elapsed timer
   useEffect(() => {
     if (!loading || !loadingStartedAt) return;
     const interval = setInterval(() => setElapsed((Date.now() - loadingStartedAt) / 1000), 100);
@@ -124,6 +204,7 @@ export default function AIChat() {
       .map((m) => ({ role: m.role, content: m.content }));
   }, [messages]);
 
+  // ========== Main send handler ==========
   const handleSend = async () => {
     const text = input.trim();
     if (!text || loading) return;
@@ -149,7 +230,7 @@ export default function AIChat() {
       const rendererAvailable = settings.renderer_enabled === "true";
       const intent = classifyIntent(text, history, { rendererAvailable });
 
-      // Handle local-only messages (errors, limitations)
+      // --- Local-only messages (errors, limitations) ---
       if (intent.localMessage) {
         addMessage({ role: "assistant", content: intent.localMessage });
         return;
@@ -160,10 +241,10 @@ export default function AIChat() {
         return;
       }
 
-      // Show routing reasoning
+      // --- Show routing reasoning ---
       addMessage({ role: "tool", content: `🧭 ${intent.reasoning}`, toolName: "router" });
 
-      // Execute tool actions and collect results
+      // --- Execute tool actions sequentially, collecting results ---
       const toolResults: Array<{ tool: string; result: ToolCallResult; duration: number }> = [];
 
       for (const action of intent.actions) {
@@ -172,9 +253,15 @@ export default function AIChat() {
         const meta = TOOL_META[action.tool] || { icon: "🔧", label: action.tool };
         setCurrentStep(`${meta.icon} ${meta.label}...`);
 
-        addMessage({ role: "tool", content: `${meta.icon} ${meta.label}...`, toolName: action.tool, toolInput: action.args as Record<string, unknown> });
+        // Show tool execution step
+        addMessage({
+          role: "tool",
+          content: `${meta.icon} ${meta.label}...`,
+          toolName: action.tool,
+          toolInput: action.args as Record<string, unknown>,
+        });
 
-        // Inject history for chat tool
+        // Inject conversation history for chat tool
         if (action.tool === "chat" && "message" in action.args) {
           (action.args as any).history = history;
         }
@@ -185,13 +272,17 @@ export default function AIChat() {
 
         if (controller.signal.aborted) return;
 
+        // Log to request monitor
         await logToMonitor(action.tool, action.args as Record<string, unknown>, result, duration);
+
+        // Register async jobs for future status lookups
         maybeRegisterJob(action.tool, result);
 
         toolResults.push({ tool: action.tool, result, duration });
       }
 
       if (controller.signal.aborted) return;
+
       if (toolResults.length === 0) {
         addMessage({ role: "assistant", content: "No results returned." });
         return;
@@ -199,33 +290,37 @@ export default function AIChat() {
 
       const lastResult = toolResults[toolResults.length - 1];
 
-      // === Synthesis path ===
+      // === SYNTHESIS PATH ===
+      // When synthesize=true and we have tool evidence, pass it through AI for a grounded answer
       if (intent.synthesize && !lastResult.result.isError && settings.ai_api_key) {
-        // Normalize all non-chat tool evidence
         const allEvidence = toolResults
           .filter(r => r.tool !== "chat")
           .map(r => {
-            const { evidence, sourceUrls } = normalizeEvidence(r.tool, r.result);
-            return { tool: r.tool, evidence, sourceUrls };
+            const norm = normalizeEvidence(r.tool, r.result);
+            return { tool: r.tool, ...norm };
           });
 
-        const combinedEvidence = allEvidence.map(e => `--- Evidence from ${e.tool} ---\n${e.evidence}`).join("\n\n");
+        const combinedEvidence = allEvidence
+          .map(e => `--- Evidence from ${e.tool} ---\n${e.evidence}`)
+          .join("\n\n");
         const allSourceUrls = [...new Set(allEvidence.flatMap(e => e.sourceUrls))];
         const toolsUsed = toolResults.map(r => r.tool);
+        const evidenceIsSubstantial = combinedEvidence.length > 100;
 
-        if (combinedEvidence.length > 50) {
+        if (evidenceIsSubstantial) {
           setCurrentStep("💬 Synthesizing grounded answer...");
           addMessage({ role: "tool", content: "💬 Synthesizing answer from evidence...", toolName: "synthesis" });
 
           const synthesisPrompt = [
             "You are a research assistant. Answer the user's question based ONLY on the evidence provided below.",
-            "RULES:",
-            "1. Use ONLY the evidence below. Do NOT fill gaps with your own knowledge.",
-            "2. If the evidence is insufficient to answer fully, state what you found and what is missing.",
+            "CRITICAL RULES:",
+            "1. Use ONLY the evidence below. Do NOT fill gaps with your own knowledge or training data.",
+            "2. If the evidence is insufficient or does not address the question, explicitly state what was found and what is missing. Do NOT generate a speculative answer.",
             "3. Cite sources by title or URL when making claims.",
-            "4. Be structured and concise.",
-            `5. Evidence was gathered using: ${toolsUsed.join(", ")}`,
-            allSourceUrls.length > 0 ? `6. Source URLs: ${allSourceUrls.slice(0, 8).join(", ")}` : "",
+            "4. Be structured, clear, and concise.",
+            "5. If evidence contains conflicting information, note the discrepancy.",
+            `6. Evidence was gathered using: ${toolsUsed.join(", ")}`,
+            allSourceUrls.length > 0 ? `7. Available source URLs: ${allSourceUrls.slice(0, 10).join(", ")}` : "",
           ].filter(Boolean).join("\n");
 
           const synthesisResult = await callTool("chat", {
@@ -236,34 +331,35 @@ export default function AIChat() {
           if (controller.signal.aborted) return;
 
           const answer = synthesisResult.content.map(c => c.text ?? "").join("\n");
-          // Append source URLs if the model didn't include them
-          const sourcesFooter = allSourceUrls.length > 0 && !answer.includes("http")
-            ? `\n\n**Sources:**\n${allSourceUrls.slice(0, 5).map((u, i) => `${i + 1}. ${u}`).join("\n")}`
-            : "";
+
+          // Append source URLs footer if the model didn't include them
+          let sourcesFooter = "";
+          if (allSourceUrls.length > 0 && !answer.includes("http")) {
+            sourcesFooter = `\n\n**Sources:**\n${allSourceUrls.slice(0, 6).map((u, i) => `${i + 1}. ${u}`).join("\n")}`;
+          }
 
           addMessage({ role: "assistant", content: answer + sourcesFooter });
           return;
         }
+        // Evidence too thin — fall through to direct display with a note
       }
 
-      // === Async job result formatting ===
+      // === ASYNC JOB RESULT FORMATTING ===
       if (["crawl", "batch_scrape", "agent"].includes(lastResult.tool) && !lastResult.result.isError) {
         const resultText = lastResult.result.content.map(c => c.text ?? "").join("\n");
         try {
           const parsed = JSON.parse(resultText);
           if (parsed.jobId) {
-            const statusCmd = lastResult.tool === "crawl" ? "check_crawl_status" :
-                              lastResult.tool === "batch_scrape" ? "check_batch_status" : "agent_status";
             addMessage({
               role: "assistant",
               content: `✅ **Job started!**\n\n**Job ID:** \`${parsed.jobId}\`\n**Status:** ${parsed.status}\n\nUse \`/status ${parsed.jobId}\` to check progress, or just paste the job ID.`,
             });
             return;
           }
-        } catch { /* fall through */ }
+        } catch { /* not JSON, fall through */ }
       }
 
-      // === Direct result display ===
+      // === DIRECT RESULT DISPLAY ===
       const resultText = lastResult.result.content.map(c => c.text ?? `[${c.type}]`).join("\n");
       addMessage({
         role: lastResult.result.isError ? "tool" : "assistant",
@@ -291,6 +387,7 @@ export default function AIChat() {
     <div className="flex flex-col h-[calc(100vh-8rem)] max-w-3xl">
       <h1 className="font-display text-xl font-bold tracking-wider text-gradient-cyber mb-4">AI CHAT</h1>
 
+      {/* Messages area */}
       <div ref={scrollRef} className="flex-1 overflow-auto space-y-3 scrollbar-cyber pr-2 mb-4">
         {messages.length === 0 && (
           <div className="flex items-center justify-center h-full">
@@ -351,6 +448,7 @@ export default function AIChat() {
           </div>
         ))}
 
+        {/* Loading indicator with current step */}
         {loading && (
           <div className="flex gap-3">
             <div className="h-7 w-7 rounded-full bg-primary/20 flex items-center justify-center">
@@ -366,6 +464,7 @@ export default function AIChat() {
         )}
       </div>
 
+      {/* Input bar */}
       <div className="relative glass rounded-lg p-3 flex gap-2">
         <SlashCommandPicker
           input={input}

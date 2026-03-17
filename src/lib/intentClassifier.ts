@@ -1,6 +1,7 @@
 /**
  * Intent classifier for AI Chat orchestration.
  * Rule-based routing that maps user messages to MCP tool actions.
+ * Job registry persisted to localStorage for cross-refresh routing.
  */
 
 export type ToolAction =
@@ -47,21 +48,50 @@ const CASUAL_PATTERNS = [
   /^(what can you do|how do you work|what tools|what are your capabilities)/i,
 ];
 
-// ========== Job type memory ==========
+// ========== Persistent job registry (localStorage) ==========
 export type JobType = "crawl" | "batch_scrape" | "agent";
-const recentJobs = new Map<string, JobType>();
 
-export function registerJob(jobId: string, type: JobType) {
-  recentJobs.set(jobId, type);
-  // Prune if too large
-  if (recentJobs.size > 50) {
-    const oldest = recentJobs.keys().next().value;
-    if (oldest) recentJobs.delete(oldest);
+interface StoredJob {
+  jobId: string;
+  type: JobType;
+  createdAt: number;
+}
+
+const STORAGE_KEY = "mcp_recent_jobs";
+const MAX_JOBS = 100;
+const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+function loadJobs(): StoredJob[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const now = Date.now();
+    // Prune expired
+    return parsed.filter(
+      (j: StoredJob) => j.jobId && j.type && j.createdAt && now - j.createdAt < MAX_AGE_MS
+    );
+  } catch {
+    return [];
   }
 }
 
+function saveJobs(jobs: StoredJob[]) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(jobs.slice(-MAX_JOBS)));
+  } catch { /* quota exceeded etc */ }
+}
+
+export function registerJob(jobId: string, type: JobType) {
+  const jobs = loadJobs().filter(j => j.jobId !== jobId);
+  jobs.push({ jobId, type, createdAt: Date.now() });
+  saveJobs(jobs);
+}
+
 export function getJobType(jobId: string): JobType | undefined {
-  return recentJobs.get(jobId);
+  const jobs = loadJobs();
+  return jobs.find(j => j.jobId === jobId)?.type;
 }
 
 const STATUS_TOOL_MAP: Record<JobType, "check_crawl_status" | "check_batch_status" | "agent_status"> = {
@@ -172,7 +202,16 @@ function parseSlashCommand(text: string, rendererAvailable: boolean): IntentResu
 
     case "batch": {
       if (!arg) return { actions: [], reasoning: "", synthesize: false, localMessage: "Usage: `/batch <url1>, <url2>, ...`" };
-      return { actions: [{ tool: "batch_scrape", args: { urls: arg } }], reasoning: "Slash command: /batch", synthesize: false };
+      // Normalize: split by comma, newline, or space, then filter valid URLs
+      const rawParts = arg.split(/[,\n]+/).map(s => s.trim()).filter(Boolean);
+      const normalizedUrls = rawParts.map(p => {
+        // If part looks like a URL already, use it; otherwise try to extract
+        if (/^https?:\/\//i.test(p)) return p;
+        const found = extractUrls(p);
+        return found[0] || p;
+      }).filter(u => /^https?:\/\//i.test(u));
+      if (normalizedUrls.length === 0) return { actions: [], reasoning: "", synthesize: false, localMessage: "No valid URLs found. Usage: `/batch <url1>, <url2>, ...`" };
+      return { actions: [{ tool: "batch_scrape", args: { urls: normalizedUrls.join(", ") } }], reasoning: `Slash command: /batch (${normalizedUrls.length} URLs)`, synthesize: false };
     }
 
     case "html":
@@ -185,9 +224,8 @@ function parseSlashCommand(text: string, rendererAvailable: boolean): IntentResu
       const jobId = uuidMatch[0];
       const knownType = getJobType(jobId);
       if (knownType) {
-        return { actions: [{ tool: STATUS_TOOL_MAP[knownType], args: { jobId } }], reasoning: `Slash command: /status → known ${knownType} job`, synthesize: false };
+        return { actions: [{ tool: STATUS_TOOL_MAP[knownType], args: { jobId } }], reasoning: `Slash command: /status → ${knownType} job (from stored mapping)`, synthesize: false };
       }
-      // Fallback: try agent_status (most common)
       return { actions: [{ tool: "agent_status", args: { jobId } }], reasoning: "Slash command: /status → unknown job type, trying agent_status", synthesize: false };
     }
 
@@ -230,7 +268,7 @@ export function classifyIntent(
     const jobId = uuidMatch[0];
     const knownType = getJobType(jobId);
     if (knownType) {
-      return { actions: [{ tool: STATUS_TOOL_MAP[knownType], args: { jobId } }], reasoning: `Job ID detected → ${knownType} status (from memory)`, synthesize: false };
+      return { actions: [{ tool: STATUS_TOOL_MAP[knownType], args: { jobId } }], reasoning: `Job ID detected → ${knownType} status (from stored mapping)`, synthesize: false };
     }
     // Heuristic fallback from conversation history
     const lastToolMention = [...history].reverse().find(m =>
