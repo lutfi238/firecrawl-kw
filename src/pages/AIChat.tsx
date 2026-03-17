@@ -10,8 +10,7 @@ import { cn } from "@/lib/utils";
 import type { ChatMessage, ToolCallResult } from "@/types/mcp";
 import { TOOL_DEFINITIONS } from "@/types/tools";
 import { supabase } from "@/integrations/supabase/client";
-
-const SLASH_COMMANDS = TOOL_DEFINITIONS.map((t) => `/${t.name}`);
+import { SlashCommandPicker } from "@/components/SlashCommandPicker";
 
 export default function AIChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
