@@ -141,20 +141,78 @@ async function scrapeUrl(url: string): Promise<{ markdown: string; title: string
   return { markdown: htmlToMarkdown(html), title };
 }
 
-// ========== Resolve Google News redirect ==========
-async function resolveRedirect(url: string): Promise<string> {
+// ========== URL redirect detection & resolution ==========
+function isRedirectUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return (
+      u.hostname.includes("news.google.com") ||
+      u.hostname.includes("google.com/rss") ||
+      u.pathname.includes("/rss/articles/") ||
+      u.hostname.includes("feedproxy.google.com") ||
+      u.hostname.includes("t.co") ||
+      u.hostname.includes("bit.ly") ||
+      u.hostname.includes("ow.ly")
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function resolveRedirect(url: string): Promise<{ finalUrl: string; resolved: boolean; error?: string }> {
   try {
     const res = await fetch(url, {
       method: "HEAD",
       redirect: "follow",
       headers: { "User-Agent": "Mozilla/5.0 (compatible; RSS/2.0)" },
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(8000),
     });
-    return res.url || url;
-  } catch {
-    return url;
+    const finalUrl = res.url || url;
+    return { finalUrl, resolved: finalUrl !== url };
+  } catch (e) {
+    try {
+      const res = await fetch(url, {
+        redirect: "follow",
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; RSS/2.0)" },
+        signal: AbortSignal.timeout(8000),
+      });
+      const finalUrl = res.url || url;
+      await res.body?.cancel();
+      return { finalUrl, resolved: finalUrl !== url };
+    } catch {
+      return { finalUrl: url, resolved: false, error: e instanceof Error ? e.message : "resolve failed" };
+    }
   }
 }
+
+function extractDomain(url: string): string {
+  try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; }
+}
+
+// ========== Source evidence types ==========
+interface NormalizedSource {
+  sourceUrl: string;
+  finalUrl: string;
+  title: string;
+  publisher: string;
+  excerpt: string;
+  markdown: string;
+  contentLength: number;
+  resolveStatus: "resolved" | "unchanged" | "failed";
+  scrapeStatus: "success" | "failed" | "empty";
+  error?: string;
+}
+
+interface EvidenceMetrics {
+  sourcesCollected: number;
+  sourcesResolved: number;
+  sourcesScrapedSuccessfully: number;
+  sourcesUsableForSynthesis: number;
+  failedSources: number;
+  emptyContentSources: number;
+}
+
+const MIN_USABLE_CONTENT_LENGTH = 200;
 
 // ========== Web Search (RSS-based) ==========
 async function searchWeb(query: string, maxResults: number): Promise<Array<{ title: string; url: string; snippet: string }>> {
