@@ -368,7 +368,7 @@ interface EvidenceMetrics {
 const MIN_USABLE_CONTENT_LENGTH = 300;
 
 // ========== Web Search (RSS-based) ==========
-async function searchWeb(query: string, maxResults: number): Promise<Array<{ title: string; url: string; snippet: string }>> {
+async function searchWeb(query: string, maxResults: number): Promise<Array<{ title: string; url: string; sourceUrl: string; snippet: string; rawDesc: string }>> {
   const encoded = encodeURIComponent(query);
 
   const sources = [
@@ -407,11 +407,13 @@ async function searchWeb(query: string, maxResults: number): Promise<Array<{ tit
 
       if (rawItems.length === 0) continue;
 
+      // Resolve URLs — pass rawDesc to Google News resolver
       const items = await Promise.all(rawItems.map(async ({ title, rawLink, rawDesc }) => {
         let finalUrl = rawLink;
         if (isGoogleNewsRssWrapper(rawLink)) {
-          const resolved = await resolveGoogleNewsRssUrl(rawLink);
+          const resolved = await resolveGoogleNewsRssUrl(rawLink, rawDesc);
           finalUrl = resolved.finalUrl || rawLink;
+          console.log("[search] Google resolve:", rawLink.slice(0, 60), "→", finalUrl.slice(0, 80), "method:", resolved.method || "none");
         } else if (isRedirectUrl(rawLink)) {
           const resolved = await resolveRedirect(rawLink);
           finalUrl = resolved.finalUrl;
@@ -431,7 +433,7 @@ async function searchWeb(query: string, maxResults: number): Promise<Array<{ tit
           }
         }
 
-        return { title, url: finalUrl, sourceUrl: rawLink, snippet };
+        return { title, url: finalUrl, sourceUrl: rawLink, snippet, rawDesc };
       }));
 
       const seen = new Set<string>();
