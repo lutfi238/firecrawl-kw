@@ -25,6 +25,7 @@ const categoryColors: Record<string, string> = {
   crawl: "text-cyber-violet",
   ai: "text-cyber-amber",
   utility: "text-muted-foreground",
+  async: "text-cyber-cyan",
 };
 
 export function ToolCard({ name, description, icon, category, usageCount, onClick, className }: ToolCardProps) {
