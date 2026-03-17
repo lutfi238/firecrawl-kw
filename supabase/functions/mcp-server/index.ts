@@ -408,7 +408,7 @@ app.post("/*", async (c) => {
           break;
         }
         case "extract": {
-          const uSettings = await getUserSettings(currentAuthHeader);
+          const uSettings = await getUserSettings(authHeader);
           const aiSettings = getAiSettingsFromMap(uSettings);
           if (!aiSettings) {
             result = { content: [{ type: "text", text: "Error: AI provider not configured. Go to Settings → AI Provider and add your API key." }], isError: true };
