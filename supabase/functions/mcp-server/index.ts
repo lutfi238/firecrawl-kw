@@ -412,12 +412,6 @@ async function processBatchScrapeJob(jobId: string, args: Record<string, unknown
 // ========== Background agent processor ==========
 async function processAgentJob(jobId: string, args: Record<string, unknown>, aiSettings: { baseUrl: string; apiKey: string; model: string }) {
   const svc = getServiceClient();
-  const FALLBACK_SOURCES = [
-    "https://techcrunch.com",
-    "https://www.theverge.com",
-    "https://arstechnica.com",
-    "https://news.ycombinator.com",
-  ];
 
   try {
     await svc.from("mcp_jobs").update({ status: "processing", output: { step: "searching" } }).eq("id", jobId);
@@ -449,11 +443,10 @@ async function processAgentJob(jobId: string, args: Record<string, unknown>, aiS
       }
     }
 
+    // No fallback to generic homepages — if search returned nothing, proceed with empty
+    // and let the quality gate handle it
     if (discoveredUrls.length === 0) {
-      console.log("[agent] Search empty — using fallback sources");
-      for (const u of FALLBACK_SOURCES) {
-        discoveredUrls.push({ title: "", url: u, sourceUrl: u, snippet: "" });
-      }
+      console.log("[agent] No URLs discovered — will return low-evidence result");
     }
 
     discoveredUrls = discoveredUrls.slice(0, maxSteps);
