@@ -1,9 +1,10 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { useToolExecutorWithActivity } from "@/hooks/useToolExecutorWithActivity";
 import { useSettings } from "@/hooks/useSettings";
 import { ToolForm } from "@/components/ToolForm";
 import { ResponseViewer } from "@/components/ResponseViewer";
 import { ActivityLog } from "@/components/ActivityLog";
+import { AgentJobMonitor } from "@/components/AgentJobMonitor";
 import { GlassCard } from "@/components/GlassCard";
 import { TOOL_DEFINITIONS } from "@/types/tools";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -15,11 +16,12 @@ export default function ToolTester() {
   const [selectedTool, setSelectedTool] = useState(TOOL_DEFINITIONS[0].name);
   const { execute, cancel, result, durationMs, loading, error, steps } = useToolExecutorWithActivity();
   const { settings } = useSettings();
+  const [lastArgs, setLastArgs] = useState<Record<string, unknown> | null>(null);
 
   const tool = TOOL_DEFINITIONS.find((t) => t.name === selectedTool)!;
   const rendererEnabled = settings.renderer_enabled === "true";
-
   const isToolDisabled = tool.requiresRenderer && !rendererEnabled;
+  const isAgentStatus = selectedTool === "agent_status";
 
   const toolDescription = useMemo(() => {
     if (tool.name === "extract") {
@@ -28,10 +30,21 @@ export default function ToolTester() {
       if (provider && model) {
         return `Scrape a URL and use AI (${provider} → ${model}) to extract structured data.`;
       }
-      return null; // signal to show "not configured" link
+      return null;
     }
     return tool.description;
   }, [tool, settings.ai_provider, settings.ai_model]);
+
+  const handleExecute = useCallback((args: Record<string, unknown>) => {
+    setLastArgs(args);
+    execute(tool.name, args);
+  }, [execute, tool.name]);
+
+  const handleRefresh = useCallback(() => {
+    if (lastArgs) {
+      execute(tool.name, lastArgs);
+    }
+  }, [execute, tool.name, lastArgs]);
 
   return (
     <div className="space-y-4 max-w-6xl">
@@ -93,7 +106,7 @@ export default function ToolTester() {
               tool={tool}
               loading={loading}
               disabled={isToolDisabled}
-              onExecute={(args) => execute(tool.name, args)}
+              onExecute={handleExecute}
             />
             {loading && (
               <Button
@@ -107,14 +120,26 @@ export default function ToolTester() {
             )}
           </div>
 
-          {/* Activity log */}
-          {steps.length > 0 && (
+          {/* Activity log — only show inline for non-agent-status tools */}
+          {!isAgentStatus && steps.length > 0 && (
             <ActivityLog steps={steps} className="mt-2" />
           )}
         </GlassCard>
 
-        {/* Right: Response */}
-        <ResponseViewer result={result} durationMs={durationMs} error={error} className="min-h-[400px]" />
+        {/* Right: Response — agent_status gets dedicated monitor */}
+        {isAgentStatus ? (
+          <AgentJobMonitor
+            result={result}
+            durationMs={durationMs}
+            error={error}
+            steps={steps}
+            onRefresh={handleRefresh}
+            loading={loading}
+            className="min-h-[400px]"
+          />
+        ) : (
+          <ResponseViewer result={result} durationMs={durationMs} error={error} className="min-h-[400px]" />
+        )}
       </div>
     </div>
   );
