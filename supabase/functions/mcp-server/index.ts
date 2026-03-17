@@ -168,7 +168,8 @@ async function resolveRedirect(url: string): Promise<{ finalUrl: string; resolve
       signal: AbortSignal.timeout(8000),
     });
     const finalUrl = res.url || url;
-    return { finalUrl, resolved: finalUrl !== url };
+    const didChange = finalUrl !== url;
+    return { finalUrl, resolved: didChange };
   } catch (e) {
     try {
       const res = await fetch(url, {
@@ -178,7 +179,8 @@ async function resolveRedirect(url: string): Promise<{ finalUrl: string; resolve
       });
       const finalUrl = res.url || url;
       await res.body?.cancel();
-      return { finalUrl, resolved: finalUrl !== url };
+      const didChange = finalUrl !== url;
+      return { finalUrl, resolved: didChange };
     } catch {
       return { finalUrl: url, resolved: false, error: e instanceof Error ? e.message : "resolve failed" };
     }
@@ -187,6 +189,33 @@ async function resolveRedirect(url: string): Promise<{ finalUrl: string; resolve
 
 function extractDomain(url: string): string {
   try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; }
+}
+
+// ========== Article content quality heuristic ==========
+// Checks if scraped markdown looks like actual article body vs boilerplate/nav/login page
+function isUsableArticleContent(markdown: string): boolean {
+  if (markdown.length < 300) return false;
+
+  // Count paragraphs (sequences of 50+ chars separated by newlines)
+  const paragraphs = markdown.split(/\n\n+/).filter(p => p.trim().length > 50);
+  if (paragraphs.length < 2) return false;
+
+  // Avg sentence length heuristic: real articles have longer average text blocks
+  const totalTextLength = paragraphs.reduce((sum, p) => sum + p.length, 0);
+  const avgParagraphLength = totalTextLength / paragraphs.length;
+  if (avgParagraphLength < 40) return false;
+
+  // Check for boilerplate signals
+  const lower = markdown.toLowerCase();
+  const boilerplateSignals = [
+    "sign in", "log in", "subscribe now", "cookie policy",
+    "accept cookies", "privacy policy", "terms of service",
+  ];
+  const boilerplateHits = boilerplateSignals.filter(s => lower.includes(s)).length;
+  // If more than half the content is boilerplate indicators, reject
+  if (boilerplateHits >= 3 && markdown.length < 1000) return false;
+
+  return true;
 }
 
 // ========== Source evidence types ==========
@@ -199,7 +228,7 @@ interface NormalizedSource {
   markdown: string;
   contentLength: number;
   resolveStatus: "resolved" | "unchanged" | "failed";
-  scrapeStatus: "success" | "failed" | "empty";
+  scrapeStatus: "success" | "failed" | "empty" | "boilerplate";
   error?: string;
 }
 
@@ -212,7 +241,7 @@ interface EvidenceMetrics {
   emptyContentSources: number;
 }
 
-const MIN_USABLE_CONTENT_LENGTH = 200;
+const MIN_USABLE_CONTENT_LENGTH = 300;
 
 // ========== Web Search (RSS-based) ==========
 async function searchWeb(query: string, maxResults: number): Promise<Array<{ title: string; url: string; snippet: string }>> {
