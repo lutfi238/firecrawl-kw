@@ -170,7 +170,7 @@ export default function AIChat() {
             <div className="text-center space-y-2">
               <Bot className="h-10 w-10 text-muted-foreground/30 mx-auto" />
               <p className="text-sm text-muted-foreground/50 font-mono">
-                Use slash commands: {SLASH_COMMANDS.slice(0, 4).join(", ")}...
+                Use slash commands: /search, /scrape, /extract, /crawl...
               </p>
               {settings.ai_provider && (
                 <p className="text-[11px] text-muted-foreground/30 font-mono">
