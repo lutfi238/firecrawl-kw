@@ -141,7 +141,7 @@ function jobStatusToBadge(status?: string): "online" | "offline" | "pending" | "
     case "failed": return "error";
     case "processing": return "pending";
     case "pending": return "pending";
-    default: return "offline"; // unknown status → offline/gray
+    default: return "pending"; // unknown status → neutral pending
   }
 }
 
