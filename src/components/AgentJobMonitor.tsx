@@ -608,6 +608,7 @@ export function AgentJobMonitor({
                           "mt-0.5 h-2 w-2 rounded-full flex-shrink-0",
                           src.scrapeStatus === "success" && "bg-cyber-green",
                           src.scrapeStatus === "empty" && "bg-cyber-amber",
+                          src.scrapeStatus === "boilerplate" && "bg-cyber-amber",
                           src.scrapeStatus === "failed" && "bg-cyber-red",
                         )} />
                         <div className="min-w-0 flex-1">
