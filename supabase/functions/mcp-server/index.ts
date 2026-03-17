@@ -141,20 +141,78 @@ async function scrapeUrl(url: string): Promise<{ markdown: string; title: string
   return { markdown: htmlToMarkdown(html), title };
 }
 
-// ========== Resolve Google News redirect ==========
-async function resolveRedirect(url: string): Promise<string> {
+// ========== URL redirect detection & resolution ==========
+function isRedirectUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return (
+      u.hostname.includes("news.google.com") ||
+      u.hostname.includes("google.com/rss") ||
+      u.pathname.includes("/rss/articles/") ||
+      u.hostname.includes("feedproxy.google.com") ||
+      u.hostname.includes("t.co") ||
+      u.hostname.includes("bit.ly") ||
+      u.hostname.includes("ow.ly")
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function resolveRedirect(url: string): Promise<{ finalUrl: string; resolved: boolean; error?: string }> {
   try {
     const res = await fetch(url, {
       method: "HEAD",
       redirect: "follow",
       headers: { "User-Agent": "Mozilla/5.0 (compatible; RSS/2.0)" },
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(8000),
     });
-    return res.url || url;
-  } catch {
-    return url;
+    const finalUrl = res.url || url;
+    return { finalUrl, resolved: finalUrl !== url };
+  } catch (e) {
+    try {
+      const res = await fetch(url, {
+        redirect: "follow",
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; RSS/2.0)" },
+        signal: AbortSignal.timeout(8000),
+      });
+      const finalUrl = res.url || url;
+      await res.body?.cancel();
+      return { finalUrl, resolved: finalUrl !== url };
+    } catch {
+      return { finalUrl: url, resolved: false, error: e instanceof Error ? e.message : "resolve failed" };
+    }
   }
 }
+
+function extractDomain(url: string): string {
+  try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; }
+}
+
+// ========== Source evidence types ==========
+interface NormalizedSource {
+  sourceUrl: string;
+  finalUrl: string;
+  title: string;
+  publisher: string;
+  excerpt: string;
+  markdown: string;
+  contentLength: number;
+  resolveStatus: "resolved" | "unchanged" | "failed";
+  scrapeStatus: "success" | "failed" | "empty";
+  error?: string;
+}
+
+interface EvidenceMetrics {
+  sourcesCollected: number;
+  sourcesResolved: number;
+  sourcesScrapedSuccessfully: number;
+  sourcesUsableForSynthesis: number;
+  failedSources: number;
+  emptyContentSources: number;
+}
+
+const MIN_USABLE_CONTENT_LENGTH = 200;
 
 // ========== Web Search (RSS-based) ==========
 async function searchWeb(query: string, maxResults: number): Promise<Array<{ title: string; url: string; snippet: string }>> {
@@ -198,8 +256,9 @@ async function searchWeb(query: string, maxResults: number): Promise<Array<{ tit
 
       const items = await Promise.all(rawItems.map(async ({ title, rawLink, rawDesc }) => {
         let finalUrl = rawLink;
-        if (rawLink.includes("news.google.com")) {
-          finalUrl = await resolveRedirect(rawLink);
+        if (isRedirectUrl(rawLink)) {
+          const resolved = await resolveRedirect(rawLink);
+          finalUrl = resolved.finalUrl;
         }
 
         let snippet = "";
@@ -216,7 +275,7 @@ async function searchWeb(query: string, maxResults: number): Promise<Array<{ tit
           }
         }
 
-        return { title, url: finalUrl, snippet };
+        return { title, url: finalUrl, sourceUrl: rawLink, snippet };
       }));
 
       const seen = new Set<string>();
@@ -335,7 +394,6 @@ async function processAgentJob(jobId: string, args: Record<string, unknown>, aiS
     await svc.from("mcp_jobs").update({ status: "processing", output: { step: "searching" } }).eq("id", jobId);
 
     const prompt = args.prompt as string;
-    // Parse focusUrls: could be array or comma-separated string
     const rawUrls = args.urls;
     let focusUrls: string[] = [];
     if (Array.isArray(rawUrls)) {
@@ -347,50 +405,162 @@ async function processAgentJob(jobId: string, args: Record<string, unknown>, aiS
     const maxSteps = (args.maxSteps as number) || 5;
 
     // Step 1: Search for relevant URLs
-    let urlsToScrape: string[] = [...focusUrls];
+    let discoveredUrls: Array<{ title: string; url: string; sourceUrl: string; snippet: string }> = [];
+    for (const u of focusUrls) {
+      discoveredUrls.push({ title: "", url: u, sourceUrl: u, snippet: "" });
+    }
     console.log("[agent] Focus URLs:", focusUrls);
 
-    if (urlsToScrape.length < maxSteps) {
+    if (discoveredUrls.length < maxSteps) {
       console.log("[agent] Searching web for:", prompt);
-      const searchResults = await searchWeb(prompt, maxSteps - urlsToScrape.length);
-      console.log("[agent] Search returned", searchResults.length, "results:", searchResults.map(r => r.url));
-      urlsToScrape.push(...searchResults.map(r => r.url));
-    }
-
-    // Fallback: if search returned nothing and no focus URLs, use hardcoded news sources
-    if (urlsToScrape.length === 0) {
-      console.log("[agent] Search empty and no focus URLs — using fallback sources");
-      urlsToScrape = [...FALLBACK_SOURCES];
-    }
-
-    urlsToScrape = urlsToScrape.slice(0, maxSteps);
-    console.log("[agent] Final URLs to scrape:", urlsToScrape);
-    console.log("[agent] Scraping:", urlsToScrape.length, "URLs");
-
-    await svc.from("mcp_jobs").update({ output: { step: "scraping", urls: urlsToScrape } }).eq("id", jobId);
-
-    // Step 2: Scrape URLs
-    const scrapedContent: string[] = [];
-    const successfulUrls: string[] = [];
-    for (const url of urlsToScrape) {
-      try {
-        const { markdown, title } = await scrapeUrl(url);
-        scrapedContent.push(`# ${title}\nURL: ${url}\n\n${markdown.slice(0, 4000)}`);
-        successfulUrls.push(url);
-        console.log("[agent] Scraped OK:", url);
-      } catch (e) {
-        console.log("[agent] Scrape failed:", url, e instanceof Error ? e.message : "unknown");
-        scrapedContent.push(`URL: ${url}\nFailed to scrape.`);
+      const searchResults = await searchWeb(prompt, maxSteps - discoveredUrls.length);
+      console.log("[agent] Search returned", searchResults.length, "results");
+      for (const r of searchResults) {
+        discoveredUrls.push({ title: r.title, url: r.url, sourceUrl: (r as any).sourceUrl || r.url, snippet: r.snippet });
       }
     }
 
-    console.log("[agent] Successfully scraped", successfulUrls.length, "of", urlsToScrape.length, "URLs");
-    await svc.from("mcp_jobs").update({ output: { step: "synthesizing", scrapedCount: successfulUrls.length } }).eq("id", jobId);
+    if (discoveredUrls.length === 0) {
+      console.log("[agent] Search empty — using fallback sources");
+      for (const u of FALLBACK_SOURCES) {
+        discoveredUrls.push({ title: "", url: u, sourceUrl: u, snippet: "" });
+      }
+    }
 
-    // Step 3: Synthesize with AI
-    const systemPrompt = schema
-      ? `You are a research agent. Synthesize the provided web content to answer the research prompt thoroughly. Return valid JSON matching this schema: ${schema}`
-      : "You are a research agent. Synthesize the provided web content to answer the research prompt thoroughly. Provide a comprehensive, well-structured response.";
+    discoveredUrls = discoveredUrls.slice(0, maxSteps);
+    const collectedCount = discoveredUrls.length;
+
+    // Step 2: Resolve redirect URLs
+    await svc.from("mcp_jobs").update({ output: { step: "scraping", sourcesCollected: collectedCount } }).eq("id", jobId);
+
+    const sources: NormalizedSource[] = [];
+    for (const item of discoveredUrls) {
+      const needsResolve = isRedirectUrl(item.url);
+      let finalUrl = item.url;
+      let resolveStatus: NormalizedSource["resolveStatus"] = "unchanged";
+      let resolveError: string | undefined;
+
+      if (needsResolve) {
+        const resolved = await resolveRedirect(item.url);
+        finalUrl = resolved.finalUrl;
+        resolveStatus = resolved.resolved ? "resolved" : "failed";
+        resolveError = resolved.error;
+        console.log("[agent] Resolved:", item.url, "→", finalUrl);
+      }
+
+      // Scrape the final URL
+      let title = item.title;
+      let markdown = "";
+      let scrapeStatus: NormalizedSource["scrapeStatus"] = "failed";
+      let scrapeError: string | undefined;
+
+      try {
+        const scraped = await scrapeUrl(finalUrl);
+        markdown = scraped.markdown.slice(0, 6000);
+        title = title || scraped.title;
+        scrapeStatus = markdown.length >= MIN_USABLE_CONTENT_LENGTH ? "success" : "empty";
+        console.log("[agent] Scraped OK:", finalUrl, "len:", markdown.length);
+      } catch (e) {
+        scrapeError = e instanceof Error ? e.message : "scrape failed";
+        console.log("[agent] Scrape failed:", finalUrl, scrapeError);
+      }
+
+      sources.push({
+        sourceUrl: item.sourceUrl,
+        finalUrl,
+        title: title || extractDomain(finalUrl),
+        publisher: extractDomain(finalUrl),
+        excerpt: item.snippet || markdown.slice(0, 200),
+        markdown,
+        contentLength: markdown.length,
+        resolveStatus: resolveError ? "failed" : resolveStatus,
+        scrapeStatus,
+        error: scrapeError || resolveError,
+      });
+
+      // Progress update
+      await svc.from("mcp_jobs").update({
+        output: {
+          step: "scraping",
+          sourcesCollected: collectedCount,
+          scrapedCount: sources.filter(s => s.scrapeStatus !== "failed").length,
+          totalSources: collectedCount,
+        },
+      }).eq("id", jobId);
+    }
+
+    // Compute evidence metrics
+    const metrics: EvidenceMetrics = {
+      sourcesCollected: collectedCount,
+      sourcesResolved: sources.filter(s => s.resolveStatus === "resolved" || s.resolveStatus === "unchanged").length,
+      sourcesScrapedSuccessfully: sources.filter(s => s.scrapeStatus === "success").length,
+      sourcesUsableForSynthesis: sources.filter(s => s.scrapeStatus === "success" && s.contentLength >= MIN_USABLE_CONTENT_LENGTH).length,
+      failedSources: sources.filter(s => s.scrapeStatus === "failed").length,
+      emptyContentSources: sources.filter(s => s.scrapeStatus === "empty").length,
+    };
+
+    console.log("[agent] Evidence metrics:", JSON.stringify(metrics));
+
+    // Build source summary (without full markdown) for status display
+    const sourceSummary = sources.map(s => ({
+      sourceUrl: s.sourceUrl,
+      finalUrl: s.finalUrl,
+      title: s.title,
+      publisher: s.publisher,
+      contentLength: s.contentLength,
+      resolveStatus: s.resolveStatus,
+      scrapeStatus: s.scrapeStatus,
+      error: s.error,
+    }));
+
+    // Step 3: Synthesis quality gate
+    const usableSources = sources.filter(s => s.scrapeStatus === "success" && s.contentLength >= MIN_USABLE_CONTENT_LENGTH);
+
+    if (usableSources.length === 0) {
+      // No usable evidence — do not synthesize
+      console.log("[agent] No usable article content — returning low-evidence result");
+      await svc.from("mcp_jobs").update({
+        status: "completed",
+        output: {
+          step: "completed",
+          synthesis: null,
+          groundedness: "none",
+          warning: "No usable article content could be extracted. All sources either failed to scrape, returned empty content, or were redirect/RSS URLs that could not be resolved to final articles.",
+          evidenceMetrics: metrics,
+          sources: sourceSummary,
+          scrapedCount: metrics.sourcesScrapedSuccessfully,
+        },
+      }).eq("id", jobId);
+      return;
+    }
+
+    const isWeakEvidence = usableSources.length <= 1 || usableSources.length < collectedCount * 0.3;
+
+    await svc.from("mcp_jobs").update({
+      output: {
+        step: "synthesizing",
+        scrapedCount: metrics.sourcesScrapedSuccessfully,
+        evidenceMetrics: metrics,
+        sources: sourceSummary,
+      },
+    }).eq("id", jobId);
+
+    // Build evidence text from usable sources only
+    const evidenceText = usableSources.map(s =>
+      `# ${s.title}\nSource: ${s.publisher} (${s.finalUrl})\n\n${s.markdown}`
+    ).join("\n\n---\n\n");
+
+    const synthesisInstructions = [
+      "You are a research agent that synthesizes information ONLY from the provided source evidence.",
+      "CRITICAL RULES:",
+      "1. Base ALL findings exclusively on the provided scraped article content below.",
+      "2. Do NOT substitute your own background knowledge when the evidence is insufficient.",
+      "3. If the provided evidence does not adequately address the research prompt, explicitly state that the evidence is insufficient rather than filling gaps with general knowledge.",
+      "4. Clearly distinguish between claims directly supported by the evidence and any contextual framing.",
+      "5. Cite specific sources by title/publisher when making claims.",
+      schema ? `6. Return valid JSON matching this schema: ${schema}` : "6. Provide a comprehensive, well-structured markdown response.",
+      isWeakEvidence ? `\nNOTE: Evidence quality is LOW — only ${usableSources.length} of ${collectedCount} sources yielded usable article content. Acknowledge this limitation in your response.` : "",
+    ].filter(Boolean).join("\n");
 
     const aiRes = await fetch(`${aiSettings.baseUrl}/chat/completions`, {
       method: "POST",
@@ -403,8 +573,8 @@ async function processAgentJob(jobId: string, args: Record<string, unknown>, aiS
       body: JSON.stringify({
         model: aiSettings.model,
         messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: `Research prompt: ${prompt}\n\n---SCRAPED CONTENT---\n\n${scrapedContent.join("\n\n---\n\n")}` },
+          { role: "system", content: synthesisInstructions },
+          { role: "user", content: `Research prompt: ${prompt}\n\n---SOURCE EVIDENCE (${usableSources.length} articles)---\n\n${evidenceText}` },
         ],
         max_tokens: 8192,
       }),
@@ -418,12 +588,19 @@ async function processAgentJob(jobId: string, args: Record<string, unknown>, aiS
     const aiData = await aiRes.json();
     const answer = aiData.choices?.[0]?.message?.content;
 
+    const groundedness = usableSources.length >= 3 ? "high" : usableSources.length >= 2 ? "medium" : "low";
+
     await svc.from("mcp_jobs").update({
-      status: "completed",
+      status: isWeakEvidence ? "completed" : "completed",
       output: {
+        step: "completed",
         synthesis: answer || "No response from AI",
-        sourcesUsed: successfulUrls,
-        scrapedCount: successfulUrls.length,
+        groundedness,
+        ...(isWeakEvidence ? { warning: `Only ${usableSources.length} of ${collectedCount} sources yielded usable article content. Synthesis may have limited grounding.` } : {}),
+        evidenceMetrics: metrics,
+        sources: sourceSummary,
+        sourcesUsed: usableSources.map(s => s.finalUrl),
+        scrapedCount: metrics.sourcesScrapedSuccessfully,
       },
     }).eq("id", jobId);
   } catch (err) {
@@ -433,8 +610,6 @@ async function processAgentJob(jobId: string, args: Record<string, unknown>, aiS
     }).eq("id", jobId);
   }
 }
-
-// ========== Job creation helper ==========
 async function createJob(
   authHeader: string | null,
   type: string,

@@ -24,6 +24,26 @@ import type { ActivityStep } from "./ActivityLog";
 
 /* ── Types ─────────────────────────────────────────── */
 
+interface SourceInfo {
+  sourceUrl?: string;
+  finalUrl?: string;
+  title?: string;
+  publisher?: string;
+  contentLength?: number;
+  resolveStatus?: string;
+  scrapeStatus?: string;
+  error?: string;
+}
+
+interface EvidenceMetrics {
+  sourcesCollected?: number;
+  sourcesResolved?: number;
+  sourcesScrapedSuccessfully?: number;
+  sourcesUsableForSynthesis?: number;
+  failedSources?: number;
+  emptyContentSources?: number;
+}
+
 interface AgentJobData {
   jobId?: string;
   type?: string;
@@ -35,6 +55,10 @@ interface AgentJobData {
   result?: unknown;
   error?: string;
   sourcesUsed?: string[];
+  sources?: SourceInfo[];
+  evidenceMetrics?: EvidenceMetrics;
+  groundedness?: string;
+  warning?: string;
 }
 
 interface AgentJobMonitorProps {
@@ -68,25 +92,23 @@ function parseAgentData(result: ToolCallResult | null): AgentJobData | null {
   try {
     const raw = result.content[0].text;
     let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      // If the text isn't JSON at all, wrap it
-      return null;
-    }
+    try { parsed = JSON.parse(raw); } catch { return null; }
     if (typeof parsed !== "object" || parsed === null) return null;
 
-    // Handle nested { result: { ... } } wrapper from MCP response
     const obj = parsed as Record<string, unknown>;
     const data = (typeof obj.result === "object" && obj.result !== null ? obj.result : obj) as Record<string, unknown>;
 
     const sourcesRaw = data.sourcesUsed ?? data.sources_used;
     const sourcesUsed = Array.isArray(sourcesRaw) ? sourcesRaw.filter((s): s is string => typeof s === "string") : undefined;
 
-    const scrapedRaw = data.scrapedCount ?? data.scraped_count ?? data.scraped_sources;
-    const scrapedCount = typeof scrapedRaw === "number"
-      ? scrapedRaw
-      : sourcesUsed?.length ?? undefined;
+    const sourcesDetailRaw = data.sources ?? data.source_details;
+    const sources = Array.isArray(sourcesDetailRaw) ? sourcesDetailRaw as SourceInfo[] : undefined;
+
+    const metricsRaw = data.evidenceMetrics ?? data.evidence_metrics;
+    const evidenceMetrics = (typeof metricsRaw === "object" && metricsRaw !== null) ? metricsRaw as EvidenceMetrics : undefined;
+
+    const scrapedRaw = data.scrapedCount ?? data.scraped_count;
+    const scrapedCount = typeof scrapedRaw === "number" ? scrapedRaw : sourcesUsed?.length ?? undefined;
 
     return {
       jobId: String(data.jobId ?? data.job_id ?? data.id ?? ""),
@@ -99,6 +121,10 @@ function parseAgentData(result: ToolCallResult | null): AgentJobData | null {
       result: data.result ?? data.output ?? data.synthesis,
       error: typeof data.error === "string" ? data.error : undefined,
       sourcesUsed,
+      sources,
+      evidenceMetrics,
+      groundedness: typeof data.groundedness === "string" ? data.groundedness : undefined,
+      warning: typeof data.warning === "string" ? data.warning : undefined,
     };
   } catch {
     return null;
@@ -507,6 +533,42 @@ export function AgentJobMonitor({
                 />
               </div>
 
+              {/* Evidence quality metrics */}
+              {data.evidenceMetrics && (
+                <div className="rounded-md border border-border bg-muted/10 p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Evidence Quality</p>
+                    {data.groundedness && (
+                      <span className={cn(
+                        "text-[10px] font-mono uppercase px-2 py-0.5 rounded-full border",
+                        data.groundedness === "high" && "border-cyber-green/40 text-cyber-green bg-cyber-green/10",
+                        data.groundedness === "medium" && "border-cyber-amber/40 text-cyber-amber bg-cyber-amber/10",
+                        data.groundedness === "low" && "border-cyber-red/40 text-cyber-red bg-cyber-red/10",
+                        data.groundedness === "none" && "border-cyber-red/40 text-cyber-red bg-cyber-red/10",
+                      )}>
+                        {data.groundedness} groundedness
+                      </span>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-xs font-mono">
+                    <div><span className="text-muted-foreground">Collected:</span> {data.evidenceMetrics.sourcesCollected ?? "—"}</div>
+                    <div><span className="text-muted-foreground">Resolved:</span> {data.evidenceMetrics.sourcesResolved ?? "—"}</div>
+                    <div><span className="text-muted-foreground">Scraped:</span> {data.evidenceMetrics.sourcesScrapedSuccessfully ?? "—"}</div>
+                    <div><span className="text-muted-foreground">Usable:</span> {data.evidenceMetrics.sourcesUsableForSynthesis ?? "—"}</div>
+                    <div><span className="text-muted-foreground">Failed:</span> {data.evidenceMetrics.failedSources ?? "—"}</div>
+                    <div><span className="text-muted-foreground">Empty:</span> {data.evidenceMetrics.emptyContentSources ?? "—"}</div>
+                  </div>
+                </div>
+              )}
+
+              {/* Warning banner */}
+              {data.warning && (
+                <div className="rounded-md border border-cyber-amber/30 bg-cyber-amber/5 p-3 flex items-start gap-2">
+                  <AlertCircle className="h-3.5 w-3.5 text-cyber-amber mt-0.5 flex-shrink-0" />
+                  <p className="text-xs text-cyber-amber/90">{data.warning}</p>
+                </div>
+              )}
+
               {/* Timestamps row */}
               {(data.createdAt || data.updatedAt) && (
                 <div className="flex gap-4 text-[10px] font-mono text-muted-foreground/60">
@@ -515,21 +577,52 @@ export function AgentJobMonitor({
                 </div>
               )}
 
-              {/* Sources list */}
-              {data.sourcesUsed && data.sourcesUsed.length > 0 && (
+              {/* Sources list — rich rendering */}
+              {data.sources && data.sources.length > 0 && (
+                <div className="rounded-md border border-border bg-muted/10 p-3">
+                  <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">
+                    Sources ({data.sources.length})
+                  </p>
+                  <div className="space-y-2">
+                    {data.sources.map((src, i) => (
+                      <div key={i} className="flex items-start gap-2 text-xs font-mono border-b border-border/50 pb-1.5 last:border-0 last:pb-0">
+                        <span className={cn(
+                          "mt-0.5 h-2 w-2 rounded-full flex-shrink-0",
+                          src.scrapeStatus === "success" && "bg-cyber-green",
+                          src.scrapeStatus === "empty" && "bg-cyber-amber",
+                          src.scrapeStatus === "failed" && "bg-cyber-red",
+                        )} />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-foreground/80 truncate">{src.title || src.publisher || "Unknown"}</span>
+                            {src.publisher && <span className="text-muted-foreground/50 text-[10px] flex-shrink-0">{src.publisher}</span>}
+                          </div>
+                          <a href={src.finalUrl || src.sourceUrl} target="_blank" rel="noopener noreferrer"
+                            className="text-primary/60 hover:text-primary truncate block text-[10px]">
+                            {src.finalUrl || src.sourceUrl}
+                          </a>
+                          <div className="flex gap-3 text-[10px] text-muted-foreground/50 mt-0.5">
+                            {src.contentLength != null && <span>{src.contentLength} chars</span>}
+                            {src.resolveStatus === "resolved" && <span className="text-cyber-green/60">redirected</span>}
+                            {src.error && <span className="text-cyber-red/60">{src.error}</span>}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Fallback: plain URL list if no rich sources */}
+              {!data.sources && data.sourcesUsed && data.sourcesUsed.length > 0 && (
                 <div className="rounded-md border border-border bg-muted/10 p-3">
                   <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">
                     Sources Used ({data.sourcesUsed.length})
                   </p>
                   <div className="space-y-1">
                     {data.sourcesUsed.map((url, i) => (
-                      <a
-                        key={i}
-                        href={url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="block text-xs font-mono text-primary/80 hover:text-primary truncate"
-                      >
+                      <a key={i} href={url} target="_blank" rel="noopener noreferrer"
+                        className="block text-xs font-mono text-primary/80 hover:text-primary truncate">
                         {url}
                       </a>
                     ))}
