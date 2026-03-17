@@ -270,8 +270,9 @@ app.post("/*", async (c) => {
   const denied = checkMcpSecret(c);
   if (denied) return denied;
 
-  currentGithubToken = c.req.header("x-github-token") || null;
-  currentAuthHeader = c.req.header("authorization") || null;
+  // Request-scoped tokens — never store at module level
+  const authHeader = c.req.header("authorization") || null;
+  const githubToken = c.req.header("x-github-token") || null;
 
   try {
     const body = await c.req.json();
