@@ -23,13 +23,14 @@ export type ToolAction =
 export interface IntentResult {
   actions: ToolAction[];
   reasoning: string;
-  synthesize: boolean; // whether to run a synthesis step after tools
+  synthesize: boolean;
+  /** If set, this is a local-only message — skip tool execution entirely */
+  localMessage?: string;
 }
 
 const URL_REGEX = /https?:\/\/[^\s<>"']+/gi;
 const UUID_REGEX = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
-// Keywords that strongly signal evidence-needed queries
 const EVIDENCE_KEYWORDS = [
   "latest", "newest", "recent", "current", "today", "2024", "2025", "2026",
   "top", "best", "ranking", "compare", "comparison", "versus", "vs",
@@ -44,15 +45,34 @@ const EVIDENCE_KEYWORDS = [
 const CASUAL_PATTERNS = [
   /^(hi|hello|hey|thanks|thank you|ok|okay|cool|great|nice|got it|sure|yes|no|bye|help)\s*[.!?]*$/i,
   /^(what can you do|how do you work|what tools|what are your capabilities)/i,
-  /^(explain|teach me|how does .* work|what is the difference between)/i,
 ];
 
-function extractUrls(text: string): string[] {
-  return [...text.matchAll(URL_REGEX)].map(m => m[0]);
+// ========== Job type memory ==========
+export type JobType = "crawl" | "batch_scrape" | "agent";
+const recentJobs = new Map<string, JobType>();
+
+export function registerJob(jobId: string, type: JobType) {
+  recentJobs.set(jobId, type);
+  // Prune if too large
+  if (recentJobs.size > 50) {
+    const oldest = recentJobs.keys().next().value;
+    if (oldest) recentJobs.delete(oldest);
+  }
 }
 
-function isJobId(text: string): boolean {
-  return UUID_REGEX.test(text.trim());
+export function getJobType(jobId: string): JobType | undefined {
+  return recentJobs.get(jobId);
+}
+
+const STATUS_TOOL_MAP: Record<JobType, "check_crawl_status" | "check_batch_status" | "agent_status"> = {
+  crawl: "check_crawl_status",
+  batch_scrape: "check_batch_status",
+  agent: "agent_status",
+};
+
+// ========== Helpers ==========
+function extractUrls(text: string): string[] {
+  return [...text.matchAll(URL_REGEX)].map(m => m[0]);
 }
 
 function looksLikeHtml(text: string): boolean {
@@ -73,6 +93,13 @@ function isScreenshotRequest(text: string): boolean {
   return lower.includes("screenshot") || lower.includes("capture") || lower.includes("take a picture of");
 }
 
+function isJsRenderRequest(text: string): boolean {
+  const lower = text.toLowerCase();
+  return lower.includes("js") || lower.includes("javascript") || lower.includes("spa") ||
+    lower.includes("react") || lower.includes("dynamic") || lower.includes("client-side") ||
+    lower.includes("rendered");
+}
+
 function isCrawlRequest(text: string): boolean {
   const lower = text.toLowerCase();
   return lower.includes("crawl") || lower.includes("all pages") || lower.includes("entire site") || lower.includes("whole website");
@@ -91,16 +118,14 @@ function isExtractRequest(text: string): boolean {
 function isDeepResearchRequest(text: string): boolean {
   const lower = text.toLowerCase();
   return (
-    lower.includes("research") || lower.includes("analyze") || lower.includes("deep dive") ||
-    lower.includes("comprehensive") || lower.includes("investigate") || lower.includes("detailed report") ||
-    lower.includes("synthesis") || lower.includes("write a report")
+    lower.includes("deep dive") || lower.includes("comprehensive") ||
+    lower.includes("detailed report") || lower.includes("write a report") ||
+    lower.includes("in-depth analysis")
   );
 }
 
-/**
- * Parse slash commands. Returns null if input is not a slash command.
- */
-function parseSlashCommand(text: string): IntentResult | null {
+// ========== Slash commands ==========
+function parseSlashCommand(text: string, rendererAvailable: boolean): IntentResult | null {
   const match = text.match(/^\/(\w+)\s*([\s\S]*)/);
   if (!match) return null;
 
@@ -109,197 +134,183 @@ function parseSlashCommand(text: string): IntentResult | null {
 
   switch (cmd) {
     case "search":
+      if (!arg) return { actions: [], reasoning: "", synthesize: false, localMessage: "Usage: `/search <query>`" };
       return { actions: [{ tool: "search", args: { query: arg } }], reasoning: "Slash command: /search", synthesize: false };
+
     case "scrape":
+      if (!arg) return { actions: [], reasoning: "", synthesize: false, localMessage: "Usage: `/scrape <url>`" };
       return { actions: [{ tool: "scrape", args: { url: arg } }], reasoning: "Slash command: /scrape", synthesize: false };
+
     case "scrape_js":
+      if (!rendererAvailable) return { actions: [], reasoning: "", synthesize: false, localMessage: "⚠️ JS renderer is not configured. Enable it in Settings → Renderer to use /scrape_js." };
+      if (!arg) return { actions: [], reasoning: "", synthesize: false, localMessage: "Usage: `/scrape_js <url>`" };
       return { actions: [{ tool: "scrape_js", args: { url: arg } }], reasoning: "Slash command: /scrape_js", synthesize: false };
+
     case "crawl":
+      if (!arg) return { actions: [], reasoning: "", synthesize: false, localMessage: "Usage: `/crawl <url>`" };
       return { actions: [{ tool: "crawl", args: { url: arg } }], reasoning: "Slash command: /crawl", synthesize: false };
+
     case "map":
+      if (!arg) return { actions: [], reasoning: "", synthesize: false, localMessage: "Usage: `/map <url>`" };
       return { actions: [{ tool: "map", args: { url: arg } }], reasoning: "Slash command: /map", synthesize: false };
+
     case "extract": {
       const urls = extractUrls(arg);
       const prompt = arg.replace(URL_REGEX, "").trim();
-      if (urls.length > 0) {
-        return { actions: [{ tool: "extract", args: { url: urls[0], prompt: prompt || "Extract key data" } }], reasoning: "Slash command: /extract", synthesize: false };
-      }
-      return { actions: [{ tool: "chat", args: { message: "The /extract command requires a URL and a prompt. Usage: /extract https://example.com Extract all prices" } }], reasoning: "Missing URL for /extract", synthesize: false };
+      if (urls.length === 0) return { actions: [], reasoning: "", synthesize: false, localMessage: "Usage: `/extract <url> <prompt>`\nExample: `/extract https://example.com Extract all product prices`" };
+      return { actions: [{ tool: "extract", args: { url: urls[0], prompt: prompt || "Extract key data" } }], reasoning: "Slash command: /extract", synthesize: false };
     }
+
     case "screenshot":
+      if (!rendererAvailable) return { actions: [], reasoning: "", synthesize: false, localMessage: "⚠️ JS renderer is not configured. Enable it in Settings → Renderer to use /screenshot." };
+      if (!arg) return { actions: [], reasoning: "", synthesize: false, localMessage: "Usage: `/screenshot <url>`" };
       return { actions: [{ tool: "screenshot", args: { url: arg } }], reasoning: "Slash command: /screenshot", synthesize: false };
-    case "batch": {
-      const urls = arg.split(",").map(u => u.trim()).filter(Boolean);
-      return { actions: [{ tool: "batch_scrape", args: { urls: urls.join(", ") } }], reasoning: "Slash command: /batch", synthesize: false };
-    }
-    case "html":
-      return { actions: [{ tool: "html_to_markdown", args: { html: arg } }], reasoning: "Slash command: /html", synthesize: false };
-    case "status": {
-      // Try to guess which status tool based on context
-      if (UUID_REGEX.test(arg)) {
-        return { actions: [{ tool: "agent_status", args: { jobId: arg.match(UUID_REGEX)![0] } }], reasoning: "Slash command: /status — trying agent_status first", synthesize: false };
-      }
-      return { actions: [{ tool: "chat", args: { message: "The /status command requires a job ID (UUID)." } }], reasoning: "Missing job ID", synthesize: false };
-    }
-    case "agent":
-      return { actions: [{ tool: "agent", args: { prompt: arg } }], reasoning: "Slash command: /agent", synthesize: false };
+
     case "search_and_scrape":
-      return { actions: [{ tool: "search_and_scrape", args: { query: arg } }], reasoning: "Slash command: /search_and_scrape", synthesize: false };
+      if (!arg) return { actions: [], reasoning: "", synthesize: false, localMessage: "Usage: `/search_and_scrape <query>`" };
+      return { actions: [{ tool: "search_and_scrape", args: { query: arg, maxResults: 3 } }], reasoning: "Slash command: /search_and_scrape", synthesize: false };
+
+    case "batch": {
+      if (!arg) return { actions: [], reasoning: "", synthesize: false, localMessage: "Usage: `/batch <url1>, <url2>, ...`" };
+      return { actions: [{ tool: "batch_scrape", args: { urls: arg } }], reasoning: "Slash command: /batch", synthesize: false };
+    }
+
+    case "html":
+      if (!arg) return { actions: [], reasoning: "", synthesize: false, localMessage: "Usage: `/html <raw html>`" };
+      return { actions: [{ tool: "html_to_markdown", args: { html: arg } }], reasoning: "Slash command: /html", synthesize: false };
+
+    case "status": {
+      const uuidMatch = arg.match(UUID_REGEX);
+      if (!uuidMatch) return { actions: [], reasoning: "", synthesize: false, localMessage: "Usage: `/status <job-uuid>`" };
+      const jobId = uuidMatch[0];
+      const knownType = getJobType(jobId);
+      if (knownType) {
+        return { actions: [{ tool: STATUS_TOOL_MAP[knownType], args: { jobId } }], reasoning: `Slash command: /status → known ${knownType} job`, synthesize: false };
+      }
+      // Fallback: try agent_status (most common)
+      return { actions: [{ tool: "agent_status", args: { jobId } }], reasoning: "Slash command: /status → unknown job type, trying agent_status", synthesize: false };
+    }
+
+    case "agent":
+      if (!arg) return { actions: [], reasoning: "", synthesize: false, localMessage: "Usage: `/agent <research prompt>`" };
+      return { actions: [{ tool: "agent", args: { prompt: arg } }], reasoning: "Slash command: /agent", synthesize: false };
+
     case "chat":
+      if (!arg) return { actions: [], reasoning: "", synthesize: false, localMessage: "Usage: `/chat <message>`" };
       return { actions: [{ tool: "chat", args: { message: arg } }], reasoning: "Slash command: /chat — direct chat mode", synthesize: false };
+
     default:
-      return null;
+      return { actions: [], reasoning: "", synthesize: false, localMessage: `Unknown command: /${cmd}. Type / to see available commands.` };
   }
 }
 
 /**
- * Classify user intent into one or more tool actions.
+ * Classify user intent into tool actions.
  */
 export function classifyIntent(
   text: string,
   history: Array<{ role: string; content: string }> = [],
   options: { rendererAvailable: boolean } = { rendererAvailable: false }
 ): IntentResult {
-  // 1. Slash commands take absolute priority
-  const slashResult = parseSlashCommand(text);
+  // 1. Slash commands
+  const slashResult = parseSlashCommand(text, options.rendererAvailable);
   if (slashResult) return slashResult;
 
   const urls = extractUrls(text);
   const textWithoutUrls = text.replace(URL_REGEX, "").trim();
 
-  // 2. Raw HTML input
+  // 2. Raw HTML
   if (looksLikeHtml(text) && urls.length === 0) {
-    return {
-      actions: [{ tool: "html_to_markdown", args: { html: text } }],
-      reasoning: "Input contains HTML markup → converting to markdown",
-      synthesize: false,
-    };
+    return { actions: [{ tool: "html_to_markdown", args: { html: text } }], reasoning: "Input contains HTML markup → converting to markdown", synthesize: false };
   }
 
-  // 3. Job ID status check
-  if (isJobId(text.trim()) && textWithoutUrls.length < 50) {
-    const jobId = text.trim().match(UUID_REGEX)![0];
-    // Check last conversation context for which type of job
+  // 3. Job UUID
+  const uuidMatch = text.trim().match(UUID_REGEX);
+  if (uuidMatch && textWithoutUrls.replace(UUID_REGEX, "").trim().length < 30) {
+    const jobId = uuidMatch[0];
+    const knownType = getJobType(jobId);
+    if (knownType) {
+      return { actions: [{ tool: STATUS_TOOL_MAP[knownType], args: { jobId } }], reasoning: `Job ID detected → ${knownType} status (from memory)`, synthesize: false };
+    }
+    // Heuristic fallback from conversation history
     const lastToolMention = [...history].reverse().find(m =>
-      m.content.includes("agent") || m.content.includes("crawl") || m.content.includes("batch")
+      m.content.includes("crawl") || m.content.includes("batch") || m.content.includes("agent")
     );
-    if (lastToolMention?.content.includes("crawl")) {
-      return { actions: [{ tool: "check_crawl_status", args: { jobId } }], reasoning: "Job ID detected + crawl context → checking crawl status", synthesize: false };
+    if (lastToolMention?.content.toLowerCase().includes("crawl")) {
+      return { actions: [{ tool: "check_crawl_status", args: { jobId } }], reasoning: "Job ID + crawl context → check_crawl_status", synthesize: false };
     }
-    if (lastToolMention?.content.includes("batch")) {
-      return { actions: [{ tool: "check_batch_status", args: { jobId } }], reasoning: "Job ID detected + batch context → checking batch status", synthesize: false };
+    if (lastToolMention?.content.toLowerCase().includes("batch")) {
+      return { actions: [{ tool: "check_batch_status", args: { jobId } }], reasoning: "Job ID + batch context → check_batch_status", synthesize: false };
     }
-    return { actions: [{ tool: "agent_status", args: { jobId } }], reasoning: "Job ID detected → checking agent status (default)", synthesize: false };
+    return { actions: [{ tool: "agent_status", args: { jobId } }], reasoning: "Job ID detected → agent_status (default)", synthesize: false };
   }
 
-  // 4. Screenshot request with URL
+  // 4. Screenshot + URL
   if (isScreenshotRequest(text) && urls.length > 0) {
     if (!options.rendererAvailable) {
-      return {
-        actions: [{ tool: "chat", args: { message: "⚠️ Screenshot tool requires the JS renderer to be configured. Go to Settings → Renderer to set it up." } }],
-        reasoning: "Screenshot requested but renderer unavailable",
-        synthesize: false,
-      };
+      return { actions: [], reasoning: "", synthesize: false, localMessage: "⚠️ Screenshot requires the JS renderer. It's not currently configured. Go to Settings → Renderer to enable it." };
     }
-    return { actions: [{ tool: "screenshot", args: { url: urls[0] } }], reasoning: "Screenshot request with URL → screenshot tool", synthesize: false };
+    return { actions: [{ tool: "screenshot", args: { url: urls[0] } }], reasoning: "Screenshot request + URL → screenshot", synthesize: false };
   }
 
-  // 5. Extract request with URL
+  // 5. JS render request + URL
+  if (isJsRenderRequest(text) && urls.length > 0) {
+    if (!options.rendererAvailable) {
+      return { actions: [], reasoning: "", synthesize: false, localMessage: "⚠️ JS rendering requires the headless browser renderer. It's not currently configured. Go to Settings → Renderer to enable it. You can still use `/scrape` for static pages." };
+    }
+    return { actions: [{ tool: "scrape_js", args: { url: urls[0] } }], reasoning: "JS-rendered content request + URL → scrape_js", synthesize: false };
+  }
+
+  // 6. Extract + URL
   if (isExtractRequest(text) && urls.length > 0) {
-    return {
-      actions: [{ tool: "extract", args: { url: urls[0], prompt: textWithoutUrls || "Extract key structured data" } }],
-      reasoning: "Extract request with URL → extract tool",
-      synthesize: false,
-    };
+    return { actions: [{ tool: "extract", args: { url: urls[0], prompt: textWithoutUrls || "Extract key structured data" } }], reasoning: "Extraction request + URL → extract", synthesize: false };
   }
 
-  // 6. Crawl request with URL
+  // 7. Crawl + URL
   if (isCrawlRequest(text) && urls.length > 0) {
-    return {
-      actions: [{ tool: "crawl", args: { url: urls[0] } }],
-      reasoning: "Crawl request with URL → crawl tool",
-      synthesize: false,
-    };
+    return { actions: [{ tool: "crawl", args: { url: urls[0] } }], reasoning: "Crawl request + URL → crawl", synthesize: false };
   }
 
-  // 7. Map request with URL
+  // 8. Map + URL
   if (isMapRequest(text) && urls.length > 0) {
-    return {
-      actions: [{ tool: "map", args: { url: urls[0] } }],
-      reasoning: "Map/sitemap request with URL → map tool",
-      synthesize: false,
-    };
+    return { actions: [{ tool: "map", args: { url: urls[0] } }], reasoning: "Map request + URL → map", synthesize: false };
   }
 
-  // 8. Multiple URLs → batch scrape
+  // 9. Multiple URLs → batch
   if (urls.length >= 2) {
-    return {
-      actions: [{ tool: "batch_scrape", args: { urls: urls.join(", ") } }],
-      reasoning: `${urls.length} URLs detected → batch scrape`,
-      synthesize: false,
-    };
+    return { actions: [{ tool: "batch_scrape", args: { urls: urls.join(", ") } }], reasoning: `${urls.length} URLs → batch_scrape`, synthesize: false };
   }
 
-  // 9. Single URL with no special intent → scrape
+  // 10. Single URL only → scrape
   if (urls.length === 1 && textWithoutUrls.length < 20) {
-    return {
-      actions: [{ tool: "scrape", args: { url: urls[0] } }],
-      reasoning: "Single URL detected → scraping page",
-      synthesize: false,
-    };
+    return { actions: [{ tool: "scrape", args: { url: urls[0] } }], reasoning: "Single URL → scrape", synthesize: false };
   }
 
-  // 10. Single URL + question → scrape then synthesize
+  // 11. Single URL + question → scrape then synthesize
   if (urls.length === 1 && textWithoutUrls.length >= 20) {
-    return {
-      actions: [
-        { tool: "scrape", args: { url: urls[0] } },
-      ],
-      reasoning: "URL + question → scraping page, then synthesizing answer",
-      synthesize: true,
-    };
+    return { actions: [{ tool: "scrape", args: { url: urls[0] } }], reasoning: "URL + question → scrape, then synthesize", synthesize: true };
   }
 
-  // 11. Deep research request → agent
+  // 12. Deep research → agent
   if (isDeepResearchRequest(text)) {
-    return {
-      actions: [{ tool: "agent", args: { prompt: text } }],
-      reasoning: "Deep research request → launching agent",
-      synthesize: false,
-    };
+    return { actions: [{ tool: "agent", args: { prompt: text } }], reasoning: "Deep research request → agent", synthesize: false };
   }
 
-  // 12. Casual/conversational → chat directly
+  // 13. Casual → chat
   if (isCasual(text)) {
-    return {
-      actions: [{ tool: "chat", args: { message: text } }],
-      reasoning: "Casual conversation → direct chat",
-      synthesize: false,
-    };
+    return { actions: [{ tool: "chat", args: { message: text } }], reasoning: "Casual conversation → chat", synthesize: false };
   }
 
-  // 13. Evidence-needed factual question → search first, then synthesize
+  // 14. Evidence-needed → search FIRST (cheap), then synthesize
   if (needsEvidence(text)) {
-    return {
-      actions: [{ tool: "search_and_scrape", args: { query: text, maxResults: 3 } }],
-      reasoning: "Factual/current question → searching web and scraping top results for evidence",
-      synthesize: true,
-    };
+    return { actions: [{ tool: "search", args: { query: text, maxResults: 10 } }], reasoning: "Factual/current question → search first for evidence", synthesize: true };
   }
 
-  // 14. Default: for any non-trivial question, search first to ground the answer
-  if (text.length > 30 && (text.includes("?") || text.endsWith("."))) {
-    return {
-      actions: [{ tool: "search", args: { query: text } }],
-      reasoning: "Question detected → searching for evidence first",
-      synthesize: true,
-    };
+  // 15. Non-trivial question → search first
+  if (text.length > 30 && (text.includes("?") || /\b(what|who|when|where|why|how|which|tell me|give me|show me)\b/i.test(text))) {
+    return { actions: [{ tool: "search", args: { query: text, maxResults: 8 } }], reasoning: "Question detected → search for evidence first", synthesize: true };
   }
 
-  // 15. Fallback → chat
-  return {
-    actions: [{ tool: "chat", args: { message: text } }],
-    reasoning: "General message → chat",
-    synthesize: false,
-  };
+  // 16. Fallback → chat
+  return { actions: [{ tool: "chat", args: { message: text } }], reasoning: "General message → chat", synthesize: false };
 }
