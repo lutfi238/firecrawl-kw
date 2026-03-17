@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { StatusBadge } from "./StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
