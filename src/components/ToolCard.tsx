@@ -1,7 +1,7 @@
 import { GlassCard } from "./GlassCard";
 import {
   Search, FileText, Globe, Network, Map, Brain, Camera,
-  SearchCode, Code, Layers,
+  SearchCode, Code, Layers, Timer, Bot, MessageSquare,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
