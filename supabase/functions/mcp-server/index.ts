@@ -443,10 +443,22 @@ async function processAgentJob(jobId: string, args: Record<string, unknown>, aiS
       }
     }
 
-    // No fallback to generic homepages — if search returned nothing, proceed with empty
-    // and let the quality gate handle it
+    // No fallback to generic homepages — return early with low-evidence result
     if (discoveredUrls.length === 0) {
-      console.log("[agent] No URLs discovered — will return low-evidence result");
+      console.log("[agent] No URLs discovered — returning low-evidence result immediately");
+      await svc.from("mcp_jobs").update({
+        status: "completed",
+        output: {
+          step: "completed",
+          synthesis: null,
+          groundedness: "none",
+          warning: "Web search returned no relevant URLs for this query. No article content could be collected or synthesized.",
+          evidenceMetrics: { sourcesCollected: 0, sourcesResolved: 0, sourcesScrapedSuccessfully: 0, sourcesUsableForSynthesis: 0, failedSources: 0, emptyContentSources: 0 },
+          sources: [],
+          scrapedCount: 0,
+        },
+      }).eq("id", jobId);
+      return;
     }
 
     discoveredUrls = discoveredUrls.slice(0, maxSteps);
