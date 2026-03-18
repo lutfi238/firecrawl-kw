@@ -1137,9 +1137,12 @@ function chatSearchEvidenceHasDepth(evidence: string): boolean {
 async function callAI(
   aiSettings: { baseUrl: string; apiKey: string; model: string },
   systemPrompt: string,
-  userContent: string,
+  userContent: string | Array<{ type: string; text?: string; image_url?: { url: string } }>,
   maxTokens = 4096,
 ): Promise<string> {
+  const userMessage = typeof userContent === "string"
+    ? { role: "user", content: userContent }
+    : { role: "user", content: userContent };
   const res = await fetch(`${aiSettings.baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
@@ -1152,7 +1155,7 @@ async function callAI(
       model: aiSettings.model,
       messages: [
         { role: "system", content: systemPrompt },
-        { role: "user", content: userContent },
+        userMessage,
       ],
       max_tokens: maxTokens,
     }),
