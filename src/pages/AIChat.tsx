@@ -14,7 +14,7 @@ import { ThinkingPanel } from "@/components/ThinkingPanel";
 import { ImageUploadButton } from "@/components/ImageUploadButton";
 import { ImageLightbox } from "@/components/ImageLightbox";
 
-import { classifyIntent, registerJob, type JobType } from "@/lib/intentClassifier";
+import { classifyIntent, registerJob, needsEvidence, type JobType } from "@/lib/intentClassifier";
 import { checkVisionSupport } from "@/lib/visionCapability";
 import { createThumbnail } from "@/lib/imageUtils";
 import { toast } from "sonner";
