@@ -770,12 +770,18 @@ export default function AIChat() {
       </div>
 
       {/* Input bar */}
-      <div className="relative glass rounded-lg p-3 flex gap-2">
+      <div className="relative glass rounded-lg p-3 flex gap-2 items-center">
         <SlashCommandPicker
           input={input}
           visible={showSlashPicker && input.startsWith("/") && !input.includes(" ")}
           onSelect={(cmd) => { setInput(cmd); setShowSlashPicker(false); }}
           onDismiss={() => setShowSlashPicker(false)}
+        />
+        <ImageUploadButton
+          images={pendingImages}
+          onAdd={(imgs) => setPendingImages((prev) => [...prev, ...imgs].slice(0, 4))}
+          onRemove={(i) => setPendingImages((prev) => prev.filter((_, idx) => idx !== i))}
+          disabled={loading}
         />
         <Input
           value={input}
@@ -787,7 +793,7 @@ export default function AIChat() {
             }
             if (e.key === "Enter" && !e.shiftKey) handleSend();
           }}
-          placeholder="Ask anything, paste a URL, or type / for commands..."
+          placeholder={pendingImages.length > 0 ? "Describe image or send as-is..." : "Ask anything, paste a URL, or type / for commands..."}
           className="bg-transparent border-none font-mono text-sm focus-visible:ring-0 focus-visible:ring-offset-0"
           disabled={loading}
         />
@@ -796,11 +802,16 @@ export default function AIChat() {
             <XCircle className="h-4 w-4" />
           </Button>
         ) : (
-          <Button onClick={handleSend} disabled={!input.trim()} size="icon" className="shrink-0 bg-primary text-primary-foreground">
+          <Button onClick={handleSend} disabled={!input.trim() && pendingImages.length === 0} size="icon" className="shrink-0 bg-primary text-primary-foreground">
             <Send className="h-4 w-4" />
           </Button>
         )}
       </div>
+
+      {/* Lightbox */}
+      {lightboxSrc && (
+        <ImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />
+      )}
     </div>
   );
 }
