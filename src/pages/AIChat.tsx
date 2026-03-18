@@ -202,6 +202,10 @@ export default function AIChat() {
     setLoading(false);
     setLoadingStartedAt(null);
     setActivitySteps([]);
+    setIsStreaming(false);
+    setStreamPhase("idle");
+    setStreamingThinking("");
+    setStreamingContent("");
     addMessage({ role: "assistant", content: "⚠️ Request cancelled." });
   }, [addMessage]);
 
