@@ -592,6 +592,7 @@ export default function AIChat() {
                   const thinkingContent = thinkMatch?.[1]?.trim() || null;
                   const cleanContent = msg.content
                     .replace(/<think>[\s\S]*?<\/think>/gi, "")
+                    .replace(/\n---\n\*Orchestration:[\s\S]*?\*$/gm, "")
                     .trim();
                   const totalMs = msg.toolTrace?.reduce((sum, t) => sum + (t.durationMs ?? 0), 0) ?? 0;
                   const usedTools = msg.toolTrace
