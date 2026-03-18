@@ -332,10 +332,19 @@ export default function AIChat() {
 
           if (!escalationResult.isError) {
             const escalationEvidence = normalizeEvidence("search_and_scrape", escalationResult);
-            allEvidence.push({ tool: "search_and_scrape", ...escalationEvidence });
-            combinedEvidence = allEvidence
-              .map(e => `--- Evidence from ${e.tool} ---\n${e.evidence}`)
-              .join("\n\n");
+            const hasUsableContent = escalationEvidence.evidence.length > 200;
+            if (hasUsableContent) {
+              allEvidence.push({ tool: "search_and_scrape", ...escalationEvidence });
+              combinedEvidence = allEvidence
+                .map(e => `--- Evidence from ${e.tool} ---\n${e.evidence}`)
+                .join("\n\n");
+            } else {
+              // Escalation returned no usable content — remove from trace
+              traceSteps.pop();
+            }
+          } else {
+            // Escalation failed — remove from trace
+            traceSteps.pop();
           }
         }
 
