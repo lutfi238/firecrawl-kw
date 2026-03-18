@@ -523,6 +523,7 @@ export default function AIChat() {
                   >
                     {msg.content}
                   </ReactMarkdown>
+                  </div>
                 ) : (
                   <span className="whitespace-pre-wrap break-words">{msg.content}</span>
                 )}
