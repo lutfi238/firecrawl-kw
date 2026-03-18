@@ -48,6 +48,7 @@ export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "tool";
   content: string;
+  images?: string[]; // base64 data URIs
   toolName?: string;
   toolInput?: Record<string, unknown>;
   toolOutput?: ToolCallResult;
