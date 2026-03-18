@@ -15,6 +15,9 @@ import { ImageUploadButton } from "@/components/ImageUploadButton";
 import { ImageLightbox } from "@/components/ImageLightbox";
 
 import { classifyIntent, registerJob, type JobType } from "@/lib/intentClassifier";
+import { checkVisionSupport } from "@/lib/visionCapability";
+import { createThumbnail } from "@/lib/imageUtils";
+import { toast } from "sonner";
 
 // ========== Escalation helpers ==========
 const RANKING_PATTERNS = [
