@@ -3,11 +3,13 @@ import { useMCPServer } from "@/hooks/useMCPServer";
 import { useSettings } from "@/hooks/useSettings";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Send, Loader2, Bot, User, Wrench, XCircle, Search, Globe, Zap } from "lucide-react";
+import { Send, Bot, User, XCircle, Search, Globe, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { ChatMessage, ToolCallResult } from "@/types/mcp";
+import type { ChatMessage, ToolCallResult, ToolTraceStep } from "@/types/mcp";
 import { supabase } from "@/integrations/supabase/client";
 import { SlashCommandPicker } from "@/components/SlashCommandPicker";
+import { ChatActivityIndicator } from "@/components/ChatActivityIndicator";
+import { ToolTraceCollapsible } from "@/components/ToolTraceCollapsible";
 import { classifyIntent, registerJob, type JobType } from "@/lib/intentClassifier";
 
 // ========== Escalation helpers ==========
@@ -22,16 +24,12 @@ function isRankingQuery(text: string): boolean {
   return RANKING_PATTERNS.some(p => p.test(text));
 }
 
-/** Search evidence is considered "deep enough" only if it contains substantial article body text,
- *  not just titles/URLs/snippets. For ranking queries we need actual article content. */
 function searchEvidenceHasDepth(evidence: string): boolean {
-  // Strip out the structured search result lines (titles, URLs)
   const stripped = evidence
     .split("\n")
     .filter(l => !l.match(/^\[?\d+\]/) && !l.match(/^\s*URL:/i) && !l.match(/^---\s/))
     .join(" ")
     .trim();
-  // Need at least 2000 chars of actual prose to consider it deep enough for a ranked answer
   return stripped.length > 2000;
 }
 
@@ -78,7 +76,6 @@ function normalizeEvidence(toolName: string, result: ToolCallResult): Normalized
   const raw = result.content.map(c => c.text ?? "").join("\n");
   const sourceUrls: string[] = [];
 
-  // --- search: JSON array of {title, url, snippet} ---
   if (toolName === "search") {
     try {
       const items = JSON.parse(raw);
@@ -92,17 +89,13 @@ function normalizeEvidence(toolName: string, result: ToolCallResult): Normalized
     } catch { /* fall through */ }
   }
 
-  // --- scrape / scrape_js: markdown prefixed with "# Title\n\n..." ---
   if (toolName === "scrape" || toolName === "scrape_js") {
-    // Extract title from first heading
     const titleMatch = raw.match(/^#\s+(.+)/m);
     const title = titleMatch ? titleMatch[1] : "Scraped page";
-    // Truncate to useful length
     const content = raw.slice(0, 8000);
     return { evidence: `## ${title}\n\n${content}`, sourceUrls };
   }
 
-  // --- search_and_scrape: multiple scraped pages separated by "---" ---
   if (toolName === "search_and_scrape") {
     const sections = raw.split(/\n---\n/).filter(Boolean);
     const normalized = sections.map((section, i) => {
@@ -115,17 +108,14 @@ function normalizeEvidence(toolName: string, result: ToolCallResult): Normalized
     return { evidence: normalized.join("\n\n---\n\n"), sourceUrls };
   }
 
-  // --- extract: AI-generated structured data (often JSON) ---
   if (toolName === "extract") {
     return { evidence: `## Extracted Data\n\n${raw.slice(0, 6000)}`, sourceUrls };
   }
 
-  // --- agent_status: job result with synthesis ---
   if (toolName === "agent_status") {
     try {
       const data = JSON.parse(raw);
       if (data.synthesis) {
-        // Pull source URLs from the job output
         if (Array.isArray(data.sourcesUsed)) sourceUrls.push(...data.sourcesUsed);
         if (Array.isArray(data.sources)) {
           for (const s of data.sources) {
@@ -138,12 +128,10 @@ function normalizeEvidence(toolName: string, result: ToolCallResult): Normalized
           sourceUrls: [...new Set(sourceUrls)],
         };
       }
-      // Still processing or no synthesis
       return { evidence: `Agent job status: ${data.status || "unknown"}\n${JSON.stringify(data, null, 2).slice(0, 4000)}`, sourceUrls };
     } catch { /* fall through */ }
   }
 
-  // --- check_crawl_status / check_batch_status ---
   if (toolName === "check_crawl_status" || toolName === "check_batch_status") {
     try {
       const data = JSON.parse(raw);
@@ -163,7 +151,6 @@ function normalizeEvidence(toolName: string, result: ToolCallResult): Normalized
     } catch { /* fall through */ }
   }
 
-  // --- fallback: extract URLs from raw text ---
   const urlMatches = raw.match(/https?:\/\/[^\s<>"']+/g);
   if (urlMatches) sourceUrls.push(...urlMatches.slice(0, 10));
 
@@ -177,19 +164,17 @@ export default function AIChat() {
   const [loading, setLoading] = useState(false);
   const [loadingStartedAt, setLoadingStartedAt] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
-  const [currentStep, setCurrentStep] = useState("");
+  const [activitySteps, setActivitySteps] = useState<string[]>([]);
   const { callTool } = useMCPServer();
   const { settings } = useSettings();
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const [showSlashPicker, setShowSlashPicker] = useState(false);
 
-  // Auto-scroll on new messages
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages]);
+  }, [messages, activitySteps]);
 
-  // Elapsed timer
   useEffect(() => {
     if (!loading || !loadingStartedAt) return;
     const interval = setInterval(() => setElapsed((Date.now() - loadingStartedAt) / 1000), 100);
@@ -200,11 +185,15 @@ export default function AIChat() {
     setMessages((prev) => [...prev, { ...msg, id: crypto.randomUUID(), timestamp: new Date() }]);
   }, []);
 
+  const pushActivity = useCallback((step: string) => {
+    setActivitySteps((prev) => [...prev, step]);
+  }, []);
+
   const cancel = useCallback(() => {
     abortRef.current?.abort();
     setLoading(false);
     setLoadingStartedAt(null);
-    setCurrentStep("");
+    setActivitySteps([]);
     addMessage({ role: "assistant", content: "⚠️ Request cancelled." });
   }, [addMessage]);
 
@@ -241,12 +230,15 @@ export default function AIChat() {
     abortRef.current = controller;
     setLoading(true);
     setLoadingStartedAt(Date.now());
+    setActivitySteps([]);
+
+    const traceSteps: ToolTraceStep[] = [];
 
     const timeout = setTimeout(() => {
       controller.abort();
       setLoading(false);
       setLoadingStartedAt(null);
-      setCurrentStep("");
+      setActivitySteps([]);
       addMessage({ role: "assistant", content: "⏱️ Request timed out after 60s." });
     }, 60000);
 
@@ -255,7 +247,6 @@ export default function AIChat() {
       const rendererAvailable = settings.renderer_enabled === "true";
       const intent = classifyIntent(text, history, { rendererAvailable });
 
-      // --- Local-only messages (errors, limitations) ---
       if (intent.localMessage) {
         addMessage({ role: "assistant", content: intent.localMessage });
         return;
@@ -266,27 +257,18 @@ export default function AIChat() {
         return;
       }
 
-      // --- Show routing reasoning ---
-      addMessage({ role: "tool", content: `🧭 ${intent.reasoning}`, toolName: "router" });
+      // Activity: routing
+      pushActivity("Routing request…");
 
-      // --- Execute tool actions sequentially, collecting results ---
+      // Execute tool actions, collecting results (no chat bubbles)
       const toolResults: Array<{ tool: string; result: ToolCallResult; duration: number }> = [];
 
       for (const action of intent.actions) {
         if (controller.signal.aborted) break;
 
         const meta = TOOL_META[action.tool] || { icon: "🔧", label: action.tool };
-        setCurrentStep(`${meta.icon} ${meta.label}...`);
+        pushActivity(meta.label);
 
-        // Show tool execution step
-        addMessage({
-          role: "tool",
-          content: `${meta.icon} ${meta.label}...`,
-          toolName: action.tool,
-          toolInput: action.args as Record<string, unknown>,
-        });
-
-        // Inject conversation history for chat tool
         if (action.tool === "chat" && "message" in action.args) {
           (action.args as any).history = history;
         }
@@ -297,13 +279,11 @@ export default function AIChat() {
 
         if (controller.signal.aborted) return;
 
-        // Log to request monitor
         await logToMonitor(action.tool, action.args as Record<string, unknown>, result, duration);
-
-        // Register async jobs for future status lookups
         maybeRegisterJob(action.tool, result);
 
         toolResults.push({ tool: action.tool, result, duration });
+        traceSteps.push({ tool: action.tool, label: meta.label, icon: meta.icon, durationMs: duration });
       }
 
       if (controller.signal.aborted) return;
@@ -316,7 +296,6 @@ export default function AIChat() {
       const lastResult = toolResults[toolResults.length - 1];
 
       // === SYNTHESIS PATH ===
-      // When synthesize=true and we have tool evidence, pass it through AI for a grounded answer
       if (intent.synthesize && !lastResult.result.isError) {
         let allEvidence = toolResults
           .filter(r => r.tool !== "chat")
@@ -329,25 +308,13 @@ export default function AIChat() {
           .map(e => `--- Evidence from ${e.tool} ---\n${e.evidence}`)
           .join("\n\n");
 
-        // === AUTO-ESCALATION ===
-        // If search returned only thin snippets and the query needs ranked/list/comparison data,
-        // escalate to search_and_scrape for deeper evidence before synthesizing.
-        // For ranking/list/comparison queries, search snippets are almost never sufficient.
-        // Always escalate unless the search result already contains deep article-body content.
         const onlySearchSoFar = toolResults.every(r => r.tool === "search");
         const queryNeedsDepth = isRankingQuery(text);
         const alreadyDeep = searchEvidenceHasDepth(combinedEvidence);
         const shouldEscalate = onlySearchSoFar && queryNeedsDepth && !alreadyDeep;
 
-        console.log("[AIChat escalation]", { queryNeedsDepth, onlySearchSoFar, alreadyDeep, shouldEscalate, evidenceLen: combinedEvidence.length });
-
         if (shouldEscalate && !controller.signal.aborted) {
-          setCurrentStep("🔎 Ranking query — escalating to deeper evidence...");
-          addMessage({
-            role: "tool",
-            content: "🔎 Ranking query detected — search snippets insufficient. Escalating to search_and_scrape for article-level evidence...",
-            toolName: "escalation",
-          });
+          pushActivity("Gathering deeper sources…");
 
           const escalationStart = Date.now();
           const escalationResult = await callTool("search_and_scrape", {
@@ -360,6 +327,8 @@ export default function AIChat() {
 
           await logToMonitor("search_and_scrape", { query: text, maxResults: 3 }, escalationResult, escalationDuration);
           maybeRegisterJob("search_and_scrape", escalationResult);
+
+          traceSteps.push({ tool: "search_and_scrape", label: "Searching & scraping", icon: "🔎", durationMs: escalationDuration });
 
           if (!escalationResult.isError) {
             const escalationEvidence = normalizeEvidence("search_and_scrape", escalationResult);
@@ -375,8 +344,7 @@ export default function AIChat() {
         const evidenceIsSubstantial = combinedEvidence.length > 100;
 
         if (evidenceIsSubstantial) {
-          setCurrentStep("💬 Synthesizing grounded answer...");
-          addMessage({ role: "tool", content: "💬 Synthesizing answer from evidence...", toolName: "synthesis" });
+          pushActivity("Synthesizing answer…");
 
           const isRanking = isRankingQuery(text);
           const sourceCount = allSourceUrls.length;
@@ -385,7 +353,7 @@ export default function AIChat() {
             "You are a research assistant. Answer the user's question based ONLY on the evidence provided below.",
             "CRITICAL RULES:",
             "1. Use ONLY the evidence below. Do NOT fill gaps with your own knowledge or training data.",
-            "2. If the evidence is insufficient or does not address the question, explicitly state what was found and what is missing. Do NOT generate a speculative answer.",
+            "2. If the evidence is insufficient or does not address the question, explicitly state what was found and what is missing.",
             "3. Cite sources by title or URL when making claims.",
             "4. Be structured, clear, and concise.",
             "5. If evidence contains conflicting information, note the discrepancy.",
@@ -395,17 +363,12 @@ export default function AIChat() {
 
           const rankingRules = isRanking ? [
             "",
-            "RANKING/COMPARISON ANSWER RULES (this is a ranking or comparison query):",
-            `8. SOURCE STRENGTH: You have evidence from ${sourceCount} source(s). Be explicit about whether a ranking comes from one primary source or multiple independent sources. Do NOT present a single source's ranking as universal consensus.`,
-            "9. SOURCE ROLES: Distinguish between (a) a primary ranking source that provides a numbered list, (b) supporting sources that mention some of the same items, and (c) commentary/benchmark sources. Label which role each source plays.",
-            "10. CATEGORY MIXING: If sources mix foundation models (GPT, Claude, Gemini, Qwen, etc.) with tools/products/agents (Cursor, GitHub Copilot, Devin, etc.), explicitly note the distinction. Do not silently blend them into one list.",
-            "11. CONFIDENCE FRAMING: Use language like 'Based on the scraped sources...', 'One ranking source lists...', 'Supporting sources also mention...'. Never say 'the definitive top 10' or 'universally ranked' unless multiple independent sources agree.",
-            "12. STRUCTURE: Use this format:",
-            "   - Brief qualification about source strength and coverage",
-            "   - The ranked list (attributed to source)",
-            "   - Supporting mentions from other sources",
-            "   - Discrepancies or disagreements between sources",
-            "   - Brief bottom-line conclusion",
+            "RANKING/COMPARISON ANSWER RULES:",
+            `8. SOURCE STRENGTH: You have evidence from ${sourceCount} source(s). Be explicit about whether a ranking comes from one primary source or multiple independent sources.`,
+            "9. SOURCE ROLES: Distinguish between primary ranking sources, supporting sources, and commentary sources.",
+            "10. CATEGORY MIXING: If sources mix foundation models with tools/products, explicitly note the distinction.",
+            "11. CONFIDENCE FRAMING: Use language like 'Based on the scraped sources...' Never say 'the definitive top 10' unless multiple sources agree.",
+            "12. STRUCTURE: Brief qualification → ranked list → supporting mentions → discrepancies → conclusion",
           ] : [];
 
           const synthesisPrompt = [...baseRules, ...rankingRules].filter(Boolean).join("\n");
@@ -417,18 +380,18 @@ export default function AIChat() {
 
           if (controller.signal.aborted) return;
 
+          traceSteps.push({ tool: "chat", label: "Synthesis", icon: "💬" });
+
           const answer = synthesisResult.content.map(c => c.text ?? "").join("\n");
 
-          // Append source URLs footer if the model didn't include them
           let sourcesFooter = "";
           if (allSourceUrls.length > 0 && !answer.includes("http")) {
             sourcesFooter = `\n\n**Sources:**\n${allSourceUrls.slice(0, 6).map((u, i) => `${i + 1}. ${u}`).join("\n")}`;
           }
 
-          addMessage({ role: "assistant", content: answer + sourcesFooter });
+          addMessage({ role: "assistant", content: answer + sourcesFooter, toolTrace: traceSteps });
           return;
         }
-        // Evidence too thin even after escalation — fall through to direct display with a note
       }
 
       // === ASYNC JOB RESULT FORMATTING ===
@@ -440,6 +403,7 @@ export default function AIChat() {
             addMessage({
               role: "assistant",
               content: `✅ **Job started!**\n\n**Job ID:** \`${parsed.jobId}\`\n**Status:** ${parsed.status}\n\nUse \`/status ${parsed.jobId}\` to check progress, or just paste the job ID.`,
+              toolTrace: traceSteps,
             });
             return;
           }
@@ -449,10 +413,9 @@ export default function AIChat() {
       // === DIRECT RESULT DISPLAY ===
       const resultText = lastResult.result.content.map(c => c.text ?? `[${c.type}]`).join("\n");
       addMessage({
-        role: lastResult.result.isError ? "tool" : "assistant",
+        role: "assistant",
         content: resultText.slice(0, 8000),
-        toolName: lastResult.result.isError ? lastResult.tool : undefined,
-        toolOutput: lastResult.result,
+        toolTrace: traceSteps.length > 0 ? traceSteps : undefined,
       });
     } catch (err) {
       if (!controller.signal.aborted) {
@@ -463,7 +426,7 @@ export default function AIChat() {
       clearTimeout(timeout);
       setLoading(false);
       setLoadingStartedAt(null);
-      setCurrentStep("");
+      setActivitySteps([]);
     }
   };
 
@@ -504,50 +467,40 @@ export default function AIChat() {
           </div>
         )}
 
-        {messages.map((msg) => (
-          <div key={msg.id} className={cn("flex gap-3", msg.role === "user" && "justify-end")}>
-            {msg.role !== "user" && (
-              <div className={cn(
-                "h-7 w-7 rounded-full flex items-center justify-center shrink-0 mt-0.5",
-                msg.role === "tool" ? "bg-cyber-violet/20 text-cyber-violet" : "bg-primary/20 text-primary"
-              )}>
-                {msg.role === "tool" ? <Wrench className="h-3.5 w-3.5" /> : <Bot className="h-3.5 w-3.5" />}
-              </div>
-            )}
-            <div className={cn(
-              "rounded-lg px-4 py-2.5 max-w-[80%] text-sm",
-              msg.role === "user"
-                ? "bg-primary/15 text-foreground"
-                : msg.role === "tool"
-                ? "bg-cyber-violet/5 border border-cyber-violet/20 text-muted-foreground text-xs font-mono"
-                : "glass text-foreground"
-            )}>
-              {msg.toolName && msg.role === "tool" && (
-                <span className="text-cyber-violet font-semibold">{msg.toolName}: </span>
-              )}
-              <span className="whitespace-pre-wrap break-words">{msg.content}</span>
-            </div>
-            {msg.role === "user" && (
-              <div className="h-7 w-7 rounded-full bg-foreground/10 flex items-center justify-center shrink-0 mt-0.5">
-                <User className="h-3.5 w-3.5 text-foreground/60" />
-              </div>
-            )}
-          </div>
-        ))}
+        {messages.map((msg) => {
+          // Skip rendering tool-role messages entirely
+          if (msg.role === "tool") return null;
 
-        {/* Loading indicator with current step */}
-        {loading && (
-          <div className="flex gap-3">
-            <div className="h-7 w-7 rounded-full bg-primary/20 flex items-center justify-center">
-              <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-            </div>
-            <div className="glass rounded-lg px-4 py-2.5 space-y-1">
-              <span className="text-sm text-muted-foreground">{currentStep || "🤖 Processing..."}</span>
-              {elapsed > 5 && (
-                <p className="text-[10px] text-cyber-amber font-mono">Still working... ({elapsed.toFixed(0)}s)</p>
+          return (
+            <div key={msg.id} className={cn("flex gap-3", msg.role === "user" && "justify-end")}>
+              {msg.role === "assistant" && (
+                <div className="h-7 w-7 rounded-full bg-primary/20 flex items-center justify-center shrink-0 mt-0.5">
+                  <Bot className="h-3.5 w-3.5 text-primary" />
+                </div>
+              )}
+              <div className={cn(
+                "rounded-lg px-4 py-2.5 max-w-[80%] text-sm",
+                msg.role === "user"
+                  ? "bg-primary/15 text-foreground"
+                  : "glass text-foreground"
+              )}>
+                <span className="whitespace-pre-wrap break-words">{msg.content}</span>
+                {msg.role === "assistant" && msg.toolTrace && msg.toolTrace.length > 0 && (
+                  <ToolTraceCollapsible trace={msg.toolTrace} />
+                )}
+              </div>
+              {msg.role === "user" && (
+                <div className="h-7 w-7 rounded-full bg-foreground/10 flex items-center justify-center shrink-0 mt-0.5">
+                  <User className="h-3.5 w-3.5 text-foreground/60" />
+                </div>
               )}
             </div>
-          </div>
+          );
+        })}
+
+        {/* Inline activity indicator */}
+        {loading && (
+          <ChatActivityIndicator steps={activitySteps} elapsed={elapsed} />
         )}
       </div>
 

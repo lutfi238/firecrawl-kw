@@ -37,6 +37,13 @@ export interface McpLogEntry {
   created_at: string;
 }
 
+export interface ToolTraceStep {
+  tool: string;
+  label: string;
+  icon: string;
+  durationMs?: number;
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "tool";
@@ -44,5 +51,6 @@ export interface ChatMessage {
   toolName?: string;
   toolInput?: Record<string, unknown>;
   toolOutput?: ToolCallResult;
+  toolTrace?: ToolTraceStep[];
   timestamp: Date;
 }
