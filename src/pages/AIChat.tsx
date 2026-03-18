@@ -10,6 +10,7 @@ import type { ChatMessage, ToolCallResult, ToolTraceStep } from "@/types/mcp";
 import { supabase } from "@/integrations/supabase/client";
 import { SlashCommandPicker } from "@/components/SlashCommandPicker";
 import { ChatActivityIndicator } from "@/components/ChatActivityIndicator";
+import { ThinkingPanel } from "@/components/ThinkingPanel";
 
 import { classifyIntent, registerJob, type JobType } from "@/lib/intentClassifier";
 
@@ -496,6 +497,8 @@ export default function AIChat() {
                   : "glass text-foreground"
               )}>
                 {msg.role === "assistant" ? (() => {
+                  const thinkMatch = msg.content.match(/<think>([\s\S]*?)<\/think>/i);
+                  const thinkingContent = thinkMatch?.[1]?.trim() || null;
                   const cleanContent = msg.content
                     .replace(/<think>[\s\S]*?<\/think>/gi, "")
                     .trim();
@@ -516,6 +519,9 @@ export default function AIChat() {
                   if (totalMs > 0) pillParts.push(`${(totalMs / 1000).toFixed(1)}s`);
                   return (
                     <>
+                      {thinkingContent && (
+                        <ThinkingPanel content={thinkingContent} durationMs={totalMs} />
+                      )}
                       <div className="prose prose-invert prose-sm max-w-none">
                         <ReactMarkdown
                           components={{
