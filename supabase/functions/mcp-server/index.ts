@@ -1172,10 +1172,13 @@ async function callAI(
 function callAIStream(
   aiSettings: { baseUrl: string; apiKey: string; model: string },
   systemPrompt: string,
-  userContent: string,
+  userContent: string | Array<{ type: string; text?: string; image_url?: { url: string } }>,
   maxTokens = 4096,
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
+  const userMessage = typeof userContent === "string"
+    ? { role: "user", content: userContent }
+    : { role: "user", content: userContent };
 
   return new ReadableStream({
     async start(controller) {
@@ -1192,7 +1195,7 @@ function callAIStream(
             model: aiSettings.model,
             messages: [
               { role: "system", content: systemPrompt },
-              { role: "user", content: userContent },
+              userMessage,
             ],
             max_tokens: maxTokens,
             stream: true,
