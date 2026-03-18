@@ -167,11 +167,17 @@ export default function AIChat() {
   const [loadingStartedAt, setLoadingStartedAt] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [activitySteps, setActivitySteps] = useState<string[]>([]);
-  const { callTool } = useMCPServer();
+  const { callTool, callToolStream } = useMCPServer();
   const { settings } = useSettings();
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const [showSlashPicker, setShowSlashPicker] = useState(false);
+
+  // Streaming state
+  const [streamingThinking, setStreamingThinking] = useState("");
+  const [streamingContent, setStreamingContent] = useState("");
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [streamPhase, setStreamPhase] = useState<"idle" | "thinking" | "answering">("idle");
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
