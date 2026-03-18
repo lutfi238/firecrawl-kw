@@ -11,6 +11,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { SlashCommandPicker } from "@/components/SlashCommandPicker";
 import { ChatActivityIndicator } from "@/components/ChatActivityIndicator";
 import { ThinkingPanel } from "@/components/ThinkingPanel";
+import { ImageUploadButton } from "@/components/ImageUploadButton";
+import { ImageLightbox } from "@/components/ImageLightbox";
 
 import { classifyIntent, registerJob, type JobType } from "@/lib/intentClassifier";
 
@@ -163,6 +165,8 @@ function normalizeEvidence(toolName: string, result: ToolCallResult): Normalized
 export default function AIChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
+  const [pendingImages, setPendingImages] = useState<string[]>([]);
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadingStartedAt, setLoadingStartedAt] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
@@ -233,10 +237,12 @@ export default function AIChat() {
   // ========== Main send handler ==========
   const handleSend = async () => {
     const text = input.trim();
-    if (!text || loading) return;
+    const images = [...pendingImages];
+    if ((!text && images.length === 0) || loading) return;
     setInput("");
+    setPendingImages([]);
 
-    addMessage({ role: "user", content: text });
+    addMessage({ role: "user", content: text, images: images.length > 0 ? images : undefined });
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -257,6 +263,93 @@ export default function AIChat() {
     try {
       const history = getHistory();
       const rendererAvailable = settings.renderer_enabled === "true";
+
+      // If images attached, bypass intent classification and go directly to chat with images
+      if (images.length > 0) {
+        pushActivity("Analyzing image(s)…");
+
+        const chatArgs: Record<string, unknown> = {
+          message: text || "What do you see in this image?",
+          history,
+          images,
+          stream: true,
+        };
+
+        const start = Date.now();
+        let fullText = "";
+        let thinkBuffer = "";
+        let inThink = false;
+        let thinkDone = false;
+
+        setIsStreaming(true);
+        setStreamingThinking("");
+        setStreamingContent("");
+        setStreamPhase("idle");
+
+        const traceSteps: ToolTraceStep[] = [];
+
+        try {
+          for await (const delta of callToolStream("chat", chatArgs, controller.signal)) {
+            if (controller.signal.aborted) return;
+            fullText += delta;
+
+            if (!thinkDone) {
+              if (!inThink && fullText.includes("<think>")) {
+                inThink = true;
+                setStreamPhase("thinking");
+              }
+              if (inThink) {
+                const thinkStart = fullText.indexOf("<think>") + 7;
+                const thinkEnd = fullText.indexOf("</think>");
+                if (thinkEnd !== -1) {
+                  thinkBuffer = fullText.slice(thinkStart, thinkEnd).trim();
+                  thinkDone = true;
+                  inThink = false;
+                  setStreamingThinking(thinkBuffer);
+                  setStreamPhase("answering");
+                  const afterThink = fullText.slice(thinkEnd + 8).trim();
+                  setStreamingContent(afterThink);
+                } else {
+                  thinkBuffer = fullText.slice(thinkStart).trim();
+                  setStreamingThinking(thinkBuffer);
+                }
+                continue;
+              }
+            }
+
+            if (thinkDone) {
+              const afterThink = fullText.slice(fullText.indexOf("</think>") + 8).trim();
+              setStreamingContent(afterThink);
+            } else {
+              setStreamPhase("answering");
+              setStreamingContent(fullText);
+            }
+          }
+        } catch (err) {
+          if (!controller.signal.aborted) {
+            fullText = fullText || `Error: ${err instanceof Error ? err.message : "Stream failed"}`;
+          }
+        }
+
+        const duration = Date.now() - start;
+        const cleanFull = fullText
+          .replace(/<think>[\s\S]*?<\/think>/gi, "")
+          .replace(/\n---\n\*Orchestration:[\s\S]*?\*$/gm, "")
+          .trim();
+
+        setIsStreaming(false);
+        setStreamPhase("idle");
+        setStreamingThinking("");
+        setStreamingContent("");
+
+        traceSteps.push({ tool: "chat", label: "Image analysis", icon: "🖼️", durationMs: duration });
+        addMessage({ role: "assistant", content: fullText, toolTrace: traceSteps });
+
+        const finalResult: ToolCallResult = { content: [{ type: "text", text: fullText }] };
+        await logToMonitor("chat", chatArgs, finalResult, duration);
+        return;
+      }
+
       const intent = classifyIntent(text, history, { rendererAvailable });
 
       if (intent.localMessage) {
@@ -283,6 +376,9 @@ export default function AIChat() {
 
         if (action.tool === "chat" && "message" in action.args) {
           (action.args as any).history = history;
+          if (images.length > 0) {
+            (action.args as any).images = images;
+          }
 
           // Use streaming for chat tool
           const start = Date.now();
@@ -675,7 +771,24 @@ export default function AIChat() {
                     </>
                   );
                 })() : (
-                  <span className="whitespace-pre-wrap break-words">{msg.content}</span>
+                  <>
+                    {msg.images && msg.images.length > 0 && (
+                      <div className="flex flex-wrap gap-2 mb-2">
+                        {msg.images.map((img, i) => (
+                          <img
+                            key={i}
+                            src={img}
+                            alt={`Uploaded ${i + 1}`}
+                            className="h-24 max-w-[200px] object-cover rounded-lg border border-primary/10 cursor-pointer hover:opacity-80 transition-opacity"
+                            onClick={() => setLightboxSrc(img)}
+                          />
+                        ))}
+                      </div>
+                    )}
+                    {msg.content && (
+                      <span className="whitespace-pre-wrap break-words">{msg.content}</span>
+                    )}
+                  </>
                 )}
               </div>
               {msg.role === "user" && (
@@ -744,12 +857,18 @@ export default function AIChat() {
       </div>
 
       {/* Input bar */}
-      <div className="relative glass rounded-lg p-3 flex gap-2">
+      <div className="relative glass rounded-lg p-3 flex gap-2 items-center">
         <SlashCommandPicker
           input={input}
           visible={showSlashPicker && input.startsWith("/") && !input.includes(" ")}
           onSelect={(cmd) => { setInput(cmd); setShowSlashPicker(false); }}
           onDismiss={() => setShowSlashPicker(false)}
+        />
+        <ImageUploadButton
+          images={pendingImages}
+          onAdd={(imgs) => setPendingImages((prev) => [...prev, ...imgs].slice(0, 4))}
+          onRemove={(i) => setPendingImages((prev) => prev.filter((_, idx) => idx !== i))}
+          disabled={loading}
         />
         <Input
           value={input}
@@ -761,7 +880,7 @@ export default function AIChat() {
             }
             if (e.key === "Enter" && !e.shiftKey) handleSend();
           }}
-          placeholder="Ask anything, paste a URL, or type / for commands..."
+          placeholder={pendingImages.length > 0 ? "Describe image or send as-is..." : "Ask anything, paste a URL, or type / for commands..."}
           className="bg-transparent border-none font-mono text-sm focus-visible:ring-0 focus-visible:ring-offset-0"
           disabled={loading}
         />
@@ -770,11 +889,16 @@ export default function AIChat() {
             <XCircle className="h-4 w-4" />
           </Button>
         ) : (
-          <Button onClick={handleSend} disabled={!input.trim()} size="icon" className="shrink-0 bg-primary text-primary-foreground">
+          <Button onClick={handleSend} disabled={!input.trim() && pendingImages.length === 0} size="icon" className="shrink-0 bg-primary text-primary-foreground">
             <Send className="h-4 w-4" />
           </Button>
         )}
       </div>
+
+      {/* Lightbox */}
+      {lightboxSrc && (
+        <ImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />
+      )}
     </div>
   );
 }

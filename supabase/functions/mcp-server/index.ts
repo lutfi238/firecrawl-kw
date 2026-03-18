@@ -1137,9 +1137,12 @@ function chatSearchEvidenceHasDepth(evidence: string): boolean {
 async function callAI(
   aiSettings: { baseUrl: string; apiKey: string; model: string },
   systemPrompt: string,
-  userContent: string,
+  userContent: string | Array<{ type: string; text?: string; image_url?: { url: string } }>,
   maxTokens = 4096,
 ): Promise<string> {
+  const userMessage = typeof userContent === "string"
+    ? { role: "user", content: userContent }
+    : { role: "user", content: userContent };
   const res = await fetch(`${aiSettings.baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
@@ -1152,7 +1155,7 @@ async function callAI(
       model: aiSettings.model,
       messages: [
         { role: "system", content: systemPrompt },
-        { role: "user", content: userContent },
+        userMessage,
       ],
       max_tokens: maxTokens,
     }),
@@ -1169,10 +1172,13 @@ async function callAI(
 function callAIStream(
   aiSettings: { baseUrl: string; apiKey: string; model: string },
   systemPrompt: string,
-  userContent: string,
+  userContent: string | Array<{ type: string; text?: string; image_url?: { url: string } }>,
   maxTokens = 4096,
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
+  const userMessage = typeof userContent === "string"
+    ? { role: "user", content: userContent }
+    : { role: "user", content: userContent };
 
   return new ReadableStream({
     async start(controller) {
@@ -1189,7 +1195,7 @@ function callAIStream(
             model: aiSettings.model,
             messages: [
               { role: "system", content: systemPrompt },
-              { role: "user", content: userContent },
+              userMessage,
             ],
             max_tokens: maxTokens,
             stream: true,
@@ -1260,20 +1266,32 @@ async function handleChatWithOrchestration(
   const message = (args.message as string) || "";
   const history = (args.history as Array<{ role: string; content: string }>) || [];
   const mode = (args.mode as string) || "orchestrate";
+  const images = (args.images as string[]) || [];
 
   // === SYNTHESIS BYPASS MODE ===
-  // When mode is "synthesis", skip all orchestration and call the model directly.
-  // Used by the AI Chat frontend for final evidence synthesis after tools have already run.
   if (mode === "synthesis") {
     console.log("[chat] Synthesis bypass mode — direct LLM call, no orchestration");
     const systemPrompt = history.find(m => m.role === "system")?.content || "You are a helpful assistant.";
     const nonSystemHistory = history.filter(m => m.role !== "system");
-    const answer = await callAI(aiSettings, systemPrompt, buildHistoryContext(nonSystemHistory, message), 4096);
+    const userContent = buildMultimodalContent(buildHistoryContext(nonSystemHistory, message), images);
+    const answer = await callAI(aiSettings, systemPrompt, userContent, 4096);
     return { content: [{ type: "text", text: answer }] };
   }
 
   const intent = classifyChatIntent(message);
   console.log("[chat-orchestrator] Message:", message.slice(0, 100), "| Intent:", intent, "| Mode:", isHeavyChatIntent(intent) ? "async" : "sync");
+
+  // If images are attached, treat as casual (direct LLM with vision) regardless of intent
+  if (images.length > 0) {
+    console.log("[chat-orchestrator] Images attached — using direct multimodal LLM");
+    const userContent = buildMultimodalContent(buildHistoryContext(history, message), images);
+    const answer = await callAI(
+      aiSettings,
+      "You are a helpful AI assistant. The user has sent images. Analyze the images carefully and respond to their message. If no text accompanies the images, describe what you see.",
+      userContent,
+    );
+    return { content: [{ type: "text", text: answer }] };
+  }
 
   const steps: string[] = [];
   const addStep = (s: string) => { steps.push(s); console.log("[chat-orchestrator]", s); };
@@ -1444,6 +1462,20 @@ function buildHistoryContext(history: Array<{ role: string; content: string }>, 
   if (history.length === 0) return current;
   const ctx = history.map(m => `${m.role}: ${m.content}`).join("\n");
   return `Previous conversation:\n${ctx}\n\nCurrent message: ${current}`;
+}
+
+// Build multimodal user content (text + images) for OpenAI-compatible APIs
+function buildMultimodalContent(
+  text: string,
+  images?: string[],
+): string | Array<{ type: string; text?: string; image_url?: { url: string } }> {
+  if (!images || images.length === 0) return text;
+  const parts: Array<{ type: string; text?: string; image_url?: { url: string } }> = [];
+  for (const img of images) {
+    parts.push({ type: "image_url", image_url: { url: img } });
+  }
+  parts.push({ type: "text", text });
+  return parts;
 }
 
 // ========== Hono App ==========
@@ -1768,6 +1800,7 @@ app.post("/*", async (c) => {
           } else if (args.stream === true) {
             // STREAMING MODE: return SSE stream directly
             const streamMode = (args.mode as string) || "orchestrate";
+            const images = (args.images as string[]) || [];
             
             if (streamMode === "synthesis") {
               // Direct streaming LLM call for synthesis
@@ -1775,7 +1808,8 @@ app.post("/*", async (c) => {
               const message = (args.message as string) || "";
               const systemPrompt = history.find(m => m.role === "system")?.content || "You are a helpful assistant.";
               const nonSystemHistory = history.filter(m => m.role !== "system");
-              const stream = callAIStream(aiSettings, systemPrompt, buildHistoryContext(nonSystemHistory, message), 4096);
+              const userContent = buildMultimodalContent(buildHistoryContext(nonSystemHistory, message), images);
+              const stream = callAIStream(aiSettings, systemPrompt, userContent, 4096);
               return new Response(stream, {
                 headers: { ...corsHeaders, "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
               });
@@ -1787,10 +1821,14 @@ app.post("/*", async (c) => {
             const intent = classifyChatIntent(message);
             
             if (intent === "casual") {
+              const userContent = buildMultimodalContent(
+                buildHistoryContext(history, message),
+                images,
+              );
               const stream = callAIStream(
                 aiSettings,
-                "You are a helpful AI assistant for Personal Firecrawl MCP, a web intelligence server. Answer conversationally and helpfully.",
-                buildHistoryContext(history, message),
+                "You are a helpful AI assistant for Personal Firecrawl MCP, a web intelligence server. Answer conversationally and helpfully. If the user sends images, describe and analyze them.",
+                userContent,
               );
               return new Response(stream, {
                 headers: { ...corsHeaders, "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
