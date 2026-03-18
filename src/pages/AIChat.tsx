@@ -376,6 +376,7 @@ export default function AIChat() {
           const synthesisResult = await callTool("chat", {
             message: `User question: ${text}\n\n${combinedEvidence.slice(0, 14000)}`,
             history: [{ role: "system", content: synthesisPrompt }],
+            mode: "synthesis",
           });
 
           if (controller.signal.aborted) return;
