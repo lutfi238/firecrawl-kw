@@ -1,14 +1,48 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface ThinkingPanelProps {
   content: string;
   durationMs?: number;
+  isStreaming?: boolean;
 }
 
-export function ThinkingPanel({ content, durationMs }: ThinkingPanelProps) {
-  const [expanded, setExpanded] = useState(false);
+function BouncingDots() {
+  return (
+    <span className="inline-flex gap-0.5 items-center ml-1">
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          className="h-1 w-1 rounded-full bg-secondary-foreground/50 animate-bounce"
+          style={{ animationDelay: `${i * 150}ms`, animationDuration: "0.6s" }}
+        />
+      ))}
+    </span>
+  );
+}
+
+export function ThinkingPanel({ content, durationMs, isStreaming = false }: ThinkingPanelProps) {
+  const [expanded, setExpanded] = useState(isStreaming);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Auto-expand while streaming, auto-collapse when done
+  useEffect(() => {
+    if (isStreaming) {
+      setExpanded(true);
+    } else if (content) {
+      // Streaming just finished — collapse after a short delay
+      const timer = setTimeout(() => setExpanded(false), 600);
+      return () => clearTimeout(timer);
+    }
+  }, [isStreaming]);
+
+  // Auto-scroll during streaming
+  useEffect(() => {
+    if (isStreaming && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [content, isStreaming]);
 
   const durationLabel = durationMs != null && durationMs > 0
     ? `${(durationMs / 1000).toFixed(1)}s`
@@ -22,7 +56,8 @@ export function ThinkingPanel({ content, durationMs }: ThinkingPanelProps) {
       >
         <span>🧠</span>
         <span className="font-semibold">Thinking</span>
-        {durationLabel && (
+        {isStreaming && <BouncingDots />}
+        {!isStreaming && durationLabel && (
           <span className="text-muted-foreground/50">· {durationLabel}</span>
         )}
         <ChevronRight
@@ -35,13 +70,17 @@ export function ThinkingPanel({ content, durationMs }: ThinkingPanelProps) {
       <div
         className={cn(
           "transition-all duration-300 ease-in-out overflow-hidden",
-          expanded ? "max-h-48" : "max-h-0"
+          expanded ? (isStreaming ? "max-h-32" : "max-h-48") : "max-h-0"
         )}
       >
-        <div className="px-3 pb-3 overflow-auto max-h-48 scrollbar-cyber">
-          <p className="text-xs font-mono text-secondary-foreground/50 whitespace-pre-wrap leading-relaxed">
-            {content}
-          </p>
+        <div ref={scrollRef} className="px-3 pb-3 overflow-auto max-h-48 scrollbar-cyber">
+          {content ? (
+            <p className="text-xs font-mono text-secondary-foreground/50 whitespace-pre-wrap leading-relaxed">
+              {content}
+            </p>
+          ) : isStreaming ? (
+            <p className="text-xs font-mono text-secondary-foreground/40 italic">Processing…</p>
+          ) : null}
         </div>
       </div>
     </div>

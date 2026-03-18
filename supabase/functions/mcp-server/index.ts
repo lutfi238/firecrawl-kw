@@ -1165,6 +1165,89 @@ async function callAI(
   return data.choices?.[0]?.message?.content || "";
 }
 
+// Streaming version of callAI — returns a ReadableStream of SSE chunks
+function callAIStream(
+  aiSettings: { baseUrl: string; apiKey: string; model: string },
+  systemPrompt: string,
+  userContent: string,
+  maxTokens = 4096,
+): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+
+  return new ReadableStream({
+    async start(controller) {
+      try {
+        const res = await fetch(`${aiSettings.baseUrl}/chat/completions`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${aiSettings.apiKey}`,
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://id-preview--4485e6f5-86ea-4999-acd7-7209fb13e21d.lovable.app",
+            "X-Title": "Personal Firecrawl MCP",
+          },
+          body: JSON.stringify({
+            model: aiSettings.model,
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: userContent },
+            ],
+            max_tokens: maxTokens,
+            stream: true,
+          }),
+        });
+
+        if (!res.ok) {
+          const errText = await res.text();
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: `AI API error ${res.status}: ${errText.slice(0, 300)}` })}\n\n`));
+          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+          controller.close();
+          return;
+        }
+
+        const reader = res.body!.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            if (trimmed === "data: [DONE]") {
+              controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+              continue;
+            }
+            if (trimmed.startsWith("data: ")) {
+              try {
+                const json = JSON.parse(trimmed.slice(6));
+                const delta = json.choices?.[0]?.delta?.content;
+                if (delta) {
+                  controller.enqueue(encoder.encode(`data: ${JSON.stringify({ delta })}\n\n`));
+                }
+              } catch {
+                // skip malformed
+              }
+            }
+          }
+        }
+
+        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+        controller.close();
+      } catch (err) {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: err instanceof Error ? err.message : "Stream error" })}\n\n`));
+        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+        controller.close();
+      }
+    },
+  });
+}
+
 function isHeavyChatIntent(intent: ChatIntent): boolean {
   return intent === "ranking" || intent === "deep_research";
 }
@@ -1349,8 +1432,7 @@ async function handleChatWithOrchestration(
       2048,
     );
 
-    const meta = `\n\n---\n*Orchestration: ${steps.join(" → ")}*`;
-    return { content: [{ type: "text", text: answer + meta }] };
+    return { content: [{ type: "text", text: answer }] };
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : "Unknown orchestration error";
     console.error("[chat-orchestrator] Error:", errMsg);
@@ -1683,6 +1765,40 @@ app.post("/*", async (c) => {
           const aiSettings = getAiSettingsFromMap(cSettings);
           if (!aiSettings) {
             result = { content: [{ type: "text", text: "Error: AI provider not configured. Go to Settings → AI Provider and add your API key." }], isError: true };
+          } else if (args.stream === true) {
+            // STREAMING MODE: return SSE stream directly
+            const streamMode = (args.mode as string) || "orchestrate";
+            
+            if (streamMode === "synthesis") {
+              // Direct streaming LLM call for synthesis
+              const history = (args.history as Array<{ role: string; content: string }>) || [];
+              const message = (args.message as string) || "";
+              const systemPrompt = history.find(m => m.role === "system")?.content || "You are a helpful assistant.";
+              const nonSystemHistory = history.filter(m => m.role !== "system");
+              const stream = callAIStream(aiSettings, systemPrompt, buildHistoryContext(nonSystemHistory, message), 4096);
+              return new Response(stream, {
+                headers: { ...corsHeaders, "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+              });
+            }
+            
+            // For orchestrate mode with streaming: do orchestration sync, then stream final synthesis
+            const message = (args.message as string) || "";
+            const history = (args.history as Array<{ role: string; content: string }>) || [];
+            const intent = classifyChatIntent(message);
+            
+            if (intent === "casual") {
+              const stream = callAIStream(
+                aiSettings,
+                "You are a helpful AI assistant for Personal Firecrawl MCP, a web intelligence server. Answer conversationally and helpfully.",
+                buildHistoryContext(history, message),
+              );
+              return new Response(stream, {
+                headers: { ...corsHeaders, "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+              });
+            }
+            
+            // For non-casual intents: fall back to non-streaming orchestration
+            result = await handleChatWithOrchestration(args, aiSettings, authHeader);
           } else {
             result = await handleChatWithOrchestration(args, aiSettings, authHeader);
           }

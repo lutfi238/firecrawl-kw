@@ -167,15 +167,21 @@ export default function AIChat() {
   const [loadingStartedAt, setLoadingStartedAt] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [activitySteps, setActivitySteps] = useState<string[]>([]);
-  const { callTool } = useMCPServer();
+  const { callTool, callToolStream } = useMCPServer();
   const { settings } = useSettings();
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const [showSlashPicker, setShowSlashPicker] = useState(false);
 
+  // Streaming state
+  const [streamingThinking, setStreamingThinking] = useState("");
+  const [streamingContent, setStreamingContent] = useState("");
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [streamPhase, setStreamPhase] = useState<"idle" | "thinking" | "answering">("idle");
+
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, activitySteps]);
+  }, [messages, activitySteps, streamingContent, streamingThinking]);
 
   useEffect(() => {
     if (!loading || !loadingStartedAt) return;
@@ -196,6 +202,10 @@ export default function AIChat() {
     setLoading(false);
     setLoadingStartedAt(null);
     setActivitySteps([]);
+    setIsStreaming(false);
+    setStreamPhase("idle");
+    setStreamingThinking("");
+    setStreamingContent("");
     addMessage({ role: "assistant", content: "⚠️ Request cancelled." });
   }, [addMessage]);
 
@@ -273,6 +283,91 @@ export default function AIChat() {
 
         if (action.tool === "chat" && "message" in action.args) {
           (action.args as any).history = history;
+
+          // Use streaming for chat tool
+          const start = Date.now();
+          let fullText = "";
+          let thinkBuffer = "";
+          let inThink = false;
+          let thinkDone = false;
+
+          setIsStreaming(true);
+          setStreamingThinking("");
+          setStreamingContent("");
+          setStreamPhase("idle");
+
+          try {
+            for await (const delta of callToolStream("chat", action.args as Record<string, unknown>, controller.signal)) {
+              if (controller.signal.aborted) return;
+              fullText += delta;
+
+              // Parse <think> tags progressively
+              if (!thinkDone) {
+                // Check if we've entered a think block
+                if (!inThink && fullText.includes("<think>")) {
+                  inThink = true;
+                  setStreamPhase("thinking");
+                }
+
+                if (inThink) {
+                  const thinkStart = fullText.indexOf("<think>") + 7;
+                  const thinkEnd = fullText.indexOf("</think>");
+                  if (thinkEnd !== -1) {
+                    // Think block complete
+                    thinkBuffer = fullText.slice(thinkStart, thinkEnd).trim();
+                    thinkDone = true;
+                    inThink = false;
+                    setStreamingThinking(thinkBuffer);
+                    setStreamPhase("answering");
+                    // Extract clean content after </think>
+                    const afterThink = fullText.slice(thinkEnd + 8).trim();
+                    setStreamingContent(afterThink);
+                  } else {
+                    // Still in think block
+                    thinkBuffer = fullText.slice(thinkStart).trim();
+                    setStreamingThinking(thinkBuffer);
+                  }
+                  continue;
+                }
+              }
+
+              // Not in think block — stream main content
+              if (thinkDone) {
+                const afterThink = fullText.slice(fullText.indexOf("</think>") + 8).trim();
+                setStreamingContent(afterThink);
+              } else {
+                setStreamPhase("answering");
+                setStreamingContent(fullText);
+              }
+            }
+          } catch (err) {
+            if (!controller.signal.aborted) {
+              fullText = fullText || `Error: ${err instanceof Error ? err.message : "Stream failed"}`;
+            }
+          }
+
+          const duration = Date.now() - start;
+
+          // Finalize: strip orchestration and think tags, add as message
+          const cleanFull = fullText
+            .replace(/<think>[\s\S]*?<\/think>/gi, "")
+            .replace(/\n---\n\*Orchestration:[\s\S]*?\*$/gm, "")
+            .trim();
+
+          setIsStreaming(false);
+          setStreamPhase("idle");
+          setStreamingThinking("");
+          setStreamingContent("");
+
+          const finalResult: ToolCallResult = { content: [{ type: "text", text: fullText }] };
+          await logToMonitor(action.tool, action.args as Record<string, unknown>, finalResult, duration);
+
+          toolResults.push({ tool: action.tool, result: finalResult, duration });
+          traceSteps.push({ tool: action.tool, label: meta.label, icon: meta.icon, durationMs: duration });
+
+          // Add the final message directly
+          addMessage({ role: "assistant", content: fullText, toolTrace: traceSteps });
+          return; // Chat streaming handled — skip remaining flow
         }
 
         const start = Date.now();
@@ -384,17 +479,36 @@ export default function AIChat() {
 
           const synthesisPrompt = [...baseRules, ...rankingRules].filter(Boolean).join("\n");
 
-          const synthesisResult = await callTool("chat", {
-            message: `User question: ${text}\n\n${combinedEvidence.slice(0, 14000)}`,
-            history: [{ role: "system", content: synthesisPrompt }],
-            mode: "synthesis",
-          });
+          // Stream synthesis
+          let synthText = "";
+          setIsStreaming(true);
+          setStreamingThinking("");
+          setStreamingContent("");
+          setStreamPhase("answering");
+
+          try {
+            for await (const delta of callToolStream("chat", {
+              message: `User question: ${text}\n\n${combinedEvidence.slice(0, 14000)}`,
+              history: [{ role: "system", content: synthesisPrompt }],
+              mode: "synthesis",
+            }, controller.signal)) {
+              if (controller.signal.aborted) return;
+              synthText += delta;
+              setStreamingContent(synthText);
+            }
+          } catch {
+            if (controller.signal.aborted) return;
+          }
+
+          setIsStreaming(false);
+          setStreamPhase("idle");
+          setStreamingContent("");
 
           if (controller.signal.aborted) return;
 
           traceSteps.push({ tool: "chat", label: "Synthesis", icon: "💬" });
 
-          const answer = synthesisResult.content.map(c => c.text ?? "").join("\n");
+          const answer = synthText;
 
           let sourcesFooter = "";
           if (allSourceUrls.length > 0 && !answer.includes("http")) {
@@ -501,6 +615,7 @@ export default function AIChat() {
                   const thinkingContent = thinkMatch?.[1]?.trim() || null;
                   const cleanContent = msg.content
                     .replace(/<think>[\s\S]*?<\/think>/gi, "")
+                    .replace(/\n---\n\*Orchestration:[\s\S]*?\*$/gm, "")
                     .trim();
                   const totalMs = msg.toolTrace?.reduce((sum, t) => sum + (t.durationMs ?? 0), 0) ?? 0;
                   const usedTools = msg.toolTrace
@@ -572,8 +687,58 @@ export default function AIChat() {
           );
         })}
 
-        {/* Inline activity indicator */}
-        {loading && (
+        {/* Streaming bubble */}
+        {isStreaming && (
+          <div className="flex gap-3">
+            <div className="h-7 w-7 rounded-full bg-primary/20 flex items-center justify-center shrink-0 mt-0.5">
+              <Bot className="h-3.5 w-3.5 text-primary" />
+            </div>
+            <div className="rounded-lg px-4 py-2.5 max-w-[80%] text-sm glass text-foreground">
+              {(streamPhase === "thinking" || streamingThinking) && (
+                <ThinkingPanel
+                  content={streamingThinking}
+                  isStreaming={streamPhase === "thinking"}
+                />
+              )}
+              {streamPhase === "answering" && streamingContent && (
+                <div className="prose prose-invert prose-sm max-w-none">
+                  <ReactMarkdown
+                    components={{
+                      h1: ({children}) => <h1 className="text-lg font-bold text-primary mt-2 mb-1">{children}</h1>,
+                      h2: ({children}) => <h2 className="text-base font-bold text-primary/80 mt-2 mb-1">{children}</h2>,
+                      h3: ({children}) => <h3 className="text-sm font-semibold text-primary/70 mt-1 mb-1">{children}</h3>,
+                      strong: ({children}) => <strong className="font-bold text-foreground">{children}</strong>,
+                      em: ({children}) => <em className="italic text-muted-foreground">{children}</em>,
+                      code: ({children, className: cls}) => {
+                        const isBlock = cls?.includes("language-");
+                        return isBlock ? (
+                          <code className={cn("font-mono text-xs", cls)}>{children}</code>
+                        ) : (
+                          <code className="bg-muted px-1 rounded text-primary font-mono text-xs">{children}</code>
+                        );
+                      },
+                      pre: ({children}) => <pre className="bg-muted/50 p-3 rounded-lg overflow-x-auto my-2 border border-primary/10">{children}</pre>,
+                      ul: ({children}) => <ul className="list-disc list-inside space-y-1 my-1">{children}</ul>,
+                      ol: ({children}) => <ol className="list-decimal list-inside space-y-1 my-1">{children}</ol>,
+                      li: ({children}) => <li className="text-foreground/90">{children}</li>,
+                      a: ({href, children}) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary underline hover:text-primary/80">{children}</a>,
+                      p: ({children}) => <p className="mb-2 last:mb-0">{children}</p>,
+                      blockquote: ({children}) => <blockquote className="border-l-2 border-primary pl-3 italic text-muted-foreground my-2">{children}</blockquote>,
+                    }}
+                  >
+                    {streamingContent}
+                  </ReactMarkdown>
+                </div>
+              )}
+              {streamPhase === "idle" && !streamingContent && !streamingThinking && (
+                <span className="text-muted-foreground/50 text-xs font-mono">Connecting…</span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Inline activity indicator (for non-streaming tools) */}
+        {loading && !isStreaming && (
           <ChatActivityIndicator steps={activitySteps} elapsed={elapsed} />
         )}
       </div>
