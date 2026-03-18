@@ -1432,8 +1432,7 @@ async function handleChatWithOrchestration(
       2048,
     );
 
-    const meta = `\n\n---\n*Orchestration: ${steps.join(" → ")}*`;
-    return { content: [{ type: "text", text: answer + meta }] };
+    return { content: [{ type: "text", text: answer }] };
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : "Unknown orchestration error";
     console.error("[chat-orchestrator] Error:", errMsg);
