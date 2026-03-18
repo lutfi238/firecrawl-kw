@@ -1452,6 +1452,20 @@ function buildHistoryContext(history: Array<{ role: string; content: string }>, 
   return `Previous conversation:\n${ctx}\n\nCurrent message: ${current}`;
 }
 
+// Build multimodal user content (text + images) for OpenAI-compatible APIs
+function buildMultimodalContent(
+  text: string,
+  images?: string[],
+): string | Array<{ type: string; text?: string; image_url?: { url: string } }> {
+  if (!images || images.length === 0) return text;
+  const parts: Array<{ type: string; text?: string; image_url?: { url: string } }> = [];
+  for (const img of images) {
+    parts.push({ type: "image_url", image_url: { url: img } });
+  }
+  parts.push({ type: "text", text });
+  return parts;
+}
+
 // ========== Hono App ==========
 const app = new Hono();
 
