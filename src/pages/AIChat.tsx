@@ -245,7 +245,12 @@ export default function AIChat() {
     setInput("");
     setPendingImages([]);
 
-    addMessage({ role: "user", content: text, images: images.length > 0 ? images : undefined });
+    // Store thumbnails in message history, keep full images for the API call only
+    let thumbnails: string[] | undefined;
+    if (images.length > 0) {
+      thumbnails = await Promise.all(images.map(img => createThumbnail(img)));
+    }
+    addMessage({ role: "user", content: text, images: thumbnails });
 
     const controller = new AbortController();
     abortRef.current = controller;
