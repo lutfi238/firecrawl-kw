@@ -237,10 +237,12 @@ export default function AIChat() {
   // ========== Main send handler ==========
   const handleSend = async () => {
     const text = input.trim();
-    if (!text || loading) return;
+    const images = [...pendingImages];
+    if ((!text && images.length === 0) || loading) return;
     setInput("");
+    setPendingImages([]);
 
-    addMessage({ role: "user", content: text });
+    addMessage({ role: "user", content: text, images: images.length > 0 ? images : undefined });
 
     const controller = new AbortController();
     abortRef.current = controller;
