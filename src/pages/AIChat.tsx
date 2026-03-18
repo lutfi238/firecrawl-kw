@@ -11,6 +11,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { SlashCommandPicker } from "@/components/SlashCommandPicker";
 import { ChatActivityIndicator } from "@/components/ChatActivityIndicator";
 import { ThinkingPanel } from "@/components/ThinkingPanel";
+import { ImageUploadButton } from "@/components/ImageUploadButton";
+import { ImageLightbox } from "@/components/ImageLightbox";
 
 import { classifyIntent, registerJob, type JobType } from "@/lib/intentClassifier";
 
