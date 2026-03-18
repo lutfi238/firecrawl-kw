@@ -1176,6 +1176,19 @@ async function handleChatWithOrchestration(
 ): Promise<{ content: Array<{ type: string; text?: string }>; isError?: boolean }> {
   const message = (args.message as string) || "";
   const history = (args.history as Array<{ role: string; content: string }>) || [];
+  const mode = (args.mode as string) || "orchestrate";
+
+  // === SYNTHESIS BYPASS MODE ===
+  // When mode is "synthesis", skip all orchestration and call the model directly.
+  // Used by the AI Chat frontend for final evidence synthesis after tools have already run.
+  if (mode === "synthesis") {
+    console.log("[chat] Synthesis bypass mode — direct LLM call, no orchestration");
+    const systemPrompt = history.find(m => m.role === "system")?.content || "You are a helpful assistant.";
+    const nonSystemHistory = history.filter(m => m.role !== "system");
+    const answer = await callAI(aiSettings, systemPrompt, buildHistoryContext(nonSystemHistory, message), 4096);
+    return { content: [{ type: "text", text: answer }] };
+  }
+
   const intent = classifyChatIntent(message);
   console.log("[chat-orchestrator] Message:", message.slice(0, 100), "| Intent:", intent, "| Mode:", isHeavyChatIntent(intent) ? "async" : "sync");
 
@@ -1441,7 +1454,7 @@ app.post("/*", async (c) => {
         { name: "search_and_scrape", description: "Search then scrape top results", inputSchema: { type: "object", properties: { query: { type: "string" }, maxResults: { type: "number" } }, required: ["query"] } },
         { name: "html_to_markdown", description: "Convert HTML string to Markdown", inputSchema: { type: "object", properties: { html: { type: "string" } }, required: ["html"] } },
         { name: "batch_scrape", description: "Async scrape multiple URLs — returns jobId for polling", inputSchema: { type: "object", properties: { urls: { type: "string" } }, required: ["urls"] } },
-        { name: "chat", description: "AI assistant with tools-first orchestration — searches, scrapes, and synthesizes evidence for factual/ranking queries; lightweight for casual chat", inputSchema: { type: "object", properties: { message: { type: "string" }, history: { type: "array" } }, required: ["message"] } },
+        { name: "chat", description: "AI assistant with tools-first orchestration — searches, scrapes, and synthesizes evidence for factual/ranking queries; lightweight for casual chat. Pass mode:'synthesis' to bypass orchestration for direct LLM calls.", inputSchema: { type: "object", properties: { message: { type: "string" }, history: { type: "array" }, mode: { type: "string", enum: ["orchestrate", "synthesis"], description: "orchestrate (default): full intent routing. synthesis: bypass orchestration, direct LLM call." } }, required: ["message"] } },
         { name: "check_crawl_status", description: "Check status of an async crawl job", inputSchema: { type: "object", properties: { jobId: { type: "string" } }, required: ["jobId"] } },
         { name: "check_batch_status", description: "Check status of an async batch scrape job", inputSchema: { type: "object", properties: { jobId: { type: "string" } }, required: ["jobId"] } },
         { name: "agent", description: agentDesc, inputSchema: { type: "object", properties: { prompt: { type: "string" }, urls: { type: "array", items: { type: "string" } }, schema: { type: "string" }, maxSteps: { type: "number" } }, required: ["prompt"] } },
