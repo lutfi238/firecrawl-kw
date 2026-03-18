@@ -1788,6 +1788,7 @@ app.post("/*", async (c) => {
           } else if (args.stream === true) {
             // STREAMING MODE: return SSE stream directly
             const streamMode = (args.mode as string) || "orchestrate";
+            const images = (args.images as string[]) || [];
             
             if (streamMode === "synthesis") {
               // Direct streaming LLM call for synthesis
@@ -1795,7 +1796,8 @@ app.post("/*", async (c) => {
               const message = (args.message as string) || "";
               const systemPrompt = history.find(m => m.role === "system")?.content || "You are a helpful assistant.";
               const nonSystemHistory = history.filter(m => m.role !== "system");
-              const stream = callAIStream(aiSettings, systemPrompt, buildHistoryContext(nonSystemHistory, message), 4096);
+              const userContent = buildMultimodalContent(buildHistoryContext(nonSystemHistory, message), images);
+              const stream = callAIStream(aiSettings, systemPrompt, userContent, 4096);
               return new Response(stream, {
                 headers: { ...corsHeaders, "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
               });
@@ -1807,10 +1809,14 @@ app.post("/*", async (c) => {
             const intent = classifyChatIntent(message);
             
             if (intent === "casual") {
+              const userContent = buildMultimodalContent(
+                buildHistoryContext(history, message),
+                images,
+              );
               const stream = callAIStream(
                 aiSettings,
-                "You are a helpful AI assistant for Personal Firecrawl MCP, a web intelligence server. Answer conversationally and helpfully.",
-                buildHistoryContext(history, message),
+                "You are a helpful AI assistant for Personal Firecrawl MCP, a web intelligence server. Answer conversationally and helpfully. If the user sends images, describe and analyze them.",
+                userContent,
               );
               return new Response(stream, {
                 headers: { ...corsHeaders, "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
