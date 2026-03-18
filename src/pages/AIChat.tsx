@@ -664,8 +664,58 @@ export default function AIChat() {
           );
         })}
 
-        {/* Inline activity indicator */}
-        {loading && (
+        {/* Streaming bubble */}
+        {isStreaming && (
+          <div className="flex gap-3">
+            <div className="h-7 w-7 rounded-full bg-primary/20 flex items-center justify-center shrink-0 mt-0.5">
+              <Bot className="h-3.5 w-3.5 text-primary" />
+            </div>
+            <div className="rounded-lg px-4 py-2.5 max-w-[80%] text-sm glass text-foreground">
+              {(streamPhase === "thinking" || streamingThinking) && (
+                <ThinkingPanel
+                  content={streamingThinking}
+                  isStreaming={streamPhase === "thinking"}
+                />
+              )}
+              {streamPhase === "answering" && streamingContent && (
+                <div className="prose prose-invert prose-sm max-w-none">
+                  <ReactMarkdown
+                    components={{
+                      h1: ({children}) => <h1 className="text-lg font-bold text-primary mt-2 mb-1">{children}</h1>,
+                      h2: ({children}) => <h2 className="text-base font-bold text-primary/80 mt-2 mb-1">{children}</h2>,
+                      h3: ({children}) => <h3 className="text-sm font-semibold text-primary/70 mt-1 mb-1">{children}</h3>,
+                      strong: ({children}) => <strong className="font-bold text-foreground">{children}</strong>,
+                      em: ({children}) => <em className="italic text-muted-foreground">{children}</em>,
+                      code: ({children, className: cls}) => {
+                        const isBlock = cls?.includes("language-");
+                        return isBlock ? (
+                          <code className={cn("font-mono text-xs", cls)}>{children}</code>
+                        ) : (
+                          <code className="bg-muted px-1 rounded text-primary font-mono text-xs">{children}</code>
+                        );
+                      },
+                      pre: ({children}) => <pre className="bg-muted/50 p-3 rounded-lg overflow-x-auto my-2 border border-primary/10">{children}</pre>,
+                      ul: ({children}) => <ul className="list-disc list-inside space-y-1 my-1">{children}</ul>,
+                      ol: ({children}) => <ol className="list-decimal list-inside space-y-1 my-1">{children}</ol>,
+                      li: ({children}) => <li className="text-foreground/90">{children}</li>,
+                      a: ({href, children}) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary underline hover:text-primary/80">{children}</a>,
+                      p: ({children}) => <p className="mb-2 last:mb-0">{children}</p>,
+                      blockquote: ({children}) => <blockquote className="border-l-2 border-primary pl-3 italic text-muted-foreground my-2">{children}</blockquote>,
+                    }}
+                  >
+                    {streamingContent}
+                  </ReactMarkdown>
+                </div>
+              )}
+              {streamPhase === "idle" && !streamingContent && !streamingThinking && (
+                <span className="text-muted-foreground/50 text-xs font-mono">Connecting…</span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Inline activity indicator (for non-streaming tools) */}
+        {loading && !isStreaming && (
           <ChatActivityIndicator steps={activitySteps} elapsed={elapsed} />
         )}
       </div>
