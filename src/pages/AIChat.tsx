@@ -475,17 +475,36 @@ export default function AIChat() {
 
           const synthesisPrompt = [...baseRules, ...rankingRules].filter(Boolean).join("\n");
 
-          const synthesisResult = await callTool("chat", {
-            message: `User question: ${text}\n\n${combinedEvidence.slice(0, 14000)}`,
-            history: [{ role: "system", content: synthesisPrompt }],
-            mode: "synthesis",
-          });
+          // Stream synthesis
+          let synthText = "";
+          setIsStreaming(true);
+          setStreamingThinking("");
+          setStreamingContent("");
+          setStreamPhase("answering");
+
+          try {
+            for await (const delta of callToolStream("chat", {
+              message: `User question: ${text}\n\n${combinedEvidence.slice(0, 14000)}`,
+              history: [{ role: "system", content: synthesisPrompt }],
+              mode: "synthesis",
+            }, controller.signal)) {
+              if (controller.signal.aborted) return;
+              synthText += delta;
+              setStreamingContent(synthText);
+            }
+          } catch {
+            if (controller.signal.aborted) return;
+          }
+
+          setIsStreaming(false);
+          setStreamPhase("idle");
+          setStreamingContent("");
 
           if (controller.signal.aborted) return;
 
           traceSteps.push({ tool: "chat", label: "Synthesis", icon: "💬" });
 
-          const answer = synthesisResult.content.map(c => c.text ?? "").join("\n");
+          const answer = synthText;
 
           let sourcesFooter = "";
           if (allSourceUrls.length > 0 && !answer.includes("http")) {
