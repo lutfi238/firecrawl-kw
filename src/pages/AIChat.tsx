@@ -289,6 +289,9 @@ export default function AIChat() {
 
         if (action.tool === "chat" && "message" in action.args) {
           (action.args as any).history = history;
+          if (images.length > 0) {
+            (action.args as any).images = images;
+          }
 
           // Use streaming for chat tool
           const start = Date.now();
