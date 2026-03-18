@@ -4,6 +4,7 @@ import { useSettings } from "@/hooks/useSettings";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Send, Bot, User, XCircle, Search, Globe, Zap } from "lucide-react";
+import ReactMarkdown from "react-markdown";
 import { cn } from "@/lib/utils";
 import type { ChatMessage, ToolCallResult, ToolTraceStep } from "@/types/mcp";
 import { supabase } from "@/integrations/supabase/client";
