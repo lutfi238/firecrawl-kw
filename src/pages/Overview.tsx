@@ -118,7 +118,7 @@ export default function Overview() {
               key={tool.name}
               {...tool}
               usageCount={stats?.toolCounts?.[tool.name] ?? 0}
-              onClick={() => navigate("/tester")}
+              onClick={() => navigate(`/tester?tool=${tool.name}`)}
             />
           ))}
         </div>
