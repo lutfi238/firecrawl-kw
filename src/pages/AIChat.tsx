@@ -496,8 +496,8 @@ export default function AIChat() {
                   : "glass text-foreground"
               )}>
                 {msg.role === "assistant" ? (
+                  <div className="prose prose-invert prose-sm max-w-none">
                   <ReactMarkdown
-                    className="prose prose-invert prose-sm max-w-none"
                     components={{
                       h1: ({children}) => <h1 className="text-lg font-bold text-primary mt-2 mb-1">{children}</h1>,
                       h2: ({children}) => <h2 className="text-base font-bold text-primary/80 mt-2 mb-1">{children}</h2>,
