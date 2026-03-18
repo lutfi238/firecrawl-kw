@@ -109,7 +109,7 @@ function looksLikeHtml(text: string): boolean {
   return /<[a-z][\s\S]*>/i.test(text) && text.length > 20;
 }
 
-function needsEvidence(text: string): boolean {
+export function needsEvidence(text: string): boolean {
   const lower = text.toLowerCase();
   return EVIDENCE_KEYWORDS.some(kw => lower.includes(kw));
 }

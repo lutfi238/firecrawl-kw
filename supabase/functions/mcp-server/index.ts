@@ -1815,11 +1815,27 @@ app.post("/*", async (c) => {
               });
             }
             
-            // For orchestrate mode with streaming: do orchestration sync, then stream final synthesis
+            // For orchestrate mode with streaming: check if images are present
             const message = (args.message as string) || "";
             const history = (args.history as Array<{ role: string; content: string }>) || [];
             const intent = classifyChatIntent(message);
             
+            // If images present, route to direct multimodal LLM
+            // (even for factual intents — the frontend handles tool orchestration separately)
+            if (images.length > 0) {
+              const userContent = buildMultimodalContent(
+                buildHistoryContext(history, message),
+                images,
+              );
+              const systemPrompt = intent === "casual"
+                ? "You are a helpful AI assistant for Personal Firecrawl MCP, a web intelligence server. Answer conversationally and helpfully. If the user sends images, describe and analyze them."
+                : "You are a helpful AI assistant. The user has sent image(s) along with their query. Analyze the image(s) carefully and answer based on what you see. Be specific, accurate, and honest. If you cannot determine something from the image, say so.";
+              const stream = callAIStream(aiSettings, systemPrompt, userContent);
+              return new Response(stream, {
+                headers: { ...corsHeaders, "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+              });
+            }
+
             if (intent === "casual") {
               const userContent = buildMultimodalContent(
                 buildHistoryContext(history, message),
@@ -1835,7 +1851,7 @@ app.post("/*", async (c) => {
               });
             }
             
-            // For non-casual intents: fall back to non-streaming orchestration
+            // For non-casual intents without images: fall back to non-streaming orchestration
             result = await handleChatWithOrchestration(args, aiSettings, authHeader);
           } else {
             result = await handleChatWithOrchestration(args, aiSettings, authHeader);
