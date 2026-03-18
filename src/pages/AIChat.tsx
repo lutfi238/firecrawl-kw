@@ -263,6 +263,93 @@ export default function AIChat() {
     try {
       const history = getHistory();
       const rendererAvailable = settings.renderer_enabled === "true";
+
+      // If images attached, bypass intent classification and go directly to chat with images
+      if (images.length > 0) {
+        pushActivity("Analyzing image(s)…");
+
+        const chatArgs: Record<string, unknown> = {
+          message: text || "What do you see in this image?",
+          history,
+          images,
+          stream: true,
+        };
+
+        const start = Date.now();
+        let fullText = "";
+        let thinkBuffer = "";
+        let inThink = false;
+        let thinkDone = false;
+
+        setIsStreaming(true);
+        setStreamingThinking("");
+        setStreamingContent("");
+        setStreamPhase("idle");
+
+        const traceSteps: ToolTraceStep[] = [];
+
+        try {
+          for await (const delta of callToolStream("chat", chatArgs, controller.signal)) {
+            if (controller.signal.aborted) return;
+            fullText += delta;
+
+            if (!thinkDone) {
+              if (!inThink && fullText.includes("<think>")) {
+                inThink = true;
+                setStreamPhase("thinking");
+              }
+              if (inThink) {
+                const thinkStart = fullText.indexOf("<think>") + 7;
+                const thinkEnd = fullText.indexOf("</think>");
+                if (thinkEnd !== -1) {
+                  thinkBuffer = fullText.slice(thinkStart, thinkEnd).trim();
+                  thinkDone = true;
+                  inThink = false;
+                  setStreamingThinking(thinkBuffer);
+                  setStreamPhase("answering");
+                  const afterThink = fullText.slice(thinkEnd + 8).trim();
+                  setStreamingContent(afterThink);
+                } else {
+                  thinkBuffer = fullText.slice(thinkStart).trim();
+                  setStreamingThinking(thinkBuffer);
+                }
+                continue;
+              }
+            }
+
+            if (thinkDone) {
+              const afterThink = fullText.slice(fullText.indexOf("</think>") + 8).trim();
+              setStreamingContent(afterThink);
+            } else {
+              setStreamPhase("answering");
+              setStreamingContent(fullText);
+            }
+          }
+        } catch (err) {
+          if (!controller.signal.aborted) {
+            fullText = fullText || `Error: ${err instanceof Error ? err.message : "Stream failed"}`;
+          }
+        }
+
+        const duration = Date.now() - start;
+        const cleanFull = fullText
+          .replace(/<think>[\s\S]*?<\/think>/gi, "")
+          .replace(/\n---\n\*Orchestration:[\s\S]*?\*$/gm, "")
+          .trim();
+
+        setIsStreaming(false);
+        setStreamPhase("idle");
+        setStreamingThinking("");
+        setStreamingContent("");
+
+        traceSteps.push({ tool: "chat", label: "Image analysis", icon: "🖼️", durationMs: duration });
+        addMessage({ role: "assistant", content: fullText, toolTrace: traceSteps });
+
+        const finalResult: ToolCallResult = { content: [{ type: "text", text: fullText }] };
+        await logToMonitor("chat", chatArgs, finalResult, duration);
+        return;
+      }
+
       const intent = classifyIntent(text, history, { rendererAvailable });
 
       if (intent.localMessage) {
