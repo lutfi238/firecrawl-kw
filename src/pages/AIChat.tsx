@@ -519,6 +519,9 @@ export default function AIChat() {
                   if (totalMs > 0) pillParts.push(`${(totalMs / 1000).toFixed(1)}s`);
                   return (
                     <>
+                      {thinkingContent && (
+                        <ThinkingPanel content={thinkingContent} durationMs={totalMs} />
+                      )}
                       <div className="prose prose-invert prose-sm max-w-none">
                         <ReactMarkdown
                           components={{
