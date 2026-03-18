@@ -1,4 +1,5 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useToolExecutorWithActivity } from "@/hooks/useToolExecutorWithActivity";
 import { useSettings } from "@/hooks/useSettings";
 import { ToolForm } from "@/components/ToolForm";
@@ -13,7 +14,20 @@ import { XCircle, AlertTriangle } from "lucide-react";
 import { Link } from "react-router-dom";
 
 export default function ToolTester() {
-  const [selectedTool, setSelectedTool] = useState(TOOL_DEFINITIONS[0].name);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [selectedTool, setSelectedTool] = useState(() => {
+    const preselected = searchParams.get("tool");
+    if (preselected && TOOL_DEFINITIONS.some(t => t.name === preselected)) {
+      return preselected;
+    }
+    return TOOL_DEFINITIONS[0].name;
+  });
+
+  useEffect(() => {
+    if (searchParams.has("tool")) {
+      setSearchParams({}, { replace: true });
+    }
+  }, []);
   const { execute, cancel, result, durationMs, loading, error, steps } = useToolExecutorWithActivity();
   const { settings } = useSettings();
   const [lastArgs, setLastArgs] = useState<Record<string, unknown> | null>(null);
