@@ -499,9 +499,21 @@ export default function AIChat() {
                   const cleanContent = msg.content
                     .replace(/<think>[\s\S]*?<\/think>/gi, "")
                     .trim();
-                  const webTools = ["search", "scrape", "scrape_js", "crawl", "map", "extract", "screenshot", "search_and_scrape", "html_to_markdown", "batch_scrape", "agent", "agent_status", "check_crawl_status", "check_batch_status"];
-                  const hasWebTrace = msg.toolTrace?.some(t => webTools.includes(t.tool));
                   const totalMs = msg.toolTrace?.reduce((sum, t) => sum + (t.durationMs ?? 0), 0) ?? 0;
+                  const usedTools = msg.toolTrace
+                    ? [...new Set(msg.toolTrace.map(t => t.tool).filter(t => t !== "chat"))]
+                    : [];
+                  const truncateModel = (m: string) => {
+                    if (!m) return "";
+                    const after = m.includes("/") ? m.split("/").pop()! : m;
+                    const clean = after.replace(/:free$/i, "").replace(/-instruct$/i, "");
+                    return clean.length > 20 ? clean.slice(0, 17) + "…" : clean;
+                  };
+                  const modelName = truncateModel(settings.ai_model || "");
+                  const pillParts: string[] = [];
+                  if (usedTools.length > 0) pillParts.push(usedTools.join(", "));
+                  if (modelName) pillParts.push(modelName);
+                  if (totalMs > 0) pillParts.push(`${(totalMs / 1000).toFixed(1)}s`);
                   return (
                     <>
                       <div className="prose prose-invert prose-sm max-w-none">
@@ -532,10 +544,10 @@ export default function AIChat() {
                           {cleanContent}
                         </ReactMarkdown>
                       </div>
-                      {hasWebTrace && totalMs > 0 && (
+                      {pillParts.length > 0 && (
                         <div className="mt-1.5 flex justify-end">
                           <span className="text-[10px] font-mono text-muted-foreground/40">
-                            · {(totalMs / 1000).toFixed(1)}s
+                            · {pillParts.join(" · ")}
                           </span>
                         </div>
                       )}
