@@ -279,6 +279,91 @@ export default function AIChat() {
 
         if (action.tool === "chat" && "message" in action.args) {
           (action.args as any).history = history;
+
+          // Use streaming for chat tool
+          const start = Date.now();
+          let fullText = "";
+          let thinkBuffer = "";
+          let inThink = false;
+          let thinkDone = false;
+
+          setIsStreaming(true);
+          setStreamingThinking("");
+          setStreamingContent("");
+          setStreamPhase("idle");
+
+          try {
+            for await (const delta of callToolStream("chat", action.args as Record<string, unknown>, controller.signal)) {
+              if (controller.signal.aborted) return;
+              fullText += delta;
+
+              // Parse <think> tags progressively
+              if (!thinkDone) {
+                // Check if we've entered a think block
+                if (!inThink && fullText.includes("<think>")) {
+                  inThink = true;
+                  setStreamPhase("thinking");
+                }
+
+                if (inThink) {
+                  const thinkStart = fullText.indexOf("<think>") + 7;
+                  const thinkEnd = fullText.indexOf("</think>");
+                  if (thinkEnd !== -1) {
+                    // Think block complete
+                    thinkBuffer = fullText.slice(thinkStart, thinkEnd).trim();
+                    thinkDone = true;
+                    inThink = false;
+                    setStreamingThinking(thinkBuffer);
+                    setStreamPhase("answering");
+                    // Extract clean content after </think>
+                    const afterThink = fullText.slice(thinkEnd + 8).trim();
+                    setStreamingContent(afterThink);
+                  } else {
+                    // Still in think block
+                    thinkBuffer = fullText.slice(thinkStart).trim();
+                    setStreamingThinking(thinkBuffer);
+                  }
+                  continue;
+                }
+              }
+
+              // Not in think block — stream main content
+              if (thinkDone) {
+                const afterThink = fullText.slice(fullText.indexOf("</think>") + 8).trim();
+                setStreamingContent(afterThink);
+              } else {
+                if (streamPhase === "idle") setStreamPhase("answering");
+                setStreamingContent(fullText);
+              }
+            }
+          } catch (err) {
+            if (!controller.signal.aborted) {
+              fullText = fullText || `Error: ${err instanceof Error ? err.message : "Stream failed"}`;
+            }
+          }
+
+          const duration = Date.now() - start;
+
+          // Finalize: strip orchestration and think tags, add as message
+          const cleanFull = fullText
+            .replace(/<think>[\s\S]*?<\/think>/gi, "")
+            .replace(/\n---\n\*Orchestration:[\s\S]*?\*$/gm, "")
+            .trim();
+
+          setIsStreaming(false);
+          setStreamPhase("idle");
+          setStreamingThinking("");
+          setStreamingContent("");
+
+          const finalResult: ToolCallResult = { content: [{ type: "text", text: fullText }] };
+          await logToMonitor(action.tool, action.args as Record<string, unknown>, finalResult, duration);
+
+          toolResults.push({ tool: action.tool, result: finalResult, duration });
+          traceSteps.push({ tool: action.tool, label: meta.label, icon: meta.icon, durationMs: duration });
+
+          // Add the final message directly
+          addMessage({ role: "assistant", content: fullText, toolTrace: traceSteps });
+          return; // Chat streaming handled — skip remaining flow
         }
 
         const start = Date.now();
