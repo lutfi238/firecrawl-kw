@@ -1266,20 +1266,32 @@ async function handleChatWithOrchestration(
   const message = (args.message as string) || "";
   const history = (args.history as Array<{ role: string; content: string }>) || [];
   const mode = (args.mode as string) || "orchestrate";
+  const images = (args.images as string[]) || [];
 
   // === SYNTHESIS BYPASS MODE ===
-  // When mode is "synthesis", skip all orchestration and call the model directly.
-  // Used by the AI Chat frontend for final evidence synthesis after tools have already run.
   if (mode === "synthesis") {
     console.log("[chat] Synthesis bypass mode — direct LLM call, no orchestration");
     const systemPrompt = history.find(m => m.role === "system")?.content || "You are a helpful assistant.";
     const nonSystemHistory = history.filter(m => m.role !== "system");
-    const answer = await callAI(aiSettings, systemPrompt, buildHistoryContext(nonSystemHistory, message), 4096);
+    const userContent = buildMultimodalContent(buildHistoryContext(nonSystemHistory, message), images);
+    const answer = await callAI(aiSettings, systemPrompt, userContent, 4096);
     return { content: [{ type: "text", text: answer }] };
   }
 
   const intent = classifyChatIntent(message);
   console.log("[chat-orchestrator] Message:", message.slice(0, 100), "| Intent:", intent, "| Mode:", isHeavyChatIntent(intent) ? "async" : "sync");
+
+  // If images are attached, treat as casual (direct LLM with vision) regardless of intent
+  if (images.length > 0) {
+    console.log("[chat-orchestrator] Images attached — using direct multimodal LLM");
+    const userContent = buildMultimodalContent(buildHistoryContext(history, message), images);
+    const answer = await callAI(
+      aiSettings,
+      "You are a helpful AI assistant. The user has sent images. Analyze the images carefully and respond to their message. If no text accompanies the images, describe what you see.",
+      userContent,
+    );
+    return { content: [{ type: "text", text: answer }] };
+  }
 
   const steps: string[] = [];
   const addStep = (s: string) => { steps.push(s); console.log("[chat-orchestrator]", s); };
