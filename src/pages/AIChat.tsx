@@ -181,7 +181,7 @@ export default function AIChat() {
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, activitySteps]);
+  }, [messages, activitySteps, streamingContent, streamingThinking]);
 
   useEffect(() => {
     if (!loading || !loadingStartedAt) return;
