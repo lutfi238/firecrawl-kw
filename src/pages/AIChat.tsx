@@ -684,7 +684,24 @@ export default function AIChat() {
                     </>
                   );
                 })() : (
-                  <span className="whitespace-pre-wrap break-words">{msg.content}</span>
+                  <>
+                    {msg.images && msg.images.length > 0 && (
+                      <div className="flex flex-wrap gap-2 mb-2">
+                        {msg.images.map((img, i) => (
+                          <img
+                            key={i}
+                            src={img}
+                            alt={`Uploaded ${i + 1}`}
+                            className="h-24 max-w-[200px] object-cover rounded-lg border border-primary/10 cursor-pointer hover:opacity-80 transition-opacity"
+                            onClick={() => setLightboxSrc(img)}
+                          />
+                        ))}
+                      </div>
+                    )}
+                    {msg.content && (
+                      <span className="whitespace-pre-wrap break-words">{msg.content}</span>
+                    )}
+                  </>
                 )}
               </div>
               {msg.role === "user" && (
