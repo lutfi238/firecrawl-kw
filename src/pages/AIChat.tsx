@@ -10,7 +10,7 @@ import type { ChatMessage, ToolCallResult, ToolTraceStep } from "@/types/mcp";
 import { supabase } from "@/integrations/supabase/client";
 import { SlashCommandPicker } from "@/components/SlashCommandPicker";
 import { ChatActivityIndicator } from "@/components/ChatActivityIndicator";
-import { ToolTraceCollapsible } from "@/components/ToolTraceCollapsible";
+
 import { classifyIntent, registerJob, type JobType } from "@/lib/intentClassifier";
 
 // ========== Escalation helpers ==========
@@ -495,40 +495,54 @@ export default function AIChat() {
                   ? "bg-primary/15 text-foreground"
                   : "glass text-foreground"
               )}>
-                {msg.role === "assistant" ? (
-                  <div className="prose prose-invert prose-sm max-w-none">
-                  <ReactMarkdown
-                    components={{
-                      h1: ({children}) => <h1 className="text-lg font-bold text-primary mt-2 mb-1">{children}</h1>,
-                      h2: ({children}) => <h2 className="text-base font-bold text-primary/80 mt-2 mb-1">{children}</h2>,
-                      h3: ({children}) => <h3 className="text-sm font-semibold text-primary/70 mt-1 mb-1">{children}</h3>,
-                      strong: ({children}) => <strong className="font-bold text-foreground">{children}</strong>,
-                      em: ({children}) => <em className="italic text-muted-foreground">{children}</em>,
-                      code: ({children, className}) => {
-                        const isBlock = className?.includes("language-");
-                        return isBlock ? (
-                          <code className={cn("font-mono text-xs", className)}>{children}</code>
-                        ) : (
-                          <code className="bg-muted px-1 rounded text-primary font-mono text-xs">{children}</code>
-                        );
-                      },
-                      pre: ({children}) => <pre className="bg-muted/50 p-3 rounded-lg overflow-x-auto my-2 border border-primary/10">{children}</pre>,
-                      ul: ({children}) => <ul className="list-disc list-inside space-y-1 my-1">{children}</ul>,
-                      ol: ({children}) => <ol className="list-decimal list-inside space-y-1 my-1">{children}</ol>,
-                      li: ({children}) => <li className="text-foreground/90">{children}</li>,
-                      a: ({href, children}) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary underline hover:text-primary/80">{children}</a>,
-                      p: ({children}) => <p className="mb-2 last:mb-0">{children}</p>,
-                      blockquote: ({children}) => <blockquote className="border-l-2 border-primary pl-3 italic text-muted-foreground my-2">{children}</blockquote>,
-                    }}
-                  >
-                    {msg.content}
-                  </ReactMarkdown>
-                  </div>
-                ) : (
+                {msg.role === "assistant" ? (() => {
+                  const cleanContent = msg.content
+                    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+                    .trim();
+                  const webTools = ["search", "scrape", "scrape_js", "crawl", "map", "extract", "screenshot", "search_and_scrape", "html_to_markdown", "batch_scrape", "agent", "agent_status", "check_crawl_status", "check_batch_status"];
+                  const hasWebTrace = msg.toolTrace?.some(t => webTools.includes(t.tool));
+                  const totalMs = msg.toolTrace?.reduce((sum, t) => sum + (t.durationMs ?? 0), 0) ?? 0;
+                  return (
+                    <>
+                      <div className="prose prose-invert prose-sm max-w-none">
+                        <ReactMarkdown
+                          components={{
+                            h1: ({children}) => <h1 className="text-lg font-bold text-primary mt-2 mb-1">{children}</h1>,
+                            h2: ({children}) => <h2 className="text-base font-bold text-primary/80 mt-2 mb-1">{children}</h2>,
+                            h3: ({children}) => <h3 className="text-sm font-semibold text-primary/70 mt-1 mb-1">{children}</h3>,
+                            strong: ({children}) => <strong className="font-bold text-foreground">{children}</strong>,
+                            em: ({children}) => <em className="italic text-muted-foreground">{children}</em>,
+                            code: ({children, className}) => {
+                              const isBlock = className?.includes("language-");
+                              return isBlock ? (
+                                <code className={cn("font-mono text-xs", className)}>{children}</code>
+                              ) : (
+                                <code className="bg-muted px-1 rounded text-primary font-mono text-xs">{children}</code>
+                              );
+                            },
+                            pre: ({children}) => <pre className="bg-muted/50 p-3 rounded-lg overflow-x-auto my-2 border border-primary/10">{children}</pre>,
+                            ul: ({children}) => <ul className="list-disc list-inside space-y-1 my-1">{children}</ul>,
+                            ol: ({children}) => <ol className="list-decimal list-inside space-y-1 my-1">{children}</ol>,
+                            li: ({children}) => <li className="text-foreground/90">{children}</li>,
+                            a: ({href, children}) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary underline hover:text-primary/80">{children}</a>,
+                            p: ({children}) => <p className="mb-2 last:mb-0">{children}</p>,
+                            blockquote: ({children}) => <blockquote className="border-l-2 border-primary pl-3 italic text-muted-foreground my-2">{children}</blockquote>,
+                          }}
+                        >
+                          {cleanContent}
+                        </ReactMarkdown>
+                      </div>
+                      {hasWebTrace && totalMs > 0 && (
+                        <div className="mt-1.5 flex justify-end">
+                          <span className="text-[10px] font-mono text-muted-foreground/40">
+                            · {(totalMs / 1000).toFixed(1)}s
+                          </span>
+                        </div>
+                      )}
+                    </>
+                  );
+                })() : (
                   <span className="whitespace-pre-wrap break-words">{msg.content}</span>
-                )}
-                {msg.role === "assistant" && msg.toolTrace && msg.toolTrace.length > 0 && (
-                  <ToolTraceCollapsible trace={msg.toolTrace} />
                 )}
               </div>
               {msg.role === "user" && (
