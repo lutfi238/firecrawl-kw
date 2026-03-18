@@ -272,90 +272,133 @@ export default function AIChat() {
       const history = getHistory();
       const rendererAvailable = settings.renderer_enabled === "true";
 
-      // If images attached, bypass intent classification and go directly to chat with images
+      // If images attached, check vision capability and use smart routing
       if (images.length > 0) {
-        pushActivity("Analyzing image(s)…");
+        const visionCheck = checkVisionSupport(
+          settings.ai_base_url || "https://api.openai.com/v1",
+          settings.ai_model || ""
+        );
 
-        const chatArgs: Record<string, unknown> = {
-          message: text || "What do you see in this image?",
-          history,
-          images,
-          stream: true,
-        };
-
-        const start = Date.now();
-        let fullText = "";
-        let thinkBuffer = "";
-        let inThink = false;
-        let thinkDone = false;
-
-        setIsStreaming(true);
-        setStreamingThinking("");
-        setStreamingContent("");
-        setStreamPhase("idle");
-
-        const traceSteps: ToolTraceStep[] = [];
-
-        try {
-          for await (const delta of callToolStream("chat", chatArgs, controller.signal)) {
-            if (controller.signal.aborted) return;
-            fullText += delta;
-
-            if (!thinkDone) {
-              if (!inThink && fullText.includes("<think>")) {
-                inThink = true;
-                setStreamPhase("thinking");
-              }
-              if (inThink) {
-                const thinkStart = fullText.indexOf("<think>") + 7;
-                const thinkEnd = fullText.indexOf("</think>");
-                if (thinkEnd !== -1) {
-                  thinkBuffer = fullText.slice(thinkStart, thinkEnd).trim();
-                  thinkDone = true;
-                  inThink = false;
-                  setStreamingThinking(thinkBuffer);
-                  setStreamPhase("answering");
-                  const afterThink = fullText.slice(thinkEnd + 8).trim();
-                  setStreamingContent(afterThink);
-                } else {
-                  thinkBuffer = fullText.slice(thinkStart).trim();
-                  setStreamingThinking(thinkBuffer);
-                }
-                continue;
-              }
-            }
-
-            if (thinkDone) {
-              const afterThink = fullText.slice(fullText.indexOf("</think>") + 8).trim();
-              setStreamingContent(afterThink);
-            } else {
-              setStreamPhase("answering");
-              setStreamingContent(fullText);
-            }
-          }
-        } catch (err) {
-          if (!controller.signal.aborted) {
-            fullText = fullText || `Error: ${err instanceof Error ? err.message : "Stream failed"}`;
-          }
+        if (!visionCheck.supported) {
+          toast.error(visionCheck.reason || "Current model does not support image input");
+          addMessage({
+            role: "assistant",
+            content: `⚠️ **Image input not supported**\n\n${visionCheck.reason || "The current AI model does not support image analysis."}\n\nChange your model in Settings → AI Provider to use a vision-capable model (e.g. GPT-4o, Gemini, Claude 3).`,
+          });
+          return;
         }
 
-        const duration = Date.now() - start;
-        const cleanFull = fullText
-          .replace(/<think>[\s\S]*?<\/think>/gi, "")
-          .replace(/\n---\n\*Orchestration:[\s\S]*?\*$/gm, "")
-          .trim();
+        // Determine if this is a pure image query or needs tool orchestration
+        const needsTools = text && (
+          needsEvidence(text) ||
+          isRankingQuery(text) ||
+          /https?:\/\/[^\s]+/i.test(text)
+        );
 
-        setIsStreaming(false);
-        setStreamPhase("idle");
-        setStreamingThinking("");
-        setStreamingContent("");
+        if (needsTools) {
+          // Image + research query: run intent classification, but pass images to final synthesis
+          pushActivity("Routing request with image context…");
+          const intent = classifyIntent(text, history, { rendererAvailable });
 
-        traceSteps.push({ tool: "chat", label: "Image analysis", icon: "🖼️", durationMs: duration });
-        addMessage({ role: "assistant", content: fullText, toolTrace: traceSteps });
+          if (intent.localMessage) {
+            addMessage({ role: "assistant", content: intent.localMessage });
+            return;
+          }
 
-        const finalResult: ToolCallResult = { content: [{ type: "text", text: fullText }] };
-        await logToMonitor("chat", chatArgs, finalResult, duration);
-        return;
+          // Execute tools normally, but include images in the final chat/synthesis call
+          // The images will be included when the chat tool is called below
+          // We inject them into the action args
+          for (const action of intent.actions) {
+            if (action.tool === "chat" && "message" in action.args) {
+              (action.args as any).images = images;
+            }
+          }
+
+          // Fall through to the normal intent execution flow below
+          // (don't return — let the regular code handle it)
+          // We need to set images on synthesis calls too
+          // This is handled by passing images through to callToolStream
+        } else {
+          // Pure image analysis (describe, analyze, image-only, simple question about image)
+          pushActivity("Analyzing image(s)…");
+
+          const chatArgs: Record<string, unknown> = {
+            message: text || "What do you see in this image?",
+            history,
+            images,
+            stream: true,
+          };
+
+          const start = Date.now();
+          let fullText = "";
+          let thinkBuffer = "";
+          let inThink = false;
+          let thinkDone = false;
+
+          setIsStreaming(true);
+          setStreamingThinking("");
+          setStreamingContent("");
+          setStreamPhase("idle");
+
+          const imgTraceSteps: ToolTraceStep[] = [];
+
+          try {
+            for await (const delta of callToolStream("chat", chatArgs, controller.signal)) {
+              if (controller.signal.aborted) return;
+              fullText += delta;
+
+              if (!thinkDone) {
+                if (!inThink && fullText.includes("<think>")) {
+                  inThink = true;
+                  setStreamPhase("thinking");
+                }
+                if (inThink) {
+                  const thinkStart = fullText.indexOf("<think>") + 7;
+                  const thinkEnd = fullText.indexOf("</think>");
+                  if (thinkEnd !== -1) {
+                    thinkBuffer = fullText.slice(thinkStart, thinkEnd).trim();
+                    thinkDone = true;
+                    inThink = false;
+                    setStreamingThinking(thinkBuffer);
+                    setStreamPhase("answering");
+                    const afterThink = fullText.slice(thinkEnd + 8).trim();
+                    setStreamingContent(afterThink);
+                  } else {
+                    thinkBuffer = fullText.slice(thinkStart).trim();
+                    setStreamingThinking(thinkBuffer);
+                  }
+                  continue;
+                }
+              }
+
+              if (thinkDone) {
+                const afterThink = fullText.slice(fullText.indexOf("</think>") + 8).trim();
+                setStreamingContent(afterThink);
+              } else {
+                setStreamPhase("answering");
+                setStreamingContent(fullText);
+              }
+            }
+          } catch (err) {
+            if (!controller.signal.aborted) {
+              fullText = fullText || `Error: ${err instanceof Error ? err.message : "Stream failed"}`;
+            }
+          }
+
+          const duration = Date.now() - start;
+
+          setIsStreaming(false);
+          setStreamPhase("idle");
+          setStreamingThinking("");
+          setStreamingContent("");
+
+          imgTraceSteps.push({ tool: "chat", label: "Image analysis", icon: "🖼️", durationMs: duration });
+          addMessage({ role: "assistant", content: fullText, toolTrace: imgTraceSteps });
+
+          const finalResult: ToolCallResult = { content: [{ type: "text", text: fullText }] };
+          await logToMonitor("chat", chatArgs, finalResult, duration);
+          return;
+        }
       }
 
       const intent = classifyIntent(text, history, { rendererAvailable });
