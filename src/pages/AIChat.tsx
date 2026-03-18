@@ -4,6 +4,7 @@ import { useSettings } from "@/hooks/useSettings";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Send, Bot, User, XCircle, Search, Globe, Zap } from "lucide-react";
+import ReactMarkdown from "react-markdown";
 import { cn } from "@/lib/utils";
 import type { ChatMessage, ToolCallResult, ToolTraceStep } from "@/types/mcp";
 import { supabase } from "@/integrations/supabase/client";
@@ -494,7 +495,38 @@ export default function AIChat() {
                   ? "bg-primary/15 text-foreground"
                   : "glass text-foreground"
               )}>
-                <span className="whitespace-pre-wrap break-words">{msg.content}</span>
+                {msg.role === "assistant" ? (
+                  <div className="prose prose-invert prose-sm max-w-none">
+                  <ReactMarkdown
+                    components={{
+                      h1: ({children}) => <h1 className="text-lg font-bold text-primary mt-2 mb-1">{children}</h1>,
+                      h2: ({children}) => <h2 className="text-base font-bold text-primary/80 mt-2 mb-1">{children}</h2>,
+                      h3: ({children}) => <h3 className="text-sm font-semibold text-primary/70 mt-1 mb-1">{children}</h3>,
+                      strong: ({children}) => <strong className="font-bold text-foreground">{children}</strong>,
+                      em: ({children}) => <em className="italic text-muted-foreground">{children}</em>,
+                      code: ({children, className}) => {
+                        const isBlock = className?.includes("language-");
+                        return isBlock ? (
+                          <code className={cn("font-mono text-xs", className)}>{children}</code>
+                        ) : (
+                          <code className="bg-muted px-1 rounded text-primary font-mono text-xs">{children}</code>
+                        );
+                      },
+                      pre: ({children}) => <pre className="bg-muted/50 p-3 rounded-lg overflow-x-auto my-2 border border-primary/10">{children}</pre>,
+                      ul: ({children}) => <ul className="list-disc list-inside space-y-1 my-1">{children}</ul>,
+                      ol: ({children}) => <ol className="list-decimal list-inside space-y-1 my-1">{children}</ol>,
+                      li: ({children}) => <li className="text-foreground/90">{children}</li>,
+                      a: ({href, children}) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary underline hover:text-primary/80">{children}</a>,
+                      p: ({children}) => <p className="mb-2 last:mb-0">{children}</p>,
+                      blockquote: ({children}) => <blockquote className="border-l-2 border-primary pl-3 italic text-muted-foreground my-2">{children}</blockquote>,
+                    }}
+                  >
+                    {msg.content}
+                  </ReactMarkdown>
+                  </div>
+                ) : (
+                  <span className="whitespace-pre-wrap break-words">{msg.content}</span>
+                )}
                 {msg.role === "assistant" && msg.toolTrace && msg.toolTrace.length > 0 && (
                   <ToolTraceCollapsible trace={msg.toolTrace} />
                 )}
