@@ -336,7 +336,7 @@ export default function AIChat() {
                 const afterThink = fullText.slice(fullText.indexOf("</think>") + 8).trim();
                 setStreamingContent(afterThink);
               } else {
-                if (streamPhase === "idle") setStreamPhase("answering");
+                setStreamPhase("answering");
                 setStreamingContent(fullText);
               }
             }
