@@ -1766,6 +1766,40 @@ app.post("/*", async (c) => {
           const aiSettings = getAiSettingsFromMap(cSettings);
           if (!aiSettings) {
             result = { content: [{ type: "text", text: "Error: AI provider not configured. Go to Settings → AI Provider and add your API key." }], isError: true };
+          } else if (args.stream === true) {
+            // STREAMING MODE: return SSE stream directly
+            const streamMode = (args.mode as string) || "orchestrate";
+            
+            if (streamMode === "synthesis") {
+              // Direct streaming LLM call for synthesis
+              const history = (args.history as Array<{ role: string; content: string }>) || [];
+              const message = (args.message as string) || "";
+              const systemPrompt = history.find(m => m.role === "system")?.content || "You are a helpful assistant.";
+              const nonSystemHistory = history.filter(m => m.role !== "system");
+              const stream = callAIStream(aiSettings, systemPrompt, buildHistoryContext(nonSystemHistory, message), 4096);
+              return new Response(stream, {
+                headers: { ...corsHeaders, "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+              });
+            }
+            
+            // For orchestrate mode with streaming: do orchestration sync, then stream final synthesis
+            const message = (args.message as string) || "";
+            const history = (args.history as Array<{ role: string; content: string }>) || [];
+            const intent = classifyChatIntent(message);
+            
+            if (intent === "casual") {
+              const stream = callAIStream(
+                aiSettings,
+                "You are a helpful AI assistant for Personal Firecrawl MCP, a web intelligence server. Answer conversationally and helpfully.",
+                buildHistoryContext(history, message),
+              );
+              return new Response(stream, {
+                headers: { ...corsHeaders, "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+              });
+            }
+            
+            // For non-casual intents: fall back to non-streaming orchestration
+            result = await handleChatWithOrchestration(args, aiSettings, authHeader);
           } else {
             result = await handleChatWithOrchestration(args, aiSettings, authHeader);
           }
