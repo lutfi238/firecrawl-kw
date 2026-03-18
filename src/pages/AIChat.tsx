@@ -497,6 +497,8 @@ export default function AIChat() {
                   : "glass text-foreground"
               )}>
                 {msg.role === "assistant" ? (() => {
+                  const thinkMatch = msg.content.match(/<think>([\s\S]*?)<\/think>/i);
+                  const thinkingContent = thinkMatch?.[1]?.trim() || null;
                   const cleanContent = msg.content
                     .replace(/<think>[\s\S]*?<\/think>/gi, "")
                     .trim();
