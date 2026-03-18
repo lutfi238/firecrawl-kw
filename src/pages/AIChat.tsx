@@ -10,7 +10,7 @@ import type { ChatMessage, ToolCallResult, ToolTraceStep } from "@/types/mcp";
 import { supabase } from "@/integrations/supabase/client";
 import { SlashCommandPicker } from "@/components/SlashCommandPicker";
 import { ChatActivityIndicator } from "@/components/ChatActivityIndicator";
-import { ToolTraceCollapsible } from "@/components/ToolTraceCollapsible";
+
 import { classifyIntent, registerJob, type JobType } from "@/lib/intentClassifier";
 
 // ========== Escalation helpers ==========
