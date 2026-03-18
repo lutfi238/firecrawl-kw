@@ -1,9 +1,11 @@
-import { useRef, useCallback } from "react";
-import { ImagePlus, X } from "lucide-react";
+import { useRef, useCallback, useState } from "react";
+import { ImagePlus, X, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { toast } from "sonner";
+import { preprocessImage, type ProcessedImage } from "@/lib/imageUtils";
 
-const MAX_FILE_SIZE = 4 * 1024 * 1024; // 4MB
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB raw input
+const MAX_IMAGES = 4;
 const ACCEPTED_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/webp"];
 
 interface ImageUploadButtonProps {
@@ -15,31 +17,61 @@ interface ImageUploadButtonProps {
 
 export function ImageUploadButton({ images, onAdd, onRemove, disabled }: ImageUploadButtonProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const [processing, setProcessing] = useState(false);
 
   const handleFiles = useCallback(async (files: FileList | null) => {
-    if (!files) return;
-    const results: string[] = [];
+    if (!files || files.length === 0) return;
 
-    for (const file of Array.from(files)) {
+    const remaining = MAX_IMAGES - images.length;
+    if (remaining <= 0) {
+      toast.error(`Maximum ${MAX_IMAGES} images allowed`);
+      return;
+    }
+
+    const fileArray = Array.from(files).slice(0, remaining);
+    if (files.length > remaining) {
+      toast.warning(`Only ${remaining} more image(s) can be added (max ${MAX_IMAGES})`);
+    }
+
+    // Validate types
+    const validFiles: File[] = [];
+    for (const file of fileArray) {
       if (!ACCEPTED_TYPES.includes(file.type)) {
-        console.warn(`Rejected file type: ${file.type}`);
+        toast.error(`Unsupported format: ${file.type.split("/")[1] || "unknown"}. Use PNG, JPEG, or WebP.`);
         continue;
       }
       if (file.size > MAX_FILE_SIZE) {
-        console.warn(`File too large: ${(file.size / 1024 / 1024).toFixed(1)}MB (max 4MB)`);
+        toast.error(`"${file.name}" is too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Max ${MAX_FILE_SIZE / 1024 / 1024}MB.`);
         continue;
       }
-      const dataUrl = await new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.readAsDataURL(file);
-      });
-      results.push(dataUrl);
+      validFiles.push(file);
     }
 
+    if (validFiles.length === 0) {
+      if (inputRef.current) inputRef.current.value = "";
+      return;
+    }
+
+    setProcessing(true);
+    const results: string[] = [];
+
+    for (const file of validFiles) {
+      try {
+        const processed: ProcessedImage = await preprocessImage(file);
+        const savedKb = Math.round((file.size - processed.processedSize) / 1024);
+        if (savedKb > 100) {
+          console.log(`[image] Compressed ${file.name}: ${(file.size / 1024).toFixed(0)}KB → ${(processed.processedSize / 1024).toFixed(0)}KB (saved ${savedKb}KB)`);
+        }
+        results.push(processed.dataUrl);
+      } catch (err) {
+        toast.error(`Failed to process "${file.name}": ${err instanceof Error ? err.message : "unknown error"}`);
+      }
+    }
+
+    setProcessing(false);
     if (results.length > 0) onAdd(results);
     if (inputRef.current) inputRef.current.value = "";
-  }, [onAdd]);
+  }, [onAdd, images.length]);
 
   return (
     <>
@@ -50,18 +82,22 @@ export function ImageUploadButton({ images, onAdd, onRemove, disabled }: ImageUp
         multiple
         className="hidden"
         onChange={(e) => handleFiles(e.target.files)}
-        disabled={disabled}
+        disabled={disabled || processing}
       />
       <Button
         type="button"
         size="icon"
         variant="ghost"
         onClick={() => inputRef.current?.click()}
-        disabled={disabled}
+        disabled={disabled || processing}
         className="shrink-0 text-muted-foreground hover:text-foreground h-8 w-8"
-        title="Attach image"
+        title={processing ? "Processing…" : `Attach image (${images.length}/${MAX_IMAGES})`}
       >
-        <ImagePlus className="h-4 w-4" />
+        {processing ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          <ImagePlus className="h-4 w-4" />
+        )}
       </Button>
 
       {images.length > 0 && (
