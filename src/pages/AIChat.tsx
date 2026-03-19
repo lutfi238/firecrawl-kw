@@ -15,7 +15,11 @@ import { ImageUploadButton } from "@/components/ImageUploadButton";
 import { ImageLightbox } from "@/components/ImageLightbox";
 
 import { classifyIntent, registerJob, needsEvidence, type JobType } from "@/lib/intentClassifier";
-import { checkVisionSupport } from "@/lib/visionCapability";
+import { checkVisionSupport, addVisionOverride, confirmVisionWorked } from "@/lib/visionCapability";
+import {
+  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
+} from "@/components/ui/alert-dialog";
 import { createThumbnail } from "@/lib/imageUtils";
 import { toast } from "sonner";
 
@@ -180,6 +184,9 @@ export default function AIChat() {
   const abortRef = useRef<AbortController | null>(null);
   const [showSlashPicker, setShowSlashPicker] = useState(false);
 
+  // Vision unknown confirmation state
+  const [visionWarning, setVisionWarning] = useState<{ reason: string; text: string; images: string[] } | null>(null);
+
   // Streaming state
   const [streamingThinking, setStreamingThinking] = useState("");
   const [streamingContent, setStreamingContent] = useState("");
@@ -237,6 +244,26 @@ export default function AIChat() {
       .map((m) => ({ role: m.role, content: m.content }));
   }, [messages]);
 
+  // ========== Vision "Try anyway" handler ==========
+  const handleVisionTryAnyway = useCallback(() => {
+    if (!visionWarning) return;
+    const { text, images } = visionWarning;
+    // Register override so future sends skip the warning
+    addVisionOverride(
+      settings.ai_base_url || "https://api.openai.com/v1",
+      settings.ai_model || ""
+    );
+    setVisionWarning(null);
+    // Re-inject text and images then trigger send
+    setInput(text);
+    setPendingImages(images);
+    // Use a microtask so state updates apply before sending
+    setTimeout(() => {
+      const sendBtn = document.querySelector("[data-send-btn]") as HTMLButtonElement | null;
+      sendBtn?.click();
+    }, 50);
+  }, [visionWarning, settings.ai_base_url, settings.ai_model]);
+
   // ========== Main send handler ==========
   const handleSend = async () => {
     const text = input.trim();
@@ -279,12 +306,21 @@ export default function AIChat() {
           settings.ai_model || ""
         );
 
-        if (!visionCheck.supported) {
+        if (visionCheck.status === "unsupported") {
           toast.error(visionCheck.reason || "Current model does not support image input");
           addMessage({
             role: "assistant",
             content: `⚠️ **Image input not supported**\n\n${visionCheck.reason || "The current AI model does not support image analysis."}\n\nChange your model in Settings → AI Provider to use a vision-capable model (e.g. GPT-4o, Gemini, Claude 3).`,
           });
+          return;
+        }
+
+        if (visionCheck.status === "unknown") {
+          // Show confirmation dialog and pause — user decides
+          setLoading(false);
+          setLoadingStartedAt(null);
+          clearTimeout(timeout);
+          setVisionWarning({ reason: visionCheck.reason || "Image support is not verified for this model.", text, images });
           return;
         }
 
@@ -394,6 +430,14 @@ export default function AIChat() {
 
           imgTraceSteps.push({ tool: "chat", label: "Image analysis", icon: "🖼️", durationMs: duration });
           addMessage({ role: "assistant", content: fullText, toolTrace: imgTraceSteps });
+
+          // Auto-verify this provider+model on success
+          if (!fullText.startsWith("Error:")) {
+            confirmVisionWorked(
+              settings.ai_base_url || "https://api.openai.com/v1",
+              settings.ai_model || ""
+            );
+          }
 
           const finalResult: ToolCallResult = { content: [{ type: "text", text: fullText }] };
           await logToMonitor("chat", chatArgs, finalResult, duration);
@@ -940,7 +984,7 @@ export default function AIChat() {
             <XCircle className="h-4 w-4" />
           </Button>
         ) : (
-          <Button onClick={handleSend} disabled={!input.trim() && pendingImages.length === 0} size="icon" className="shrink-0 bg-primary text-primary-foreground">
+          <Button data-send-btn onClick={handleSend} disabled={!input.trim() && pendingImages.length === 0} size="icon" className="shrink-0 bg-primary text-primary-foreground">
             <Send className="h-4 w-4" />
           </Button>
         )}
@@ -950,6 +994,28 @@ export default function AIChat() {
       {lightboxSrc && (
         <ImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />
       )}
+
+      {/* Vision unknown confirmation */}
+      <AlertDialog open={!!visionWarning} onOpenChange={(open) => { if (!open) setVisionWarning(null); }}>
+        <AlertDialogContent className="glass border-primary/20">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-primary font-mono">⚠️ Vision Support Unverified</AlertDialogTitle>
+            <AlertDialogDescription className="text-muted-foreground">
+              {visionWarning?.reason}
+              <br />
+              <span className="text-xs mt-1 block text-muted-foreground/70">
+                If the request succeeds, this model will be remembered as vision-capable on this device.
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="font-mono text-xs">Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleVisionTryAnyway} className="font-mono text-xs">
+              Try anyway
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
