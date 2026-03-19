@@ -254,10 +254,10 @@ export default function AIChat() {
       settings.ai_model || ""
     );
     setVisionWarning(null);
-    // Re-inject text and images then trigger send
+    // Re-inject text and images — handleSend will now pass the guard
     setInput(text);
     setPendingImages(images);
-    // Use a microtask so state updates apply before sending
+    // Use microtask so state applies before send triggers
     setTimeout(() => {
       const sendBtn = document.querySelector("[data-send-btn]") as HTMLButtonElement | null;
       sendBtn?.click();
