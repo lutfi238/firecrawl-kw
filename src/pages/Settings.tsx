@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Github, RefreshCw, Trash2, CheckCircle, AlertCircle, Loader2, Bot, Sparkles } from "lucide-react";
+import { Github, RefreshCw, Trash2, CheckCircle, AlertCircle, Loader2, Bot, Sparkles, Zap, Clock } from "lucide-react";
 import { toast } from "sonner";
 
 const AI_PROVIDERS = [
@@ -52,6 +52,9 @@ export default function Settings() {
   const [aiApiKey, setAiApiKey] = useState("");
   const [aiModel, setAiModel] = useState("gpt-4o-mini");
   const [savingAi, setSavingAi] = useState(false);
+  const [aiTestStatus, setAiTestStatus] = useState<"idle" | "testing" | "connected" | "failed">("idle");
+  const [aiTestError, setAiTestError] = useState("");
+  const [aiTestTime, setAiTestTime] = useState<string | null>(null);
   const [mcpSecret, setMcpSecret] = useState("");
   const [savingSecret, setSavingSecret] = useState(false);
 
@@ -90,6 +93,55 @@ export default function Settings() {
     setSavingPat(false);
   };
 
+  const testAiConnection = async (baseUrl: string, apiKey: string, model: string) => {
+    setAiTestStatus("testing");
+    setAiTestError("");
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    try {
+      const url = `${baseUrl.replace(/\/+$/, "")}/chat/completions`;
+      const res = await fetch(url, {
+        method: "POST",
+        signal: controller.signal,
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+          "HTTP-Referer": window.location.origin,
+          "X-Title": "MCP Dashboard",
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: "user", content: "Hi" }],
+          max_tokens: 1,
+        }),
+      });
+      clearTimeout(timeout);
+      if (res.ok) {
+        setAiTestStatus("connected");
+        setAiTestTime(new Date().toLocaleTimeString());
+      } else {
+        const body = await res.text().catch(() => "");
+        let reason = `HTTP ${res.status}`;
+        if (res.status === 401 || res.status === 403) reason = "Invalid API key";
+        else if (res.status === 404) reason = "Model not found or invalid base URL";
+        else if (res.status === 429) reason = "Rate limited — try again";
+        else if (res.status >= 500) reason = "Provider server error";
+        else if (body.includes("model")) reason = `Model error: ${res.status}`;
+        setAiTestStatus("failed");
+        setAiTestError(reason);
+      }
+    } catch (err: any) {
+      clearTimeout(timeout);
+      if (err?.name === "AbortError") {
+        setAiTestStatus("failed");
+        setAiTestError("Connection timed out (8s)");
+      } else {
+        setAiTestStatus("failed");
+        setAiTestError("Base URL unreachable");
+      }
+    }
+  };
+
   const handleSaveAi = async () => {
     setSavingAi(true);
     try {
@@ -98,6 +150,8 @@ export default function Settings() {
       await upsert.mutateAsync({ key: "ai_api_key", value: aiApiKey });
       await upsert.mutateAsync({ key: "ai_model", value: aiModel });
       toast.success("AI provider config saved");
+      // Auto-test after save
+      testAiConnection(aiBaseUrl, aiApiKey, aiModel);
     } catch {
       toast.error("Failed to save AI config");
     }
@@ -355,7 +409,7 @@ export default function Settings() {
               className="font-mono text-sm bg-background/50 border-border"
             />
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button
               variant="outline"
               size="sm"
@@ -364,10 +418,36 @@ export default function Settings() {
               className="text-xs font-mono border-primary/30 gap-1.5 hover:bg-primary/10 hover:border-primary/50"
             >
               {savingAi ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle className="h-3 w-3" />}
-              Save Provider Settings
+              Save & Test
             </Button>
-            {settings.ai_api_key && <StatusBadge status="success" label="CONFIGURED" />}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => testAiConnection(aiBaseUrl, aiApiKey, aiModel)}
+              disabled={!aiApiKey || !aiBaseUrl || aiTestStatus === "testing"}
+              className="text-xs font-mono border-border gap-1.5"
+            >
+              {aiTestStatus === "testing" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Zap className="h-3 w-3" />}
+              Test
+            </Button>
+            {aiTestStatus === "connected" && <StatusBadge status="success" label="CONNECTED" />}
+            {aiTestStatus === "failed" && <StatusBadge status="error" label="FAILED" />}
+            {aiTestStatus === "testing" && <StatusBadge status="pending" label="TESTING…" pulse />}
+            {settings.ai_api_key && aiTestStatus === "idle" && <StatusBadge status="success" label="CONFIGURED" />}
           </div>
+          {aiTestStatus === "failed" && aiTestError && (
+            <div className="rounded-md border border-destructive/30 bg-destructive/5 p-2.5 mt-2">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="h-3.5 w-3.5 text-destructive mt-0.5 shrink-0" />
+                <p className="text-xs text-destructive font-mono">{aiTestError}</p>
+              </div>
+            </div>
+          )}
+          {aiTestStatus === "connected" && aiTestTime && (
+            <p className="text-[10px] text-muted-foreground font-mono flex items-center gap-1 mt-1.5">
+              <Clock className="h-2.5 w-2.5" /> Last verified {aiTestTime}
+            </p>
+          )}
         </div>
       </GlassCard>
 
