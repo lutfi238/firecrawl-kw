@@ -52,6 +52,9 @@ export default function Settings() {
   const [aiApiKey, setAiApiKey] = useState("");
   const [aiModel, setAiModel] = useState("gpt-4o-mini");
   const [savingAi, setSavingAi] = useState(false);
+  const [aiTestStatus, setAiTestStatus] = useState<"idle" | "testing" | "connected" | "failed">("idle");
+  const [aiTestError, setAiTestError] = useState("");
+  const [aiTestTime, setAiTestTime] = useState<string | null>(null);
   const [mcpSecret, setMcpSecret] = useState("");
   const [savingSecret, setSavingSecret] = useState(false);
 
