@@ -984,7 +984,7 @@ export default function AIChat() {
             <XCircle className="h-4 w-4" />
           </Button>
         ) : (
-          <Button onClick={handleSend} disabled={!input.trim() && pendingImages.length === 0} size="icon" className="shrink-0 bg-primary text-primary-foreground">
+          <Button data-send-btn onClick={handleSend} disabled={!input.trim() && pendingImages.length === 0} size="icon" className="shrink-0 bg-primary text-primary-foreground">
             <Send className="h-4 w-4" />
           </Button>
         )}
