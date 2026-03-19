@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Github, RefreshCw, Trash2, CheckCircle, AlertCircle, Loader2, Bot, Sparkles } from "lucide-react";
+import { Github, RefreshCw, Trash2, CheckCircle, AlertCircle, Loader2, Bot, Sparkles, Zap, Clock } from "lucide-react";
 import { toast } from "sonner";
 
 const AI_PROVIDERS = [
