@@ -15,7 +15,11 @@ import { ImageUploadButton } from "@/components/ImageUploadButton";
 import { ImageLightbox } from "@/components/ImageLightbox";
 
 import { classifyIntent, registerJob, needsEvidence, type JobType } from "@/lib/intentClassifier";
-import { checkVisionSupport } from "@/lib/visionCapability";
+import { checkVisionSupport, addVisionOverride, confirmVisionWorked } from "@/lib/visionCapability";
+import {
+  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
+} from "@/components/ui/alert-dialog";
 import { createThumbnail } from "@/lib/imageUtils";
 import { toast } from "sonner";
 
