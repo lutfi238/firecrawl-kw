@@ -411,6 +411,14 @@ export default function AIChat() {
           imgTraceSteps.push({ tool: "chat", label: "Image analysis", icon: "🖼️", durationMs: duration });
           addMessage({ role: "assistant", content: fullText, toolTrace: imgTraceSteps });
 
+          // Auto-verify this provider+model on success
+          if (!fullText.startsWith("Error:")) {
+            confirmVisionWorked(
+              settings.ai_base_url || "https://api.openai.com/v1",
+              settings.ai_model || ""
+            );
+          }
+
           const finalResult: ToolCallResult = { content: [{ type: "text", text: fullText }] };
           await logToMonitor("chat", chatArgs, finalResult, duration);
           return;
