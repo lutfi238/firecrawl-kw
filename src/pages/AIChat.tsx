@@ -244,6 +244,26 @@ export default function AIChat() {
       .map((m) => ({ role: m.role, content: m.content }));
   }, [messages]);
 
+  // ========== Vision "Try anyway" handler ==========
+  const handleVisionTryAnyway = useCallback(() => {
+    if (!visionWarning) return;
+    const { text, images } = visionWarning;
+    // Register override so future sends skip the warning
+    addVisionOverride(
+      settings.ai_base_url || "https://api.openai.com/v1",
+      settings.ai_model || ""
+    );
+    setVisionWarning(null);
+    // Re-inject text and images then trigger send
+    setInput(text);
+    setPendingImages(images);
+    // Use a microtask so state updates apply before sending
+    setTimeout(() => {
+      const sendBtn = document.querySelector("[data-send-btn]") as HTMLButtonElement | null;
+      sendBtn?.click();
+    }, 50);
+  }, [visionWarning, settings.ai_base_url, settings.ai_model]);
+
   // ========== Main send handler ==========
   const handleSend = async () => {
     const text = input.trim();
