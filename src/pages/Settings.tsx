@@ -93,6 +93,55 @@ export default function Settings() {
     setSavingPat(false);
   };
 
+  const testAiConnection = async (baseUrl: string, apiKey: string, model: string) => {
+    setAiTestStatus("testing");
+    setAiTestError("");
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    try {
+      const url = `${baseUrl.replace(/\/+$/, "")}/chat/completions`;
+      const res = await fetch(url, {
+        method: "POST",
+        signal: controller.signal,
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+          "HTTP-Referer": window.location.origin,
+          "X-Title": "MCP Dashboard",
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: "user", content: "Hi" }],
+          max_tokens: 1,
+        }),
+      });
+      clearTimeout(timeout);
+      if (res.ok) {
+        setAiTestStatus("connected");
+        setAiTestTime(new Date().toLocaleTimeString());
+      } else {
+        const body = await res.text().catch(() => "");
+        let reason = `HTTP ${res.status}`;
+        if (res.status === 401 || res.status === 403) reason = "Invalid API key";
+        else if (res.status === 404) reason = "Model not found or invalid base URL";
+        else if (res.status === 429) reason = "Rate limited — try again";
+        else if (res.status >= 500) reason = "Provider server error";
+        else if (body.includes("model")) reason = `Model error: ${res.status}`;
+        setAiTestStatus("failed");
+        setAiTestError(reason);
+      }
+    } catch (err: any) {
+      clearTimeout(timeout);
+      if (err?.name === "AbortError") {
+        setAiTestStatus("failed");
+        setAiTestError("Connection timed out (8s)");
+      } else {
+        setAiTestStatus("failed");
+        setAiTestError("Base URL unreachable");
+      }
+    }
+  };
+
   const handleSaveAi = async () => {
     setSavingAi(true);
     try {
@@ -101,6 +150,8 @@ export default function Settings() {
       await upsert.mutateAsync({ key: "ai_api_key", value: aiApiKey });
       await upsert.mutateAsync({ key: "ai_model", value: aiModel });
       toast.success("AI provider config saved");
+      // Auto-test after save
+      testAiConnection(aiBaseUrl, aiApiKey, aiModel);
     } catch {
       toast.error("Failed to save AI config");
     }
