@@ -42,6 +42,10 @@ const VISION_MODELS: Record<string, RegExp[]> = {
   "https://api.mistral.ai/v1": [
     /pixtral/i,
   ],
+  // Alibaba Cloud DashScope (Singapore)
+  "https://dashscope-intl.aliyuncs.com": [
+    /qwen.*vl/i, // Qwen-VL models support vision
+  ],
 };
 
 // Providers where ALL models are assumed vision-capable
