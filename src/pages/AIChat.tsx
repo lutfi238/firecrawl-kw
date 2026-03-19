@@ -286,12 +286,21 @@ export default function AIChat() {
           settings.ai_model || ""
         );
 
-        if (!visionCheck.supported) {
+        if (visionCheck.status === "unsupported") {
           toast.error(visionCheck.reason || "Current model does not support image input");
           addMessage({
             role: "assistant",
             content: `⚠️ **Image input not supported**\n\n${visionCheck.reason || "The current AI model does not support image analysis."}\n\nChange your model in Settings → AI Provider to use a vision-capable model (e.g. GPT-4o, Gemini, Claude 3).`,
           });
+          return;
+        }
+
+        if (visionCheck.status === "unknown") {
+          // Show confirmation dialog and pause — user decides
+          setLoading(false);
+          setLoadingStartedAt(null);
+          clearTimeout(timeout);
+          setVisionWarning({ reason: visionCheck.reason || "Image support is not verified for this model.", text, images });
           return;
         }
 
