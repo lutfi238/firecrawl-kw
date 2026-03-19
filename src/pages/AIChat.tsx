@@ -184,6 +184,9 @@ export default function AIChat() {
   const abortRef = useRef<AbortController | null>(null);
   const [showSlashPicker, setShowSlashPicker] = useState(false);
 
+  // Vision unknown confirmation state
+  const [visionWarning, setVisionWarning] = useState<{ reason: string; text: string; images: string[] } | null>(null);
+
   // Streaming state
   const [streamingThinking, setStreamingThinking] = useState("");
   const [streamingContent, setStreamingContent] = useState("");
