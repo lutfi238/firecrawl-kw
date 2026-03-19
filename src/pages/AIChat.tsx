@@ -254,10 +254,10 @@ export default function AIChat() {
       settings.ai_model || ""
     );
     setVisionWarning(null);
-    // Re-inject text and images then trigger send
+    // Re-inject text and images — handleSend will now pass the guard
     setInput(text);
     setPendingImages(images);
-    // Use a microtask so state updates apply before sending
+    // Use microtask so state applies before send triggers
     setTimeout(() => {
       const sendBtn = document.querySelector("[data-send-btn]") as HTMLButtonElement | null;
       sendBtn?.click();
@@ -269,10 +269,29 @@ export default function AIChat() {
     const text = input.trim();
     const images = [...pendingImages];
     if ((!text && images.length === 0) || loading) return;
+
+    // --- Vision guard: run BEFORE adding the user message to prevent duplicates ---
+    if (images.length > 0) {
+      const visionCheck = checkVisionSupport(
+        settings.ai_base_url || "https://api.openai.com/v1",
+        settings.ai_model || ""
+      );
+
+      if (visionCheck.status === "unsupported") {
+        toast.error(visionCheck.reason || "Current model does not support image input");
+        return;
+      }
+
+      if (visionCheck.status === "unknown") {
+        setVisionWarning({ reason: visionCheck.reason || "Image support is not verified for this model.", text, images });
+        return;
+      }
+    }
+
+    // --- Commit: clear inputs and add the single user message ---
     setInput("");
     setPendingImages([]);
 
-    // Store thumbnails in message history, keep full images for the API call only
     let thumbnails: string[] | undefined;
     if (images.length > 0) {
       thumbnails = await Promise.all(images.map(img => createThumbnail(img)));
@@ -299,30 +318,8 @@ export default function AIChat() {
       const history = getHistory();
       const rendererAvailable = settings.renderer_enabled === "true";
 
-      // If images attached, check vision capability and use smart routing
+      // If images attached, use smart routing
       if (images.length > 0) {
-        const visionCheck = checkVisionSupport(
-          settings.ai_base_url || "https://api.openai.com/v1",
-          settings.ai_model || ""
-        );
-
-        if (visionCheck.status === "unsupported") {
-          toast.error(visionCheck.reason || "Current model does not support image input");
-          addMessage({
-            role: "assistant",
-            content: `⚠️ **Image input not supported**\n\n${visionCheck.reason || "The current AI model does not support image analysis."}\n\nChange your model in Settings → AI Provider to use a vision-capable model (e.g. GPT-4o, Gemini, Claude 3).`,
-          });
-          return;
-        }
-
-        if (visionCheck.status === "unknown") {
-          // Show confirmation dialog and pause — user decides
-          setLoading(false);
-          setLoadingStartedAt(null);
-          clearTimeout(timeout);
-          setVisionWarning({ reason: visionCheck.reason || "Image support is not verified for this model.", text, images });
-          return;
-        }
 
         // Determine if this is a pure image query or needs tool orchestration
         const needsTools = text && (
