@@ -994,6 +994,28 @@ export default function AIChat() {
       {lightboxSrc && (
         <ImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />
       )}
+
+      {/* Vision unknown confirmation */}
+      <AlertDialog open={!!visionWarning} onOpenChange={(open) => { if (!open) setVisionWarning(null); }}>
+        <AlertDialogContent className="glass border-primary/20">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-primary font-mono">⚠️ Vision Support Unverified</AlertDialogTitle>
+            <AlertDialogDescription className="text-muted-foreground">
+              {visionWarning?.reason}
+              <br />
+              <span className="text-xs mt-1 block text-muted-foreground/70">
+                If the request succeeds, this model will be remembered as vision-capable on this device.
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="font-mono text-xs">Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleVisionTryAnyway} className="font-mono text-xs">
+              Try anyway
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
