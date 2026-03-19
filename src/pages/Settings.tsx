@@ -32,6 +32,8 @@ const AI_PROVIDERS = [
   { label: "Ollama (Local)", baseUrl: "http://localhost:11434/v1", model: "llama3.2", icon: "🏠" },
   { label: "GitHub Copilot", baseUrl: "https://api.githubcopilot.com", model: "claude-haiku-4-5", icon: "🐙" },
   { label: "Z.ai (Zhipu)", baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4-flash", icon: "🇨🇳" },
+  { label: "Alibaba Cloud (DashScope Singapore)", baseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", model: "qwen-plus", icon: "☁️" },
+  { label: "OpenAdapter", baseUrl: "https://api.openadapter.in/v1", model: "custom-model", icon: "🔗" },
 ];
 
 export default function Settings() {
