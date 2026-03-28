@@ -35,7 +35,7 @@ export default function Overview() {
   const claudeConfig = useMemo(() => {
     const config: Record<string, unknown> = {
       mcpServers: {
-        "firecrawl-mcp": {
+        "firecrawl-kw": {
           url: MCP_ENDPOINT,
           ...(settings.mcp_secret ? {
             headers: {
