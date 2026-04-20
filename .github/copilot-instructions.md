@@ -1,135 +1,105 @@
 # Copilot Instructions
 
-## Project overview
+## Project snapshot
 
-This workspace is a Vite + React + TypeScript frontend backed by Supabase and several Supabase Edge Functions.
+This repository is a Vite + React + TypeScript app that operates as an MCP testing frontend backed by Supabase and several Edge Functions.
 
-- Frontend source: `src/`
-- Route pages: `src/pages/`
-- Shared UI/components: `src/components/`
-- Custom hooks: `src/hooks/`
-- Shared types: `src/types/`
+- Frontend app: `src/`
+- Pages: `src/pages/`
+- Shared components: `src/components/`
+- Hooks: `src/hooks/`
+- Shared contracts: `src/types/`
 - Utilities: `src/lib/`
-- Auth state: `src/stores/`
-- Supabase client/types: `src/integrations/supabase/`
+- Client auth state: `src/stores/`
+- Supabase integration: `src/integrations/supabase/`
 - Edge Functions: `supabase/functions/`
 - SQL migrations: `migrations/`
 
-## Run and verify
+## Verify with existing scripts
 
-Use npm scripts from `package.json`:
+Use the existing `package.json` scripts:
 
-- `npm run dev` — start Vite dev server on port `8080`
-- `npm run build` — production build
-- `npm run build:dev` — development-mode build
-- `npm run lint` — ESLint
-- `npm run test` — Vitest one-shot run
-- `npm run test:watch` — Vitest watch mode
-- `npm run preview` — preview built app
+- `npm run dev`
+- `npm run test`
+- `npm run lint`
+- `npm run build`
 
-When making changes:
+Verification order:
 
-1. Run the smallest relevant verification first.
-2. Prefer `npm run test` for logic changes.
-3. Prefer `npm run lint` after TypeScript/React edits.
-4. Prefer `npm run build` before finalizing broader UI or integration changes.
+1. Run the smallest relevant check first.
+2. Use `npm run test` for logic changes.
+3. Use `npm run lint` after TypeScript or React edits.
+4. Use `npm run build` for broader UI, routing, or integration changes.
 
 ## Architecture and boundaries
 
 ### Frontend
 
-- `src/App.tsx` wires React Query, routing, auth bootstrapping, and layout.
-- Page components in `src/pages/` compose hooks and present feature-level screens.
-- Components in `src/components/` are mostly presentational or small feature widgets.
-- `src/components/ui/` contains shadcn/ui-style primitives; keep those generic and reusable.
-- Hooks in `src/hooks/` encapsulate async behavior, Supabase access, tool execution, and settings retrieval.
-- Zustand state in `src/stores/` is used for lightweight global auth/session data.
-- Tool and MCP contracts live in `src/types/` and should stay aligned with the backend payload shape.
+- `src/App.tsx` bootstraps React Query, routing, auth/session sync, and shared layout.
+- `src/pages/` owns screen-level orchestration.
+- `src/components/` should stay presentational or narrowly feature-focused.
+- `src/components/ui/` contains reusable shadcn/radix-style primitives; keep them generic.
+- `src/hooks/` encapsulates Supabase access, tool execution, settings retrieval, and async flows.
+- `src/stores/authStore.ts` is a lightweight Zustand store for auth/session state only.
+- Keep MCP and tool payload shapes aligned with `src/types/mcp.ts` and `src/types/tools.ts`.
 
-### Backend
+### Supabase / Edge Functions
 
-- `supabase/functions/mcp-server/index.ts` is the main MCP JSON-RPC handler.
-- Other functions handle auth, logs, jobs, and uptime checks.
-- Edge Functions use Deno-style imports and runtime APIs, not Node-specific patterns.
+- `supabase/functions/mcp-server/index.ts` is the main JSON-RPC/MCP handler.
+- Other functions support auth, logs, jobs, and uptime monitoring.
+- Edge Functions run on Deno APIs and web-standard runtime primitives, not Node-only libraries.
 
-## Code conventions
+## Local conventions
 
-### React and TypeScript
+### React / TypeScript
 
-- Use functional React components and typed props interfaces.
-- Follow existing alias imports using `@/` for files under `src/`.
-- Prefer existing hooks and shared utilities over duplicating logic.
+- Use functional components with typed props.
+- Prefer `@/` imports for files under `src/`.
+- Reuse existing hooks, utilities, and UI primitives before adding new abstractions.
+- Keep page components orchestration-focused; move reusable logic into hooks/components.
 - Use `cn()` from `src/lib/utils.ts` for conditional class composition.
-- Keep page components orchestration-focused and move reusable UI into components or hooks.
-
-### Styling
-
-- Use Tailwind utilities first.
-- Reuse the theme tokens and cyber color palette already defined in `tailwind.config.ts` and `src/index.css`.
-- Existing UI favors shadcn/radix primitives, Lucide icons, glass/cyber styling, and dark-mode-friendly visuals.
 
 ### State and data flow
 
 - Use React Query for remote/server state.
-- Use Zustand only for small cross-app client state like auth/session.
-- Keep Supabase access patterns consistent with existing hooks and client usage.
+- Use Zustand only for small cross-app client state.
+- Preserve the non-blocking GitHub token loading flow in `src/App.tsx`.
+- Preserve custom MCP headers such as `X-GitHub-Token` and `X-MCP-Secret` when editing transport code.
 
-## Supabase and auth notes
+### Styling
 
-- `src/integrations/supabase/client.ts` is auto-generated; do not hand-edit it.
-- Frontend environment variables are required, including:
-  - `VITE_SUPABASE_URL`
-  - `VITE_SUPABASE_PUBLISHABLE_KEY`
-  - `VITE_SUPABASE_PROJECT_ID`
-- GitHub token loading is intentionally asynchronous in `src/App.tsx`; do not block initial UI rendering on it.
-- MCP requests may depend on custom headers such as `X-GitHub-Token` and `X-MCP-Secret`; preserve this behavior when editing client/server integrations.
-- `supabase/config.toml` currently disables JWT verification for Edge Functions, so app-level auth flow and request validation matter.
+- Tailwind utilities first.
+- Match the existing cyber/glass visual language from `tailwind.config.ts` and `src/index.css`.
+- Reuse Lucide, shadcn, and Radix patterns already present in the app.
 
-## Testing guidance
+## Important constraints
 
-- Vitest uses `jsdom` and `src/test/setup.ts`.
-- Add or update focused tests for logic-heavy changes under `src/**/*.{test,spec}.{ts,tsx}`.
-- If changing browser-dependent behavior, account for the existing mocked `matchMedia` setup.
+- Do not hand-edit `src/integrations/supabase/client.ts`; treat generated Supabase files as generated artifacts.
+- TypeScript is not fully strict in `tsconfig.app.json`; review types carefully instead of assuming the compiler will catch everything.
+- `supabase/config.toml` disables JWT verification for Edge Functions, so app-layer auth and request validation matter.
+- Frontend env vars expected by the app include `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, and `VITE_SUPABASE_PROJECT_ID`.
 
-## Important pitfalls
+## Good reference files
 
-- TypeScript is intentionally not fully strict in `tsconfig.app.json`; do not assume unused code or weak typing will be caught automatically.
-- Vite path aliasing must stay consistent with both Vite and TypeScript config.
-- Supabase-generated files and schema-derived types should be regenerated, not manually rewritten.
-- Edge Functions run in a Deno environment, so Node-only APIs or package assumptions can break deployment.
+- `src/App.tsx`
+- `src/hooks/useMCPServer.ts`
+- `src/components/ToolForm.tsx`
+- `src/pages/ToolTester.tsx`
+- `src/stores/authStore.ts`
+- `src/types/mcp.ts`
+- `src/types/tools.ts`
+- `supabase/functions/mcp-server/index.ts`
 
-## High-value reference files
+## Documentation notes
 
-Use these files to match existing patterns before making changes:
+- `README.md` is still a placeholder. If major behavior or setup changes are introduced, update `README.md` instead of scattering duplicate setup notes elsewhere.
+- Prefer linking to existing docs over copying long documentation into instructions files.
 
-- `src/App.tsx` — app bootstrap, auth flow, routing
-- `src/hooks/useMCPServer.ts` — MCP transport, headers, SSE handling
-- `src/components/ToolForm.tsx` — dynamic form rendering from metadata
-- `src/pages/ToolTester.tsx` — page-level orchestration example
-- `src/stores/authStore.ts` — Zustand auth state pattern
-- `src/types/mcp.ts` — MCP contract shapes
-- `src/types/tools.ts` — tool metadata definitions
-- `supabase/functions/mcp-server/index.ts` — backend handler conventions
-- `tailwind.config.ts` — theme tokens and shared design language
-
-## Documentation status
-
-`README.md` is currently only a placeholder. If you add major features or setup changes, update `README.md` instead of creating duplicate setup notes elsewhere unless the change clearly needs dedicated documentation.
-
-## Agent behavior for this workspace
+## Agent guidance
 
 - Be concise and practical.
-- Gather context from existing files before refactoring shared flows.
-- Do not replace project-specific patterns with generic ones unless there is a clear local benefit.
+- Gather local context before refactoring shared flows.
 - Prefer minimal, targeted edits over broad rewrites.
+- Do not replace project-specific patterns with generic alternatives unless there is a clear benefit.
 - When touching both frontend and Edge Functions, verify request/response contracts on both sides.
-- Call out when a change likely also requires environment, migration, or Supabase regeneration steps.
-
-## Suggested next customizations
-
-If this workspace grows, consider adding scoped instructions for:
-
-- `src/components/**` for UI and accessibility conventions
-- `supabase/functions/**` for Deno/Edge Function rules
-- `src/test/**` for testing patterns and fixtures
-- `migrations/**` for database migration review expectations
+- Call out follow-up work if a change likely also needs env updates, migrations, or Supabase regeneration.
