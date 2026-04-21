@@ -3,6 +3,7 @@ import { createJob, processBatchScrapeJob } from "../jobs/batchScrape.ts";
 import { processAgentJob } from "../jobs/agentJobs.ts";
 import { processCrawlJob } from "../jobs/crawlJobs.ts";
 import { checkJobStatus } from "../jobs/jobStatus.ts";
+import { detectSearchRecencyProfile } from "../search/recency.ts";
 import { isUsableArticleContent, scrapeUrl, searchWeb } from "../scrapers/webSearch.ts";
 
 export type ChatIntent =
@@ -64,7 +65,7 @@ export function classifyChatIntent(message: string): ChatIntent {
 function chatSearchEvidenceHasDepth(evidence: string): boolean {
   const stripped = evidence
     .split("\n")
-    .filter((line: string) => !line.match(/^\s*"?(title|url|sourceUrl|snippet|rawDesc|acquisitionType|searchSource)"?\s*:/) && !line.match(/^\s*[\[\]{}],?\s*$/))
+    .filter((line: string) => !line.match(/^\s*"?(title|url|sourceUrl|snippet|rawDesc|acquisitionType|searchSource)"?\s*:/) && !line.match(/^\s*[[]{}],?\s*$/))
     .join(" ")
     .trim();
   return stripped.length > 2000;
@@ -348,12 +349,16 @@ export async function handleChatWithOrchestration(
 
     addStep("Intent: factual — lightweight sync search + synthesis");
 
+    const recencyProfile = detectSearchRecencyProfile(message);
     const searchResults = await searchWeb(message, 5);
-    const searchEvidence = JSON.stringify(searchResults.map((result) => ({
+    const freshnessSummary = searchResults.map((result) => ({
       title: result.title,
       url: result.url,
       snippet: result.snippet,
-    })), null, 2);
+      matchedYear: result.matchedYear,
+      freshnessScore: result.freshnessScore,
+    }));
+    const searchEvidence = JSON.stringify(freshnessSummary, null, 2);
     addStep(`Search returned ${searchResults.length} results`);
 
     let combinedEvidence = searchEvidence;
@@ -382,6 +387,12 @@ export async function handleChatWithOrchestration(
       "3. Cite sources by title or URL.",
       "4. Be concise — this is a quick factual answer, not a research report.",
       "5. Include relevant source URLs at the end.",
+      recencyProfile.mode !== "none"
+        ? "6. This is a recency-sensitive query. Make freshness explicit and do not present older coverage as current when newer coverage is missing."
+        : "6. If the evidence looks stale, disclose that clearly.",
+      recencyProfile.mode === "future"
+        ? "7. Distinguish confirmed upcoming items from speculative predictions."
+        : "7. If the evidence is stale relative to the question, say so explicitly.",
     ];
 
     const answer = await callAI(

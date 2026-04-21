@@ -4,6 +4,8 @@
  * Job registry persisted to localStorage for cross-refresh routing.
  */
 
+import { detectRecencyProfile } from "@/lib/recency";
+
 export type ToolAction =
   | { tool: "search"; args: { query: string; maxResults?: number } }
   | { tool: "scrape"; args: { url: string } }
@@ -33,7 +35,7 @@ const URL_REGEX = /https?:\/\/[^\s<>"']+/gi;
 const UUID_REGEX = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
 const EVIDENCE_KEYWORDS = [
-  "latest", "newest", "recent", "current", "today", "2024", "2025", "2026",
+  "latest", "newest", "recent", "current", "today",
   "top", "best", "ranking", "compare", "comparison", "versus", "vs",
   "news", "update", "announce", "release", "launch",
   "how much", "price", "cost", "salary", "revenue",
@@ -111,7 +113,7 @@ function looksLikeHtml(text: string): boolean {
 
 export function needsEvidence(text: string): boolean {
   const lower = text.toLowerCase();
-  return EVIDENCE_KEYWORDS.some(kw => lower.includes(kw));
+  return EVIDENCE_KEYWORDS.some(kw => lower.includes(kw)) || detectRecencyProfile(text).mode !== "none";
 }
 
 function isCasual(text: string): boolean {

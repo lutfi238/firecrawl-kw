@@ -15,6 +15,7 @@ import { ImageUploadButton } from "@/components/ImageUploadButton";
 import { ImageLightbox } from "@/components/ImageLightbox";
 
 import { classifyIntent, registerJob, needsEvidence, type JobType } from "@/lib/intentClassifier";
+import { detectRecencyProfile } from "@/lib/recency";
 import { checkVisionSupport, addVisionOverride, confirmVisionWorked } from "@/lib/visionCapability";
 import {
   AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
@@ -582,7 +583,9 @@ export default function AIChat() {
 
       // === SYNTHESIS PATH ===
       if (intent.synthesize && !lastResult.result.isError) {
-        let allEvidence = toolResults
+        const recencyProfile = detectRecencyProfile(text);
+
+        const allEvidence = toolResults
           .filter(r => r.tool !== "chat")
           .map(r => {
             const norm = normalizeEvidence(r.tool, r.result);
@@ -651,6 +654,7 @@ export default function AIChat() {
             "3. Cite sources by title or URL when making claims.",
             "4. Be structured, clear, and concise.",
             "5. If evidence contains conflicting information, note the discrepancy.",
+            recencyProfile.mode !== "none" ? "When evidence may be stale relative to the user's time frame, do not imply it is current." : "",
             `6. Evidence was gathered using: ${toolsUsed.join(", ")}`,
             allSourceUrls.length > 0 ? `7. Available source URLs: ${allSourceUrls.slice(0, 10).join(", ")}` : "",
           ];
@@ -679,6 +683,7 @@ export default function AIChat() {
               message: `User question: ${text}\n\n${combinedEvidence.slice(0, 14000)}`,
               history: [{ role: "system", content: synthesisPrompt }],
               mode: "synthesis",
+              recencyProfile,
             }, controller.signal)) {
               if (controller.signal.aborted) return;
               synthText += delta;

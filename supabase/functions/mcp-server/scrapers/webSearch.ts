@@ -1,5 +1,6 @@
 import { htmlToMarkdown } from "./htmlToMarkdown.ts";
 import { decodeEscapedUrl, decodeGoogleNewsToken, isGoogleNewsRssWrapper, isValidArticleUrl, normalizeResolvedUrl } from "./googleNews.ts";
+import { buildSearchQueryVariants, detectSearchRecencyProfile, extractFreshnessSignals, type SearchRecencyProfile } from "../search/recency.ts";
 
 export type AcquisitionType = "direct_article" | "resolved_article" | "unresolved_wrapper" | "failed_fetch";
 
@@ -11,6 +12,8 @@ export interface SearchResult {
   rawDesc: string;
   acquisitionType: AcquisitionType;
   searchSource: string;
+  freshnessScore?: number;
+  matchedYear?: number;
 }
 
 export async function scrapeUrl(url: string): Promise<{ markdown: string; title: string }> {
@@ -32,7 +35,7 @@ async function resolveGoogleNewsRssUrl(url: string, rawDesc?: string): Promise<{
       const decoded = rawDesc
         .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&")
         .replace(/&quot;/g, '"').replace(/&#39;/g, "'");
-      const hrefMatches = [...decoded.matchAll(/href="(https?:\/\/[^\"]+)"/gi)];
+      const hrefMatches = [...decoded.matchAll(/href="(https?:\/\/[^"]+)"/gi)];
       for (const hm of hrefMatches) {
         const candidate = normalizeResolvedUrl(hm[1]);
         if (candidate) {
@@ -79,8 +82,8 @@ async function resolveGoogleNewsRssUrl(url: string, rawDesc?: string): Promise<{
     const patterns = [
       /"canonicalUrl":"(https?:\/\/[^"\\]+)"/gi,
       /"url":"(https?:\/\/[^"\\]+)"/gi,
-      /data-url="(https?:\/\/[^\"]+)"/gi,
-      /href="(https?:\/\/[^\"]+)"/gi,
+      /data-url="(https?:\/\/[^"]+)"/gi,
+      /href="(https?:\/\/[^"]+)"/gi,
     ];
 
     for (const pattern of patterns) {
@@ -122,6 +125,86 @@ export function isUsableArticleContent(markdown: string): boolean {
   if (boilerplateHits >= 3 && markdown.length < 1000) return false;
 
   return true;
+}
+
+type RankedSearchResult = SearchResult & {
+  freshnessScore: number;
+  matchedYear?: number;
+  sourcePriority: number;
+  order: number;
+};
+
+function getSearchResultKey(url: string): string {
+  return url.replace(/^https?:\/\/(www\.)?/, "").split("?")[0];
+}
+
+function getSearchResultPriority(result: SearchResult): number {
+  if (result.searchSource === "duckduckgo") return 0;
+  if (result.searchSource === "bing_rss") return 1;
+  if (result.searchSource === "google_news_rss") {
+    if (result.acquisitionType === "resolved_article") return 2;
+    if (result.acquisitionType === "direct_article") return 3;
+    return 4;
+  }
+  return 5;
+}
+
+function buildRankedSearchResult(result: SearchResult, profile: SearchRecencyProfile, order: number): RankedSearchResult {
+  const signals = extractFreshnessSignals(result, profile);
+  const freshnessScore = profile.mode === "none"
+    ? 0
+    : signals.relativeFreshness + signals.sourceBoost + signals.futureBoost;
+
+  return {
+    ...result,
+    freshnessScore: freshnessScore === 0 && profile.strictFreshness ? -1 : freshnessScore,
+    matchedYear: signals.matchedYear,
+    sourcePriority: getSearchResultPriority(result),
+    order,
+  };
+}
+
+function compareRankedSearchResults(a: RankedSearchResult, b: RankedSearchResult): number {
+  const freshnessDiff = (b.freshnessScore ?? 0) - (a.freshnessScore ?? 0);
+  if (freshnessDiff !== 0) return freshnessDiff;
+
+  const priorityDiff = a.sourcePriority - b.sourcePriority;
+  if (priorityDiff !== 0) return priorityDiff;
+
+  return a.order - b.order;
+}
+
+function mergeRankedSearchResults(existing: RankedSearchResult, candidate: RankedSearchResult): RankedSearchResult {
+  if (candidate.freshnessScore > existing.freshnessScore) {
+    return { ...candidate, matchedYear: candidate.matchedYear ?? existing.matchedYear, order: existing.order };
+  }
+
+  if (candidate.freshnessScore < existing.freshnessScore) {
+    return { ...existing, matchedYear: existing.matchedYear ?? candidate.matchedYear };
+  }
+
+  if (candidate.sourcePriority < existing.sourcePriority) {
+    return { ...candidate, matchedYear: candidate.matchedYear ?? existing.matchedYear, order: existing.order };
+  }
+
+  return { ...existing, matchedYear: existing.matchedYear ?? candidate.matchedYear };
+}
+
+async function searchAllProviders(query: string, maxResults: number): Promise<SearchResult[]> {
+  const [ddgResults, bingResults, gnewsResults] = await Promise.all([
+    searchDuckDuckGo(query, maxResults),
+    searchBingNewsRss(query, maxResults),
+    searchGoogleNewsRss(query, maxResults),
+  ]);
+
+  const allResults: SearchResult[] = [];
+  for (const result of ddgResults) allResults.push(result);
+  for (const result of bingResults) allResults.push(result);
+  for (const result of gnewsResults.filter((result) => result.acquisitionType === "resolved_article")) allResults.push(result);
+  for (const result of gnewsResults.filter((result) => result.acquisitionType === "direct_article")) allResults.push(result);
+  for (const result of gnewsResults.filter((result) => result.acquisitionType === "unresolved_wrapper")) allResults.push(result);
+
+  return allResults;
 }
 
 async function searchDuckDuckGo(query: string, maxResults: number): Promise<SearchResult[]> {
@@ -320,29 +403,37 @@ async function searchBingNewsRss(query: string, maxResults: number): Promise<Sea
 export async function searchWeb(query: string, maxResults: number): Promise<SearchResult[]> {
   console.log("[search] Starting multi-source search for:", query, "max:", maxResults);
 
-  const [ddgResults, bingResults, gnewsResults] = await Promise.all([
-    searchDuckDuckGo(query, maxResults),
-    searchBingNewsRss(query, maxResults),
-    searchGoogleNewsRss(query, maxResults),
-  ]);
+  const profile = detectSearchRecencyProfile(query);
+  const variants = buildSearchQueryVariants(query, profile);
+  const searchVariants = variants.length > 0 ? variants : [query];
 
   const allResults: SearchResult[] = [];
-  for (const result of ddgResults) allResults.push(result);
-  for (const result of bingResults) allResults.push(result);
-  for (const result of gnewsResults.filter((result) => result.acquisitionType === "resolved_article")) allResults.push(result);
-  for (const result of gnewsResults.filter((result) => result.acquisitionType === "direct_article")) allResults.push(result);
-  for (const result of gnewsResults.filter((result) => result.acquisitionType === "unresolved_wrapper")) allResults.push(result);
-
-  const seen = new Set<string>();
-  const deduped: SearchResult[] = [];
-  for (const result of allResults) {
-    const key = result.url.replace(/^https?:\/\/(www\.)?/, "").split("?")[0];
-    if (seen.has(key)) continue;
-    seen.add(key);
-    deduped.push(result);
+  for (const variant of searchVariants) {
+    const variantResults = await searchAllProviders(variant, maxResults);
+    for (const result of variantResults) allResults.push(result);
   }
 
-  const final = deduped.slice(0, maxResults);
+  const dedupedByKey = new Map<string, RankedSearchResult>();
+  let order = 0;
+  for (const result of allResults) {
+    const ranked = buildRankedSearchResult(result, profile, order++);
+    const key = getSearchResultKey(ranked.url);
+    const existing = dedupedByKey.get(key);
+    if (!existing) {
+      dedupedByKey.set(key, ranked);
+      continue;
+    }
+
+    dedupedByKey.set(key, mergeRankedSearchResults(existing, ranked));
+  }
+
+  const sorted = [...dedupedByKey.values()].sort(compareRankedSearchResults);
+  const filtered = profile.strictFreshness
+    ? sorted.filter((result) => (result.freshnessScore ?? 0) >= 0)
+    : sorted;
+
+  const finalResults = profile.strictFreshness && filtered.length < maxResults ? sorted : filtered;
+  const final = finalResults.slice(0, maxResults).map(({ sourcePriority, order: _order, ...result }) => result);
   console.log("[search] Combined results:", final.length,
     "| direct:", final.filter((result) => result.acquisitionType === "direct_article").length,
     "| resolved:", final.filter((result) => result.acquisitionType === "resolved_article").length,
