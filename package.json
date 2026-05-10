@@ -10,6 +10,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
+    "mcp:stdio": "node scripts/mcp-stdio-proxy.mjs",
     "test:watch": "vitest"
   },
   "dependencies": {
