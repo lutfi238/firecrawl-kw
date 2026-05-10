@@ -16,16 +16,63 @@ export interface SearchResult {
   matchedYear?: number;
 }
 
-export async function scrapeUrl(url: string): Promise<{ markdown: string; title: string }> {
-  const res = await fetch(url, {
-    headers: { "User-Agent": "Mozilla/5.0 (compatible; FirecrawlMCP/1.0)" },
+const BROWSER_HEADERS = {
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+  "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+  "Accept-Language": "en-US,en;q=0.9",
+  "Cache-Control": "no-cache",
+};
+
+/** Fallback: Jina AI Reader proxy — free, handles Cloudflare/JS rendering, returns clean markdown. */
+async function scrapeViaJinaReader(url: string): Promise<{ markdown: string; title: string }> {
+  const proxyUrl = `https://r.jina.ai/${url}`;
+  const res = await fetch(proxyUrl, {
+    headers: {
+      "Accept": "text/plain",
+      "X-Return-Format": "markdown",
+    },
     redirect: "follow",
+    signal: AbortSignal.timeout(30000),
   });
-  if (!res.ok) throw new Error(`HTTP ${res.status} fetching ${url}`);
-  const html = await res.text();
-  const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  if (!res.ok) throw new Error(`Jina Reader fallback HTTP ${res.status} for ${url}`);
+  const text = await res.text();
+  // Jina returns: "Title: ...\nURL Source: ...\nMarkdown Content:\n..."
+  const titleMatch = text.match(/^Title:\s*(.+)$/m);
   const title = titleMatch ? titleMatch[1].trim() : url;
-  return { markdown: htmlToMarkdown(html), title };
+  const contentSplit = text.split(/Markdown Content:\s*\n/);
+  const markdown = contentSplit.length > 1 ? contentSplit[1].trim() : text;
+  return { markdown, title };
+}
+
+export async function scrapeUrl(url: string): Promise<{ markdown: string; title: string }> {
+  try {
+    const res = await fetch(url, {
+      headers: BROWSER_HEADERS,
+      redirect: "follow",
+      signal: AbortSignal.timeout(15000),
+    });
+    // Cloudflare / anti-bot blocks → fallback
+    if (res.status === 403 || res.status === 503 || res.status === 429) {
+      console.log(`[scrape] Got ${res.status} for ${url}, falling back to Jina Reader`);
+      return await scrapeViaJinaReader(url);
+    }
+    if (!res.ok) throw new Error(`HTTP ${res.status} fetching ${url}`);
+    const html = await res.text();
+    // Detect Cloudflare challenge page even with 200 status
+    if (/cf-challenge|Just a moment|Checking your browser|cf-browser-verification/i.test(html) && html.length < 50000) {
+      console.log(`[scrape] Cloudflare challenge detected for ${url}, falling back to Jina Reader`);
+      return await scrapeViaJinaReader(url);
+    }
+    const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+    const title = titleMatch ? titleMatch[1].trim() : url;
+    return { markdown: htmlToMarkdown(html), title };
+  } catch (err) {
+    // Network error → also try fallback once
+    const message = err instanceof Error ? err.message : "unknown";
+    if (/HTTP (403|503|429)/.test(message)) throw err; // already handled above
+    console.log(`[scrape] Direct fetch failed (${message}), falling back to Jina Reader`);
+    return await scrapeViaJinaReader(url);
+  }
 }
 
 async function resolveGoogleNewsRssUrl(url: string, rawDesc?: string): Promise<{ finalUrl?: string; resolveStatus: "resolved" | "unresolved_wrapper" | "failed"; error?: string; method?: string }> {
