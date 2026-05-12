@@ -80,6 +80,99 @@ export type Database = {
         }
         Relationships: []
       }
+      oauth_clients: {
+        Row: {
+          client_id: string
+          client_secret_hash: string
+          created_at: string
+          name: string
+          redirect_uris: string[]
+        }
+        Insert: {
+          client_id: string
+          client_secret_hash: string
+          created_at?: string
+          name?: string
+          redirect_uris?: string[]
+        }
+        Update: {
+          client_id?: string
+          client_secret_hash?: string
+          created_at?: string
+          name?: string
+          redirect_uris?: string[]
+        }
+        Relationships: []
+      }
+      oauth_codes: {
+        Row: {
+          client_id: string
+          code: string
+          code_challenge: string | null
+          code_challenge_method: string | null
+          created_at: string
+          expires_at: string
+          redirect_uri: string
+          scope: string | null
+          used: boolean
+        }
+        Insert: {
+          client_id: string
+          code: string
+          code_challenge?: string | null
+          code_challenge_method?: string | null
+          created_at?: string
+          expires_at: string
+          redirect_uri: string
+          scope?: string | null
+          used?: boolean
+        }
+        Update: {
+          client_id?: string
+          code?: string
+          code_challenge?: string | null
+          code_challenge_method?: string | null
+          created_at?: string
+          expires_at?: string
+          redirect_uri?: string
+          scope?: string | null
+          used?: boolean
+        }
+        Relationships: []
+      }
+      oauth_tokens: {
+        Row: {
+          access_token_hash: string
+          client_id: string
+          created_at: string
+          expires_at: string
+          id: string
+          refresh_token_hash: string | null
+          revoked: boolean
+          scope: string | null
+        }
+        Insert: {
+          access_token_hash: string
+          client_id: string
+          created_at?: string
+          expires_at: string
+          id?: string
+          refresh_token_hash?: string | null
+          revoked?: boolean
+          scope?: string | null
+        }
+        Update: {
+          access_token_hash?: string
+          client_id?: string
+          created_at?: string
+          expires_at?: string
+          id?: string
+          refresh_token_hash?: string | null
+          revoked?: boolean
+          scope?: string | null
+        }
+        Relationships: []
+      }
       settings: {
         Row: {
           created_at: string
