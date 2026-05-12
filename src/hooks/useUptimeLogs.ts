@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
+import { getSupabaseClient } from "@/lib/supabaseRuntime";
 
 export interface UptimeLog {
   id: string;
@@ -16,8 +16,9 @@ export function useUptimeLogs(days = 90) {
   return useQuery({
     queryKey: ["uptime-logs", days],
     queryFn: async (): Promise<UptimeLog[]> => {
+      const supabase = getSupabaseClient();
       const { data, error } = await supabase
-        .from("uptime_logs" as any)
+        .from("uptime_logs")
         .select("*")
         .gte("checked_at", since.toISOString())
         .order("checked_at", { ascending: true })
@@ -34,6 +35,7 @@ export function useTriggerUptimeCheck() {
 
   return useMutation({
     mutationFn: async () => {
+      const supabase = getSupabaseClient();
       const { data, error } = await supabase.functions.invoke("uptime-checker");
       if (error) throw error;
       return data;

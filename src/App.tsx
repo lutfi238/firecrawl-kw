@@ -4,9 +4,10 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { supabase } from "@/integrations/supabase/client";
+import { getSupabaseClient } from "@/lib/supabaseRuntime";
 import { useAuthStore } from "@/stores/authStore";
 import { AuthGate } from "@/components/AuthGate";
+import { BackendConfigGate } from "@/components/BackendConfigGate";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { useMCPServer } from "@/hooks/useMCPServer";
 import Overview from "@/pages/Overview";
@@ -14,6 +15,7 @@ import ToolTester from "@/pages/ToolTester";
 import RequestMonitor from "@/pages/RequestMonitor";
 import Settings from "@/pages/Settings";
 import AIChat from "@/pages/AIChat";
+import DeploymentGuide from "@/pages/DeploymentGuide";
 import NotFound from "@/pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -33,6 +35,7 @@ async function handleOAuthCallback() {
   }
 
   if (tokenHash && type === "magiclink") {
+    const supabase = getSupabaseClient();
     const { error } = await supabase.auth.verifyOtp({
       token_hash: tokenHash,
       type: "magiclink",
@@ -48,6 +51,7 @@ async function handleOAuthCallback() {
 /** Load GitHub token in background (non-blocking) */
 async function loadGithubToken(userId: string): Promise<string | null> {
   try {
+    const supabase = getSupabaseClient();
     const { data } = await supabase
       .from("settings")
       .select("value")
@@ -67,18 +71,19 @@ function AuthListener() {
     // Fire-and-forget — don't block session loading
     handleOAuthCallback();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
-        const user = session?.user ?? null;
-        // Show UI immediately with null token, then load token in background
-        setSession(user, null);
-        if (user) {
-          loadGithubToken(user.id).then((token) => {
-            if (token) setSession(user, token);
-          });
-        }
+    const supabase = getSupabaseClient();
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      const user = session?.user ?? null;
+      // Show UI immediately with null token, then load token in background
+      setSession(user, null);
+      if (user) {
+        loadGithubToken(user.id).then((token) => {
+          if (token) setSession(user, token);
+        });
       }
-    );
+    });
 
     // Initial session check
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -99,11 +104,16 @@ function AuthListener() {
 
 function AppContent() {
   const { pingServer } = useMCPServer();
-  const [serverOnline, setServerOnline] = useState<boolean | undefined>(undefined);
+  const [serverOnline, setServerOnline] = useState<boolean | undefined>(
+    undefined,
+  );
 
   useEffect(() => {
     pingServer().then(setServerOnline);
-    const interval = setInterval(() => pingServer().then(setServerOnline), 30000);
+    const interval = setInterval(
+      () => pingServer().then(setServerOnline),
+      30000,
+    );
     return () => clearInterval(interval);
   }, [pingServer]);
 
@@ -115,6 +125,7 @@ function AppContent() {
         <Route path="/monitor" element={<RequestMonitor />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/chat" element={<AIChat />} />
+        <Route path="/deploy" element={<DeploymentGuide />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </DashboardLayout>
@@ -127,10 +138,12 @@ const App = () => (
       <Toaster />
       <Sonner />
       <BrowserRouter>
-        <AuthListener />
-        <AuthGate>
-          <AppContent />
-        </AuthGate>
+        <BackendConfigGate>
+          <AuthListener />
+          <AuthGate>
+            <AppContent />
+          </AuthGate>
+        </BackendConfigGate>
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>

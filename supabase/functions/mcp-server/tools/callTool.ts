@@ -1,5 +1,16 @@
-import { buildHistoryContext, buildMultimodalContent, callAIStream, classifyChatIntent, handleChatWithOrchestration } from "../ai/chat.ts";
-import { getAiSettingsFromMap } from "../ai/settings.ts";
+import {
+  buildHistoryContext,
+  buildMultimodalContent,
+  callAIStream,
+  classifyChatIntent,
+  handleChatWithOrchestration,
+} from "../ai/chat.ts";
+import {
+  getAiRequestHeaders,
+  getAiSettingsFromMap,
+  getChatCompletionsUrl,
+  isGitHubModelsProvider,
+} from "../ai/settings.ts";
 import { getUserSettings } from "../auth/userSettings.ts";
 import { createJob, processBatchScrapeJob } from "../jobs/batchScrape.ts";
 import { processAgentJob } from "../jobs/agentJobs.ts";
@@ -29,8 +40,13 @@ type HandleToolCallParams = {
 
 const toolRegistry: Record<string, ToolHandler> = {
   search: async (args: Record<string, unknown>) => {
-    const results = await searchWeb(args.query as string, (args.maxResults as number) || 10);
-    return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
+    const results = await searchWeb(
+      args.query as string,
+      (args.maxResults as number) || 10,
+    );
+    return {
+      content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+    };
   },
   scrape: async (args: Record<string, unknown>) => {
     const { markdown, title } = await scrapeUrl(args.url as string);
@@ -38,25 +54,44 @@ const toolRegistry: Record<string, ToolHandler> = {
   },
 };
 
-const getJobStatusResult = async (authHeader: string | null, jobId: string): Promise<ToolResult> => {
+const getJobStatusResult = async (
+  authHeader: string | null,
+  jobId: string,
+): Promise<ToolResult> => {
   const status = await checkJobStatus(authHeader, jobId);
   return { content: [{ type: "text", text: JSON.stringify(status, null, 2) }] };
 };
 
-const createPendingJobResult = (jobId: string, message: string): ToolResult => ({
-  content: [{ type: "text", text: JSON.stringify({ jobId, status: "pending", message }) }],
+const createPendingJobResult = (
+  jobId: string,
+  message: string,
+): ToolResult => ({
+  content: [
+    {
+      type: "text",
+      text: JSON.stringify({ jobId, status: "pending", message }),
+    },
+  ],
 });
 
-export async function handleToolCall(
-  { args, authHeader, corsHeaders, name }: HandleToolCallParams,
-): Promise<ToolDispatchOutcome> {
+export async function handleToolCall({
+  args,
+  authHeader,
+  corsHeaders,
+  name,
+}: HandleToolCallParams): Promise<ToolDispatchOutcome> {
   if (name === "scrape_js" || name === "screenshot") {
     const userSettings = await getUserSettings(authHeader);
     if (userSettings.renderer_enabled !== "true") {
       return {
         kind: "result",
         result: {
-          content: [{ type: "text", text: "Tool disabled. Configure Render renderer URL in Settings to enable JS rendering." }],
+          content: [
+            {
+              type: "text",
+              text: "Tool disabled. Configure Render renderer URL in Settings to enable JS rendering.",
+            },
+          ],
           isError: true,
         },
       };
@@ -75,7 +110,15 @@ export async function handleToolCall(
       if (!rendererUrl) {
         return {
           kind: "result",
-          result: { content: [{ type: "text", text: "Error: Renderer URL not configured in Settings." }], isError: true },
+          result: {
+            content: [
+              {
+                type: "text",
+                text: "Error: Renderer URL not configured in Settings.",
+              },
+            ],
+            isError: true,
+          },
         };
       }
 
@@ -87,7 +130,10 @@ export async function handleToolCall(
       });
       if (!res.ok) throw new Error(`Renderer returned ${res.status}`);
       const { html } = await res.json();
-      return { kind: "result", result: { content: [{ type: "text", text: htmlToMarkdown(html) }] } };
+      return {
+        kind: "result",
+        result: { content: [{ type: "text", text: htmlToMarkdown(html) }] },
+      };
     }
 
     case "crawl": {
@@ -95,13 +141,21 @@ export async function handleToolCall(
       if (job.error) {
         return {
           kind: "result",
-          result: { content: [{ type: "text", text: `Error creating crawl job: ${job.error}` }], isError: true },
+          result: {
+            content: [
+              { type: "text", text: `Error creating crawl job: ${job.error}` },
+            ],
+            isError: true,
+          },
         };
       }
       EdgeRuntime.waitUntil(processCrawlJob(job.jobId, args));
       return {
         kind: "result",
-        result: createPendingJobResult(job.jobId, "Crawl started. Use check_crawl_status tool with this jobId to poll for results."),
+        result: createPendingJobResult(
+          job.jobId,
+          "Crawl started. Use check_crawl_status tool with this jobId to poll for results.",
+        ),
       };
     }
 
@@ -115,7 +169,9 @@ export async function handleToolCall(
         visited.add(current);
         try {
           const res = await fetch(current, {
-            headers: { "User-Agent": "Mozilla/5.0 (compatible; FirecrawlMCP/1.0)" },
+            headers: {
+              "User-Agent": "Mozilla/5.0 (compatible; FirecrawlMCP/1.0)",
+            },
             redirect: "follow",
           });
           if (!res.ok) continue;
@@ -127,7 +183,14 @@ export async function handleToolCall(
           // skip
         }
       }
-      return { kind: "result", result: { content: [{ type: "text", text: JSON.stringify([...visited], null, 2) }] } };
+      return {
+        kind: "result",
+        result: {
+          content: [
+            { type: "text", text: JSON.stringify([...visited], null, 2) },
+          ],
+        },
+      };
     }
 
     case "extract": {
@@ -137,7 +200,12 @@ export async function handleToolCall(
         return {
           kind: "result",
           result: {
-            content: [{ type: "text", text: "Error: AI provider not configured. Go to Settings → AI Provider and add your API key." }],
+            content: [
+              {
+                type: "text",
+                text: "Error: AI provider not configured. Go to Settings → AI Provider and add your API key.",
+              },
+            ],
             isError: true,
           },
         };
@@ -148,19 +216,17 @@ export async function handleToolCall(
       const systemPrompt = args.schema
         ? `Extract the requested data from the web page content. Return valid JSON matching this schema: ${args.schema as string}`
         : "Extract the requested data from the web page content. Return structured JSON.";
-      const aiRes = await fetch(`${aiSettings.baseUrl}/chat/completions`, {
+      const aiRes = await fetch(getChatCompletionsUrl(aiSettings), {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${aiSettings.apiKey}`,
-          "Content-Type": "application/json",
-          "HTTP-Referer": "https://id-preview--4485e6f5-86ea-4999-acd7-7209fb13e21d.lovable.app",
-          "X-Title": "Personal Firecrawl MCP",
-        },
+        headers: getAiRequestHeaders(aiSettings),
         body: JSON.stringify({
           model: aiSettings.model,
           messages: [
             { role: "system", content: systemPrompt },
-            { role: "user", content: `${args.prompt as string}\n\n---PAGE CONTENT---\n${truncated}` },
+            {
+              role: "user",
+              content: `${args.prompt as string}\n\n---PAGE CONTENT---\n${truncated}`,
+            },
           ],
           max_tokens: 4096,
         }),
@@ -174,7 +240,13 @@ export async function handleToolCall(
         } catch {
           errorMsg += `: ${aiBody.slice(0, 300)}`;
         }
-        return { kind: "result", result: { content: [{ type: "text", text: errorMsg }], isError: true } };
+        return {
+          kind: "result",
+          result: {
+            content: [{ type: "text", text: errorMsg }],
+            isError: true,
+          },
+        };
       }
 
       const aiData = JSON.parse(aiBody);
@@ -183,12 +255,20 @@ export async function handleToolCall(
         return {
           kind: "result",
           result: {
-            content: [{ type: "text", text: `AI returned no content. Raw response: ${JSON.stringify(aiData).slice(0, 500)}` }],
+            content: [
+              {
+                type: "text",
+                text: `AI returned no content. Raw response: ${JSON.stringify(aiData).slice(0, 500)}`,
+              },
+            ],
             isError: true,
           },
         };
       }
-      return { kind: "result", result: { content: [{ type: "text", text: answer }] } };
+      return {
+        kind: "result",
+        result: { content: [{ type: "text", text: answer }] },
+      };
     }
 
     case "screenshot": {
@@ -197,7 +277,15 @@ export async function handleToolCall(
       if (!rendererUrl) {
         return {
           kind: "result",
-          result: { content: [{ type: "text", text: "Error: Renderer URL not configured in Settings." }], isError: true },
+          result: {
+            content: [
+              {
+                type: "text",
+                text: "Error: Renderer URL not configured in Settings.",
+              },
+            ],
+            isError: true,
+          },
         };
       }
 
@@ -205,29 +293,169 @@ export async function handleToolCall(
       const res = await fetch(`${rendererUrl}/screenshot`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Secret": secret },
-        body: JSON.stringify({ url: args.url, width: args.width || 1280, height: args.height || 720 }),
+        body: JSON.stringify({
+          url: args.url,
+          width: args.width || 1280,
+          height: args.height || 720,
+        }),
       });
       if (!res.ok) throw new Error(`Renderer returned ${res.status}`);
       const { image } = await res.json();
-      return { kind: "result", result: { content: [{ type: "image", data: image, mimeType: "image/png" }] } };
+      return {
+        kind: "result",
+        result: {
+          content: [{ type: "image", data: image, mimeType: "image/png" }],
+        },
+      };
     }
 
     case "search_and_scrape": {
-      const searchResults = await searchWeb(args.query as string, (args.maxResults as number) || 3);
+      const searchResults = await searchWeb(
+        args.query as string,
+        (args.maxResults as number) || 3,
+      );
       const scraped: string[] = [];
       for (const item of searchResults) {
         try {
           const { markdown, title } = await scrapeUrl(item.url);
-          scraped.push(`# ${title}\nURL: ${item.url}\n\n${markdown.slice(0, 4000)}\n\n---`);
+          scraped.push(
+            `# ${title}\nURL: ${item.url}\n\n${markdown.slice(0, 4000)}\n\n---`,
+          );
         } catch {
-          scraped.push(`# ${item.title}\nURL: ${item.url}\nFailed to scrape.\n\n---`);
+          scraped.push(
+            `# ${item.title}\nURL: ${item.url}\nFailed to scrape.\n\n---`,
+          );
         }
       }
-      return { kind: "result", result: { content: [{ type: "text", text: scraped.join("\n\n") }] } };
+      return {
+        kind: "result",
+        result: { content: [{ type: "text", text: scraped.join("\n\n") }] },
+      };
+    }
+
+    case "test_ai_provider": {
+      const userSettings = await getUserSettings(authHeader);
+      const aiSettings = getAiSettingsFromMap(userSettings);
+      if (!aiSettings) {
+        return {
+          kind: "result",
+          result: {
+            content: [
+              { type: "text", text: "Error: AI provider not configured." },
+            ],
+            isError: true,
+          },
+        };
+      }
+
+      const res = await fetch(getChatCompletionsUrl(aiSettings), {
+        method: "POST",
+        headers: getAiRequestHeaders(aiSettings),
+        body: JSON.stringify({
+          model: aiSettings.model,
+          messages: [{ role: "user", content: "Hi" }],
+          max_tokens: 1,
+        }),
+      });
+      const body = await res.text();
+      if (!res.ok) {
+        return {
+          kind: "result",
+          result: {
+            content: [
+              {
+                type: "text",
+                text: `AI provider test failed ${res.status}: ${body.slice(0, 500)}`,
+              },
+            ],
+            isError: true,
+          },
+        };
+      }
+
+      return {
+        kind: "result",
+        result: {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  ok: true,
+                  provider: aiSettings.provider,
+                  model: aiSettings.model,
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        },
+      };
+    }
+
+    case "github_models_catalog": {
+      const userSettings = await getUserSettings(authHeader);
+      const aiSettings = getAiSettingsFromMap(userSettings);
+      const token =
+        (args.token as string) ||
+        (aiSettings && isGitHubModelsProvider(aiSettings)
+          ? aiSettings.apiKey
+          : "");
+
+      if (!token) {
+        return {
+          kind: "result",
+          result: {
+            content: [
+              {
+                type: "text",
+                text: "Error: Provide a GitHub token with models:read, or save GitHub Models as your AI provider first.",
+              },
+            ],
+            isError: true,
+          },
+        };
+      }
+
+      const res = await fetch("https://models.github.ai/catalog/models", {
+        headers: {
+          Accept: "application/vnd.github+json",
+          Authorization: `Bearer ${token}`,
+          "X-GitHub-Api-Version": "2026-03-10",
+        },
+      });
+      const body = await res.text();
+      if (!res.ok) {
+        return {
+          kind: "result",
+          result: {
+            content: [
+              {
+                type: "text",
+                text: `GitHub Models catalog error ${res.status}: ${body.slice(0, 500)}`,
+              },
+            ],
+            isError: true,
+          },
+        };
+      }
+
+      return {
+        kind: "result",
+        result: { content: [{ type: "text", text: body }] },
+      };
     }
 
     case "html_to_markdown": {
-      return { kind: "result", result: { content: [{ type: "text", text: htmlToMarkdown(args.html as string) }] } };
+      return {
+        kind: "result",
+        result: {
+          content: [
+            { type: "text", text: htmlToMarkdown(args.html as string) },
+          ],
+        },
+      };
     }
 
     case "batch_scrape": {
@@ -235,20 +463,31 @@ export async function handleToolCall(
       if (job.error) {
         return {
           kind: "result",
-          result: { content: [{ type: "text", text: `Error creating batch job: ${job.error}` }], isError: true },
+          result: {
+            content: [
+              { type: "text", text: `Error creating batch job: ${job.error}` },
+            ],
+            isError: true,
+          },
         };
       }
       EdgeRuntime.waitUntil(processBatchScrapeJob(job.jobId, args));
       return {
         kind: "result",
-        result: createPendingJobResult(job.jobId, "Batch scrape started. Use check_batch_status tool with this jobId to poll for results."),
+        result: createPendingJobResult(
+          job.jobId,
+          "Batch scrape started. Use check_batch_status tool with this jobId to poll for results.",
+        ),
       };
     }
 
     case "check_crawl_status":
     case "check_batch_status":
     case "agent_status": {
-      return { kind: "result", result: await getJobStatusResult(authHeader, args.jobId as string) };
+      return {
+        kind: "result",
+        result: await getJobStatusResult(authHeader, args.jobId as string),
+      };
     }
 
     case "agent": {
@@ -258,7 +497,12 @@ export async function handleToolCall(
         return {
           kind: "result",
           result: {
-            content: [{ type: "text", text: "Error: AI provider not configured. Go to Settings → AI Provider and add your API key." }],
+            content: [
+              {
+                type: "text",
+                text: "Error: AI provider not configured. Go to Settings → AI Provider and add your API key.",
+              },
+            ],
             isError: true,
           },
         };
@@ -268,13 +512,21 @@ export async function handleToolCall(
       if (job.error) {
         return {
           kind: "result",
-          result: { content: [{ type: "text", text: `Error creating agent job: ${job.error}` }], isError: true },
+          result: {
+            content: [
+              { type: "text", text: `Error creating agent job: ${job.error}` },
+            ],
+            isError: true,
+          },
         };
       }
       EdgeRuntime.waitUntil(processAgentJob(job.jobId, args, aiSettings));
       return {
         kind: "result",
-        result: createPendingJobResult(job.jobId, "Agent research started. Use agent_status tool with this jobId to poll for results."),
+        result: createPendingJobResult(
+          job.jobId,
+          "Agent research started. Use agent_status tool with this jobId to poll for results.",
+        ),
       };
     }
 
@@ -285,7 +537,12 @@ export async function handleToolCall(
         return {
           kind: "result",
           result: {
-            content: [{ type: "text", text: "Error: AI provider not configured. Go to Settings → AI Provider and add your API key." }],
+            content: [
+              {
+                type: "text",
+                text: "Error: AI provider not configured. Go to Settings → AI Provider and add your API key.",
+              },
+            ],
             isError: true,
           },
         };
@@ -293,38 +550,67 @@ export async function handleToolCall(
 
       if (args.stream === true) {
         const streamMode = (args.mode as string) || "orchestrate";
-        const images = ((args.images as string[]) || []);
-        const history = ((args.history as Array<{ role: string; content: string }>) || []);
+        const images = (args.images as string[]) || [];
+        const history =
+          (args.history as Array<{ role: string; content: string }>) || [];
         const message = (args.message as string) || "";
 
         if (streamMode === "synthesis") {
-          const systemPrompt = history.find((item) => item.role === "system")?.content || "You are a helpful assistant.";
-          const nonSystemHistory = history.filter((item) => item.role !== "system");
-          const userContent = buildMultimodalContent(buildHistoryContext(nonSystemHistory, message), images);
+          const systemPrompt =
+            history.find((item) => item.role === "system")?.content ||
+            "You are a helpful assistant.";
+          const nonSystemHistory = history.filter(
+            (item) => item.role !== "system",
+          );
+          const userContent = buildMultimodalContent(
+            buildHistoryContext(nonSystemHistory, message),
+            images,
+          );
           return {
             kind: "response",
-            response: new Response(callAIStream(aiSettings, systemPrompt, userContent, 4096), {
-              headers: { ...corsHeaders, "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
-            }),
+            response: new Response(
+              callAIStream(aiSettings, systemPrompt, userContent, 4096),
+              {
+                headers: {
+                  ...corsHeaders,
+                  "Content-Type": "text/event-stream",
+                  "Cache-Control": "no-cache",
+                },
+              },
+            ),
           };
         }
 
         const intent = classifyChatIntent(message);
         if (images.length > 0 || intent === "casual") {
-          const userContent = buildMultimodalContent(buildHistoryContext(history, message), images);
-          const systemPrompt = images.length > 0 && intent !== "casual"
-            ? "You are a helpful AI assistant. The user has sent image(s) along with their query. Analyze the image(s) carefully and answer based on what you see. Be specific, accurate, and honest. If you cannot determine something from the image, say so."
-            : "You are a helpful AI assistant for Personal Firecrawl MCP, a web intelligence server. Answer conversationally and helpfully. If the user sends images, describe and analyze them.";
+          const userContent = buildMultimodalContent(
+            buildHistoryContext(history, message),
+            images,
+          );
+          const systemPrompt =
+            images.length > 0 && intent !== "casual"
+              ? "You are a helpful AI assistant. The user has sent image(s) along with their query. Analyze the image(s) carefully and answer based on what you see. Be specific, accurate, and honest. If you cannot determine something from the image, say so."
+              : "You are a helpful AI assistant for Personal Firecrawl MCP, a web intelligence server. Answer conversationally and helpfully. If the user sends images, describe and analyze them.";
           return {
             kind: "response",
-            response: new Response(callAIStream(aiSettings, systemPrompt, userContent), {
-              headers: { ...corsHeaders, "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
-            }),
+            response: new Response(
+              callAIStream(aiSettings, systemPrompt, userContent),
+              {
+                headers: {
+                  ...corsHeaders,
+                  "Content-Type": "text/event-stream",
+                  "Cache-Control": "no-cache",
+                },
+              },
+            ),
           };
         }
       }
 
-      return { kind: "result", result: await handleChatWithOrchestration(args, aiSettings, authHeader) };
+      return {
+        kind: "result",
+        result: await handleChatWithOrchestration(args, aiSettings, authHeader),
+      };
     }
 
     default:

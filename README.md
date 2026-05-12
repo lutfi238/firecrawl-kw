@@ -40,6 +40,25 @@ Supabase Edge Functions membutuhkan:
 - `CLAUDE_OAUTH_CLIENT_ID` untuk Claude Web custom connector
 - `CLAUDE_OAUTH_CLIENT_SECRET` untuk Claude Web custom connector
 - `CLAUDE_OAUTH_REDIRECT_URIS` optional, default `https://claude.ai/api/mcp/auth_callback`
+- `MCP_DEFAULT_USER_ID` optional, binds password-approved MCP OAuth tokens to one Supabase user so Claude Web can use that user’s saved settings/jobs
+
+## GitHub Models AI provider
+
+GitHub Copilot login is not used as a general AI provider. If you want GitHub-hosted models, use **GitHub Models** instead.
+
+Settings values:
+
+- Provider: `GitHub Models`
+- Base URL: `https://models.github.ai/inference`
+- Model: for example `openai/gpt-4.1`
+- API Key: a GitHub fine-grained token or GitHub App token with `models:read`
+
+The app can call:
+
+- Catalog: `GET https://models.github.ai/catalog/models`
+- Chat completions: `POST https://models.github.ai/inference/chat/completions`
+
+GitHub Models is rate-limited and should not be treated as unlimited free GPT usage. Quotas depend on GitHub account/org/model limits.
 
 ## Claude Web custom connector
 
@@ -54,6 +73,8 @@ supabase secrets set MCP_SECRET="<new-random-legacy-mcp-secret>"
 supabase secrets set MCP_MASTER_PASSWORD="<new-random-consent-password>"
 supabase secrets set CLAUDE_OAUTH_CLIENT_ID="firecrawl-kw-claude"
 supabase secrets set CLAUDE_OAUTH_CLIENT_SECRET="<new-random-oauth-client-secret>"
+# Optional, recommended for personal Claude Web usage if you want OAuth tool calls to use your saved settings:
+supabase secrets set MCP_DEFAULT_USER_ID="<your-supabase-auth-user-id>"
 ```
 
 `MCP_SECRET` hanya untuk MCP clients lain yang memang bisa mengirim header. Claude Web tidak pernah menerima nilai ini.
@@ -119,6 +140,34 @@ Unauthenticated MCP JSON-RPC POST requests return `401` with `WWW-Authenticate: 
    - `[mcp] tools/call name=`
 8. Send an unauthenticated POST to the MCP URL and confirm it returns `401`.
 9. Test an existing local MCP client with the rotated `X-MCP-Secret` header.
+
+## GitHub App option for GitHub Models
+
+The first supported GitHub Models path is a user-provided token with `models:read`. A GitHub App can be added later for a cleaner install flow.
+
+Backend-only secrets for the future GitHub App flow:
+
+- `GITHUB_APP_ID`
+- `GITHUB_APP_PRIVATE_KEY`
+- `GITHUB_APP_CLIENT_ID`
+- `GITHUB_APP_CLIENT_SECRET`
+
+Before implementing the full connect/install flow, validate that a GitHub App installation/user token with `models:read` can call:
+
+- `GET https://models.github.ai/catalog/models`
+- `POST https://models.github.ai/inference/chat/completions`
+
+Do not put the GitHub App private key in frontend config or localStorage.
+
+## Bring your own Supabase backend
+
+The hosted frontend can now be used as a UI shell for a Supabase/MCP backend you own. Open **Settings → Backend Connection → Reconfigure Backend** or the **Deploy** page in the app, then paste:
+
+- Supabase URL
+- Supabase anon/publishable key
+- MCP endpoint URL
+
+Only use the browser-safe anon/publishable key in the frontend. Keep `SUPABASE_SERVICE_ROLE_KEY`, `MCP_SECRET`, OAuth client secrets, and GitHub App private keys in Supabase Edge Function secrets only.
 
 ## Local MCP stdio bridge
 

@@ -11,6 +11,13 @@ const CODE_TTL_SEC = 5 * 60;
 const REFRESH_TTL_SEC = 60 * 60 * 24 * 90;
 const DEFAULT_CLAUDE_REDIRECT_URI = "https://claude.ai/api/mcp/auth_callback";
 
+export type ValidBearerResult = {
+  ok: boolean;
+  client_id?: string;
+  user_id?: string | null;
+  scope?: string | null;
+};
+
 type OAuthClient = {
   client_id: string;
   client_secret_hash: string | null;
@@ -267,6 +274,7 @@ export async function handleAuthorizePost(
 
   const code = randomToken(32);
   const expires_at = new Date(Date.now() + CODE_TTL_SEC * 1000).toISOString();
+  const user_id = Deno.env.get("MCP_DEFAULT_USER_ID") || null;
   const { error } = await sb.from("oauth_codes").insert({
     code,
     client_id,
@@ -275,6 +283,7 @@ export async function handleAuthorizePost(
     code_challenge_method,
     scope,
     expires_at,
+    user_id,
   });
   if (error) {
     console.error("[oauth] code insert failed", error);
@@ -396,7 +405,12 @@ export async function handleToken(
 
     await sb.from("oauth_codes").update({ used: true }).eq("code", code);
 
-    const issued = await issueToken(sb, client_id, row.scope || "mcp");
+    const issued = await issueToken(
+      sb,
+      client_id,
+      row.scope || "mcp",
+      row.user_id || null,
+    );
     console.log("[oauth] token issued client_id=", client_id);
     return json(issued, corsHeaders);
   }
@@ -414,7 +428,12 @@ export async function handleToken(
       return json({ error: "invalid_grant" }, corsHeaders, 400);
     }
     await sb.from("oauth_tokens").update({ revoked: true }).eq("id", tok.id);
-    const issued = await issueToken(sb, client_id, tok.scope || "mcp");
+    const issued = await issueToken(
+      sb,
+      client_id,
+      tok.scope || "mcp",
+      tok.user_id || null,
+    );
     console.log("[oauth] token refreshed client_id=", client_id);
     return json(issued, corsHeaders);
   }
@@ -426,6 +445,7 @@ async function issueToken(
   sb: SupabaseServiceClient,
   client_id: string,
   scope: string,
+  user_id: string | null,
 ) {
   const access = randomToken(32);
   const refresh = randomToken(32);
@@ -438,6 +458,7 @@ async function issueToken(
     client_id,
     scope,
     expires_at,
+    user_id,
   });
   return {
     access_token: access,
@@ -466,18 +487,23 @@ async function verifyPkce(
 
 export async function validateBearer(
   token: string,
-): Promise<{ ok: boolean; client_id?: string }> {
+): Promise<ValidBearerResult> {
   if (!token) return { ok: false };
   const sb = getServiceClient();
   const hash = await sha256(token);
   const { data } = await sb
     .from("oauth_tokens")
-    .select("client_id, expires_at, revoked")
+    .select("client_id, user_id, scope, expires_at, revoked")
     .eq("access_token_hash", hash)
     .maybeSingle();
   if (!data || data.revoked) return { ok: false };
   if (new Date(data.expires_at) < new Date()) return { ok: false };
-  return { ok: true, client_id: data.client_id };
+  return {
+    ok: true,
+    client_id: data.client_id,
+    user_id: data.user_id ?? null,
+    scope: data.scope ?? null,
+  };
 }
 
 // ---- helpers ----

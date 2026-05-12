@@ -2,7 +2,8 @@ import { useState, useEffect } from "react";
 import { useAuthStore } from "@/stores/authStore";
 import { useSettings } from "@/hooks/useSettings";
 import { useRequestLogs } from "@/hooks/useRequestLogs";
-import { supabase } from "@/integrations/supabase/client";
+import { useMCPServer } from "@/hooks/useMCPServer";
+
 import { GlassCard } from "@/components/GlassCard";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -30,6 +31,29 @@ import {
   Clock,
 } from "lucide-react";
 import { toast } from "sonner";
+import {
+  clearBackendConfig,
+  getBackendConfig,
+  requestBackendSetup,
+} from "@/lib/backendConfig";
+import { resetSupabaseClientCache } from "@/lib/supabaseRuntime";
+
+const GITHUB_MODELS_PROVIDER = "GitHub Models";
+const GITHUB_MODELS_BASE_URL = "https://models.github.ai/inference";
+const GITHUB_MODELS_CATALOG_URL = "https://models.github.ai/catalog/models";
+
+type GitHubModelCatalogItem = {
+  id: string;
+  name?: string;
+  publisher?: string;
+  summary?: string;
+  rate_limit_tier?: string;
+  capabilities?: string[];
+  limits?: {
+    max_input_tokens?: number;
+    max_output_tokens?: number;
+  };
+};
 
 const AI_PROVIDERS = [
   { label: "OpenAI Compatible", baseUrl: "", model: "", icon: "🔌" },
@@ -118,9 +142,9 @@ const AI_PROVIDERS = [
     icon: "🏠",
   },
   {
-    label: "GitHub Copilot",
-    baseUrl: "https://api.githubcopilot.com",
-    model: "claude-haiku-4-5",
+    label: GITHUB_MODELS_PROVIDER,
+    baseUrl: GITHUB_MODELS_BASE_URL,
+    model: "openai/gpt-4.1",
     icon: "🐙",
   },
   {
@@ -147,6 +171,7 @@ export default function Settings() {
   const { user, githubToken } = useAuthStore();
   const { settings, upsert } = useSettings();
   const { clearLogs } = useRequestLogs();
+  const { callTool } = useMCPServer();
   const [renderUrl, setRenderUrl] = useState("");
   const [renderSecret, setRenderSecret] = useState("");
   const [rendererEnabled, setRendererEnabled] = useState(false);
@@ -166,10 +191,16 @@ export default function Settings() {
   >("idle");
   const [aiTestError, setAiTestError] = useState("");
   const [aiTestTime, setAiTestTime] = useState<string | null>(null);
+  const [githubModels, setGithubModels] = useState<GitHubModelCatalogItem[]>(
+    [],
+  );
+  const [loadingGithubModels, setLoadingGithubModels] = useState(false);
+  const [githubModelsError, setGithubModelsError] = useState("");
 
   const avatarUrl = user?.user_metadata?.avatar_url;
   const username =
     user?.user_metadata?.user_name ?? user?.email?.split("@")[0] ?? "User";
+  const backendConfig = getBackendConfig();
 
   // Initialize from settings
   useEffect(() => {
@@ -196,65 +227,77 @@ export default function Settings() {
     setSavingPat(true);
     try {
       await upsert.mutateAsync({ key: "github_pat", value: githubPat });
-      toast.success("GitHub PAT saved");
+      toast.success("GitHub token saved");
     } catch {
-      toast.error("Failed to save PAT");
+      toast.error("Failed to save GitHub token");
     }
     setSavingPat(false);
   };
 
-  const testAiConnection = async (
-    baseUrl: string,
-    apiKey: string,
-    model: string,
-  ) => {
+  const isGitHubModelsSelected =
+    aiProvider === GITHUB_MODELS_PROVIDER ||
+    aiBaseUrl.replace(/\/+$/, "") === GITHUB_MODELS_BASE_URL;
+
+  const fetchGitHubModels = async () => {
+    if (!aiApiKey) {
+      toast.error("Enter a GitHub token with models:read first");
+      return;
+    }
+
+    setLoadingGithubModels(true);
+    setGithubModelsError("");
+    try {
+      const res = await fetch(GITHUB_MODELS_CATALOG_URL, {
+        headers: {
+          Accept: "application/vnd.github+json",
+          Authorization: `Bearer ${aiApiKey}`,
+          "X-GitHub-Api-Version": "2026-03-10",
+        },
+      });
+
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(
+          `GitHub Models catalog error ${res.status}: ${body.slice(0, 180)}`,
+        );
+      }
+
+      const data = (await res.json()) as GitHubModelCatalogItem[];
+      setGithubModels(data);
+      if (!aiModel && data[0]?.id) setAiModel(data[0].id);
+      toast.success(`Loaded ${data.length} GitHub models`);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Failed to fetch GitHub Models catalog";
+      setGithubModelsError(message);
+      toast.error(message);
+    } finally {
+      setLoadingGithubModels(false);
+    }
+  };
+
+  const testAiConnection = async () => {
     setAiTestStatus("testing");
     setAiTestError("");
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
     try {
-      const url = `${baseUrl.replace(/\/+$/, "")}/chat/completions`;
-      const res = await fetch(url, {
-        method: "POST",
-        signal: controller.signal,
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-          "HTTP-Referer": window.location.origin,
-          "X-Title": "MCP Dashboard",
-        },
-        body: JSON.stringify({
-          model,
-          messages: [{ role: "user", content: "Hi" }],
-          max_tokens: 1,
-        }),
-      });
-      clearTimeout(timeout);
-      if (res.ok) {
-        setAiTestStatus("connected");
-        setAiTestTime(new Date().toLocaleTimeString());
-      } else {
-        const body = await res.text().catch(() => "");
-        let reason = `HTTP ${res.status}`;
-        if (res.status === 401 || res.status === 403)
-          reason = "Invalid API key";
-        else if (res.status === 404)
-          reason = "Model not found or invalid base URL";
-        else if (res.status === 429) reason = "Rate limited — try again";
-        else if (res.status >= 500) reason = "Provider server error";
-        else if (body.includes("model")) reason = `Model error: ${res.status}`;
+      const result = await callTool("test_ai_provider", {});
+      if (result.isError) {
         setAiTestStatus("failed");
-        setAiTestError(reason);
+        setAiTestError(
+          result.content.map((item) => item.text ?? "").join("\n") ||
+            "AI provider test failed",
+        );
+        return;
       }
-    } catch (err: unknown) {
-      clearTimeout(timeout);
-      if (err instanceof DOMException && err.name === "AbortError") {
-        setAiTestStatus("failed");
-        setAiTestError("Connection timed out (8s)");
-      } else {
-        setAiTestStatus("failed");
-        setAiTestError("Base URL unreachable");
-      }
+      setAiTestStatus("connected");
+      setAiTestTime(new Date().toLocaleTimeString());
+    } catch (error) {
+      setAiTestStatus("failed");
+      setAiTestError(
+        error instanceof Error ? error.message : "AI provider test failed",
+      );
     }
   };
 
@@ -266,8 +309,8 @@ export default function Settings() {
       await upsert.mutateAsync({ key: "ai_api_key", value: aiApiKey });
       await upsert.mutateAsync({ key: "ai_model", value: aiModel });
       toast.success("AI provider config saved");
-      // Auto-test after save
-      testAiConnection(aiBaseUrl, aiApiKey, aiModel);
+      // Auto-test through backend after save so the browser does not call provider APIs directly.
+      await testAiConnection();
     } catch {
       toast.error("Failed to save AI config");
     }
@@ -316,6 +359,55 @@ export default function Settings() {
         SETTINGS
       </h1>
 
+      {/* Backend Connection */}
+      <GlassCard>
+        <h2 className="text-xs font-mono uppercase tracking-widest text-muted-foreground mb-4 font-semibold">
+          Backend Connection
+        </h2>
+        <div className="space-y-2 rounded-md border border-border bg-background/40 p-3">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs text-muted-foreground">Mode</span>
+            <StatusBadge
+              status={backendConfig.mode === "custom" ? "online" : "pending"}
+              label={backendConfig.mode.toUpperCase()}
+            />
+          </div>
+          <p className="truncate font-mono text-xs text-muted-foreground">
+            Supabase: {backendConfig.supabaseUrl}
+          </p>
+          <p className="truncate font-mono text-xs text-muted-foreground">
+            MCP: {backendConfig.mcpEndpoint}
+          </p>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            className="text-xs font-mono"
+            onClick={() => {
+              clearBackendConfig();
+              resetSupabaseClientCache();
+              toast.success("Backend reset to default. Reloading…");
+              window.location.reload();
+            }}
+          >
+            Reset to Default Backend
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="text-xs font-mono"
+            onClick={() => {
+              requestBackendSetup();
+              resetSupabaseClientCache();
+              window.location.reload();
+            }}
+          >
+            Reconfigure Backend
+          </Button>
+        </div>
+      </GlassCard>
+
       {/* GitHub OAuth Status */}
       <GlassCard>
         <h2 className="text-xs font-mono uppercase tracking-widest text-muted-foreground mb-4 font-semibold">
@@ -333,7 +425,7 @@ export default function Settings() {
             <div className="flex items-center gap-2 mt-1">
               <StatusBadge status="online" label="CONNECTED" />
               {githubToken ? (
-                <StatusBadge status="success" label="COPILOT READY" />
+                <StatusBadge status="success" label="GITHUB TOKEN" />
               ) : (
                 <StatusBadge status="error" label="NO TOKEN" />
               )}
@@ -350,7 +442,8 @@ export default function Settings() {
                     GitHub token not available
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Re-authenticate to grant Copilot API access.
+                    Re-authenticate if you need GitHub profile access in this
+                    dashboard.
                   </p>
                 </div>
               </div>
@@ -361,7 +454,8 @@ export default function Settings() {
               <div className="space-y-1">
                 <p className="text-sm font-semibold">Re-authenticate GitHub</p>
                 <p className="text-xs text-muted-foreground">
-                  Refresh your GitHub token with Copilot and chat scopes.
+                  Refresh your GitHub dashboard login token. GitHub Models uses
+                  a separate token with models:read.
                 </p>
               </div>
               <Button
@@ -370,7 +464,7 @@ export default function Settings() {
                 onClick={() => {
                   const origin =
                     window.top?.location.origin || window.location.origin;
-                  const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/github-auth?redirect_uri=${encodeURIComponent(origin)}&scope=${encodeURIComponent("read:user user:email copilot github_copilot_chat")}`;
+                  const url = `${getBackendConfig().supabaseUrl}/functions/v1/github-auth?redirect_uri=${encodeURIComponent(origin)}&scope=${encodeURIComponent("read:user user:email")}`;
                   if (window.top && window.top !== window) {
                     window.top.location.href = url;
                   } else {
@@ -409,20 +503,14 @@ export default function Settings() {
 
       <GlassCard>
         <h2 className="text-xs font-mono uppercase tracking-widest text-muted-foreground mb-4 font-semibold">
-          Copilot API Access
+          GitHub Models Access
         </h2>
         <p className="text-xs text-muted-foreground mb-4">
-          The extract tool requires a GitHub Personal Access Token (classic)
-          with the <code className="text-primary">copilot</code> scope. Generate
-          one at{" "}
-          <a
-            href="https://github.com/settings/tokens/new?scopes=copilot&description=Firecrawl+MCP+Copilot"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-primary underline underline-offset-2"
-          >
-            github.com/settings/tokens
-          </a>
+          GitHub Models is separate from Copilot. To use GitHub-hosted models as
+          an AI provider, create a fine-grained token or GitHub App token with{" "}
+          <code className="text-primary">models:read</code>, then use it as the
+          AI Provider API key. This is rate-limited and not unlimited free
+          usage.
         </p>
         <div className="space-y-3">
           <div>
@@ -433,7 +521,7 @@ export default function Settings() {
               type="password"
               value={githubPat}
               onChange={(e) => setGithubPat(e.target.value)}
-              placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+              placeholder="GitHub token with models:read"
               className="font-mono text-sm bg-background/50 border-border"
             />
           </div>
@@ -450,10 +538,10 @@ export default function Settings() {
               ) : (
                 <CheckCircle className="h-3 w-3" />
               )}
-              Save PAT
+              Save GitHub Token
             </Button>
             {settings.github_pat && (
-              <StatusBadge status="success" label="PAT SAVED" />
+              <StatusBadge status="success" label="TOKEN SAVED" />
             )}
           </div>
         </div>
@@ -522,20 +610,88 @@ export default function Settings() {
               type="password"
               value={aiApiKey}
               onChange={(e) => setAiApiKey(e.target.value)}
-              placeholder="sk-..."
+              placeholder={
+                isGitHubModelsSelected
+                  ? "GitHub token with models:read"
+                  : "sk-..."
+              }
               className="font-mono text-sm bg-background/50 border-border"
             />
+            {isGitHubModelsSelected && (
+              <p className="mt-1.5 text-[10px] text-muted-foreground">
+                Use a fine-grained GitHub token or GitHub App token with{" "}
+                <code className="text-primary">models:read</code>. GitHub Models
+                is not the same as Copilot and is rate-limited.
+              </p>
+            )}
           </div>
           <div>
-            <Label className="text-xs font-mono text-muted-foreground">
-              Model
-            </Label>
-            <Input
-              value={aiModel}
-              onChange={(e) => setAiModel(e.target.value)}
-              placeholder="gpt-4o-mini"
-              className="font-mono text-sm bg-background/50 border-border"
-            />
+            <div className="mb-1.5 flex items-center justify-between gap-2">
+              <Label className="text-xs font-mono text-muted-foreground">
+                Model
+              </Label>
+              {isGitHubModelsSelected && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={fetchGitHubModels}
+                  disabled={!aiApiKey || loadingGithubModels}
+                  className="h-7 text-[10px] font-mono border-border gap-1.5"
+                >
+                  {loadingGithubModels ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-3 w-3" />
+                  )}
+                  Fetch Models
+                </Button>
+              )}
+            </div>
+            {isGitHubModelsSelected && githubModels.length > 0 ? (
+              <Select value={aiModel} onValueChange={setAiModel}>
+                <SelectTrigger className="font-mono text-sm bg-background/50 border-border">
+                  <SelectValue placeholder="Select GitHub model…" />
+                </SelectTrigger>
+                <SelectContent className="max-h-72 bg-card border-primary/20">
+                  {githubModels.map((model) => (
+                    <SelectItem
+                      key={model.id}
+                      value={model.id}
+                      className="font-mono text-xs"
+                    >
+                      <span className="flex flex-col gap-0.5">
+                        <span>{model.id}</span>
+                        <span className="text-[10px] text-muted-foreground">
+                          {[
+                            model.publisher,
+                            model.rate_limit_tier
+                              ? `${model.rate_limit_tier} tier`
+                              : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" • ")}
+                        </span>
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <Input
+                value={aiModel}
+                onChange={(e) => setAiModel(e.target.value)}
+                placeholder={
+                  isGitHubModelsSelected ? "openai/gpt-4.1" : "gpt-4o-mini"
+                }
+                className="font-mono text-sm bg-background/50 border-border"
+              />
+            )}
+            {githubModelsError && isGitHubModelsSelected && (
+              <p className="mt-1.5 text-[10px] text-destructive font-mono">
+                {githubModelsError}
+              </p>
+            )}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button
@@ -555,8 +711,8 @@ export default function Settings() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => testAiConnection(aiBaseUrl, aiApiKey, aiModel)}
-              disabled={!aiApiKey || !aiBaseUrl || aiTestStatus === "testing"}
+              onClick={() => testAiConnection()}
+              disabled={!settings.ai_api_key || aiTestStatus === "testing"}
               className="text-xs font-mono border-border gap-1.5"
             >
               {aiTestStatus === "testing" ? (

@@ -7,39 +7,67 @@ import { Send, Bot, User, XCircle, Search, Globe, Zap } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { cn } from "@/lib/utils";
 import type { ChatMessage, ToolCallResult, ToolTraceStep } from "@/types/mcp";
-import { supabase } from "@/integrations/supabase/client";
+import { getSupabaseClient } from "@/lib/supabaseRuntime";
 import { SlashCommandPicker } from "@/components/SlashCommandPicker";
 import { ChatActivityIndicator } from "@/components/ChatActivityIndicator";
 import { ThinkingPanel } from "@/components/ThinkingPanel";
 import { ImageUploadButton } from "@/components/ImageUploadButton";
 import { ImageLightbox } from "@/components/ImageLightbox";
 
-import { classifyIntent, registerJob, needsEvidence, type JobType } from "@/lib/intentClassifier";
-import { detectRecencyProfile } from "@/lib/recency";
-import { checkVisionSupport, addVisionOverride, confirmVisionWorked } from "@/lib/visionCapability";
 import {
-  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
-  AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
+  classifyIntent,
+  registerJob,
+  needsEvidence,
+  type JobType,
+} from "@/lib/intentClassifier";
+import { detectRecencyProfile } from "@/lib/recency";
+import {
+  checkVisionSupport,
+  addVisionOverride,
+  confirmVisionWorked,
+} from "@/lib/visionCapability";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogCancel,
+  AlertDialogAction,
 } from "@/components/ui/alert-dialog";
 import { createThumbnail } from "@/lib/imageUtils";
 import { toast } from "sonner";
 
 // ========== Escalation helpers ==========
 const RANKING_PATTERNS = [
-  /\btop\s*\d+/i, /\btop[\s-]rated/i, /\bbest\b/i, /\branking/i, /\branked\b/i,
-  /\bcompare\b/i, /\bcomparison/i, /\bversus\b/i, /\bvs\b/i,
-  /\balternatives?\b/i, /\bleaderboard/i, /\blist\s+of\b/i,
-  /\bwhich\s+is\s+better/i, /\brecommend/i,
+  /\btop\s*\d+/i,
+  /\btop[\s-]rated/i,
+  /\bbest\b/i,
+  /\branking/i,
+  /\branked\b/i,
+  /\bcompare\b/i,
+  /\bcomparison/i,
+  /\bversus\b/i,
+  /\bvs\b/i,
+  /\balternatives?\b/i,
+  /\bleaderboard/i,
+  /\blist\s+of\b/i,
+  /\bwhich\s+is\s+better/i,
+  /\brecommend/i,
 ];
 
 function isRankingQuery(text: string): boolean {
-  return RANKING_PATTERNS.some(p => p.test(text));
+  return RANKING_PATTERNS.some((p) => p.test(text));
 }
 
 function searchEvidenceHasDepth(evidence: string): boolean {
   const stripped = evidence
     .split("\n")
-    .filter(l => !l.match(/^\[?\d+\]/) && !l.match(/^\s*URL:/i) && !l.match(/^---\s/))
+    .filter(
+      (l) =>
+        !l.match(/^\[?\d+\]/) && !l.match(/^\s*URL:/i) && !l.match(/^---\s/),
+    )
     .join(" ")
     .trim();
   return stripped.length > 2000;
@@ -72,10 +100,17 @@ function maybeRegisterJob(toolName: string, result: ToolCallResult) {
     if (!text) return;
     const parsed = JSON.parse(text);
     if (parsed.jobId) {
-      const type: JobType = toolName === "crawl" ? "crawl" : toolName === "batch_scrape" ? "batch_scrape" : "agent";
+      const type: JobType =
+        toolName === "crawl"
+          ? "crawl"
+          : toolName === "batch_scrape"
+            ? "batch_scrape"
+            : "agent";
       registerJob(parsed.jobId, type);
     }
-  } catch { /* not json */ }
+  } catch {
+    /* not json */
+  }
 }
 
 // ========== Per-tool evidence normalization ==========
@@ -84,21 +119,38 @@ interface NormalizedEvidence {
   sourceUrls: string[];
 }
 
-function normalizeEvidence(toolName: string, result: ToolCallResult): NormalizedEvidence {
-  const raw = result.content.map(c => c.text ?? "").join("\n");
+interface SearchEvidenceItem {
+  title?: string;
+  url?: string;
+  snippet?: string;
+}
+
+interface PageEvidenceItem {
+  title?: string;
+  url?: string;
+  markdown?: string;
+}
+
+function normalizeEvidence(
+  toolName: string,
+  result: ToolCallResult,
+): NormalizedEvidence {
+  const raw = result.content.map((c) => c.text ?? "").join("\n");
   const sourceUrls: string[] = [];
 
   if (toolName === "search") {
     try {
       const items = JSON.parse(raw);
       if (Array.isArray(items)) {
-        const lines = items.map((r: any, i: number) => {
+        const lines = (items as SearchEvidenceItem[]).map((r, i: number) => {
           if (r.url) sourceUrls.push(r.url);
           return `[${i + 1}] ${r.title || "Untitled"}\n    URL: ${r.url || "N/A"}\n    ${r.snippet || ""}`;
         });
         return { evidence: lines.join("\n\n"), sourceUrls };
       }
-    } catch { /* fall through */ }
+    } catch {
+      /* fall through */
+    }
   }
 
   if (toolName === "scrape" || toolName === "scrape_js") {
@@ -121,14 +173,18 @@ function normalizeEvidence(toolName: string, result: ToolCallResult): Normalized
   }
 
   if (toolName === "extract") {
-    return { evidence: `## Extracted Data\n\n${raw.slice(0, 6000)}`, sourceUrls };
+    return {
+      evidence: `## Extracted Data\n\n${raw.slice(0, 6000)}`,
+      sourceUrls,
+    };
   }
 
   if (toolName === "agent_status") {
     try {
       const data = JSON.parse(raw);
       if (data.synthesis) {
-        if (Array.isArray(data.sourcesUsed)) sourceUrls.push(...data.sourcesUsed);
+        if (Array.isArray(data.sourcesUsed))
+          sourceUrls.push(...data.sourcesUsed);
         if (Array.isArray(data.sources)) {
           for (const s of data.sources) {
             if (s.finalUrl) sourceUrls.push(s.finalUrl);
@@ -140,8 +196,13 @@ function normalizeEvidence(toolName: string, result: ToolCallResult): Normalized
           sourceUrls: [...new Set(sourceUrls)],
         };
       }
-      return { evidence: `Agent job status: ${data.status || "unknown"}\n${JSON.stringify(data, null, 2).slice(0, 4000)}`, sourceUrls };
-    } catch { /* fall through */ }
+      return {
+        evidence: `Agent job status: ${data.status || "unknown"}\n${JSON.stringify(data, null, 2).slice(0, 4000)}`,
+        sourceUrls,
+      };
+    } catch {
+      /* fall through */
+    }
   }
 
   if (toolName === "check_crawl_status" || toolName === "check_batch_status") {
@@ -150,17 +211,27 @@ function normalizeEvidence(toolName: string, result: ToolCallResult): Normalized
       if (data.status === "completed") {
         const pages = data.pages || data.results || [];
         if (Array.isArray(pages)) {
-          const lines = pages.slice(0, 20).map((p: any, i: number) => {
-            if (p.url) sourceUrls.push(p.url);
-            const title = p.title || p.url || `Page ${i + 1}`;
-            const content = p.markdown ? p.markdown.slice(0, 500) : "";
-            return `[${i + 1}] ${title}\n    URL: ${p.url || "N/A"}\n    ${content}`;
-          });
-          return { evidence: `## ${toolName === "check_crawl_status" ? "Crawl" : "Batch Scrape"} Results (${pages.length} pages)\n\n${lines.join("\n\n")}`, sourceUrls };
+          const lines = (pages as PageEvidenceItem[])
+            .slice(0, 20)
+            .map((p, i: number) => {
+              if (p.url) sourceUrls.push(p.url);
+              const title = p.title || p.url || `Page ${i + 1}`;
+              const content = p.markdown ? p.markdown.slice(0, 500) : "";
+              return `[${i + 1}] ${title}\n    URL: ${p.url || "N/A"}\n    ${content}`;
+            });
+          return {
+            evidence: `## ${toolName === "check_crawl_status" ? "Crawl" : "Batch Scrape"} Results (${pages.length} pages)\n\n${lines.join("\n\n")}`,
+            sourceUrls,
+          };
         }
       }
-      return { evidence: `Job status: ${data.status || "unknown"}\n${JSON.stringify(data, null, 2).slice(0, 4000)}`, sourceUrls };
-    } catch { /* fall through */ }
+      return {
+        evidence: `Job status: ${data.status || "unknown"}\n${JSON.stringify(data, null, 2).slice(0, 4000)}`,
+        sourceUrls,
+      };
+    } catch {
+      /* fall through */
+    }
   }
 
   const urlMatches = raw.match(/https?:\/\/[^\s<>"']+/g);
@@ -186,27 +257,45 @@ export default function AIChat() {
   const [showSlashPicker, setShowSlashPicker] = useState(false);
 
   // Vision unknown confirmation state
-  const [visionWarning, setVisionWarning] = useState<{ reason: string; text: string; images: string[] } | null>(null);
+  const [visionWarning, setVisionWarning] = useState<{
+    reason: string;
+    text: string;
+    images: string[];
+  } | null>(null);
 
   // Streaming state
   const [streamingThinking, setStreamingThinking] = useState("");
   const [streamingContent, setStreamingContent] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
-  const [streamPhase, setStreamPhase] = useState<"idle" | "thinking" | "answering">("idle");
+  const [streamPhase, setStreamPhase] = useState<
+    "idle" | "thinking" | "answering"
+  >("idle");
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    scrollRef.current?.scrollTo({
+      top: scrollRef.current.scrollHeight,
+      behavior: "smooth",
+    });
   }, [messages, activitySteps, streamingContent, streamingThinking]);
 
   useEffect(() => {
     if (!loading || !loadingStartedAt) return;
-    const interval = setInterval(() => setElapsed((Date.now() - loadingStartedAt) / 1000), 100);
+    const interval = setInterval(
+      () => setElapsed((Date.now() - loadingStartedAt) / 1000),
+      100,
+    );
     return () => clearInterval(interval);
   }, [loading, loadingStartedAt]);
 
-  const addMessage = useCallback((msg: Omit<ChatMessage, "id" | "timestamp">) => {
-    setMessages((prev) => [...prev, { ...msg, id: crypto.randomUUID(), timestamp: new Date() }]);
-  }, []);
+  const addMessage = useCallback(
+    (msg: Omit<ChatMessage, "id" | "timestamp">) => {
+      setMessages((prev) => [
+        ...prev,
+        { ...msg, id: crypto.randomUUID(), timestamp: new Date() },
+      ]);
+    },
+    [],
+  );
 
   const pushActivity = useCallback((step: string) => {
     setActivitySteps((prev) => [...prev, step]);
@@ -224,18 +313,30 @@ export default function AIChat() {
     addMessage({ role: "assistant", content: "⚠️ Request cancelled." });
   }, [addMessage]);
 
-  const logToMonitor = async (toolName: string, toolInput: Record<string, unknown>, output: ToolCallResult, duration: number) => {
+  const logToMonitor = async (
+    toolName: string,
+    toolInput: Record<string, unknown>,
+    output: ToolCallResult,
+    duration: number,
+  ) => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const supabase = getSupabaseClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
       if (user) {
         await supabase.from("mcp_logs").insert({
-          user_id: user.id, tool: toolName,
-          input: toolInput as any, output: output as any,
+          user_id: user.id,
+          tool: toolName,
+          input: toolInput,
+          output,
           status: output.isError ? "error" : "success",
           duration_ms: duration,
         });
       }
-    } catch { /* don't block */ }
+    } catch {
+      /* don't block */
+    }
   };
 
   const getHistory = useCallback(() => {
@@ -252,7 +353,7 @@ export default function AIChat() {
     // Register override so future sends skip the warning
     addVisionOverride(
       settings.ai_base_url || "https://api.openai.com/v1",
-      settings.ai_model || ""
+      settings.ai_model || "",
     );
     setVisionWarning(null);
     // Re-inject text and images — handleSend will now pass the guard
@@ -260,7 +361,9 @@ export default function AIChat() {
     setPendingImages(images);
     // Use microtask so state applies before send triggers
     setTimeout(() => {
-      const sendBtn = document.querySelector("[data-send-btn]") as HTMLButtonElement | null;
+      const sendBtn = document.querySelector(
+        "[data-send-btn]",
+      ) as HTMLButtonElement | null;
       sendBtn?.click();
     }, 50);
   }, [visionWarning, settings.ai_base_url, settings.ai_model]);
@@ -275,16 +378,24 @@ export default function AIChat() {
     if (images.length > 0) {
       const visionCheck = checkVisionSupport(
         settings.ai_base_url || "https://api.openai.com/v1",
-        settings.ai_model || ""
+        settings.ai_model || "",
       );
 
       if (visionCheck.status === "unsupported") {
-        toast.error(visionCheck.reason || "Current model does not support image input");
+        toast.error(
+          visionCheck.reason || "Current model does not support image input",
+        );
         return;
       }
 
       if (visionCheck.status === "unknown") {
-        setVisionWarning({ reason: visionCheck.reason || "Image support is not verified for this model.", text, images });
+        setVisionWarning({
+          reason:
+            visionCheck.reason ||
+            "Image support is not verified for this model.",
+          text,
+          images,
+        });
         return;
       }
     }
@@ -295,7 +406,7 @@ export default function AIChat() {
 
     let thumbnails: string[] | undefined;
     if (images.length > 0) {
-      thumbnails = await Promise.all(images.map(img => createThumbnail(img)));
+      thumbnails = await Promise.all(images.map((img) => createThumbnail(img)));
     }
     addMessage({ role: "user", content: text, images: thumbnails });
 
@@ -312,7 +423,10 @@ export default function AIChat() {
       setLoading(false);
       setLoadingStartedAt(null);
       setActivitySteps([]);
-      addMessage({ role: "assistant", content: "⏱️ Request timed out after 60s." });
+      addMessage({
+        role: "assistant",
+        content: "⏱️ Request timed out after 60s.",
+      });
     }, 60000);
 
     try {
@@ -321,13 +435,12 @@ export default function AIChat() {
 
       // If images attached, use smart routing
       if (images.length > 0) {
-
         // Determine if this is a pure image query or needs tool orchestration
-        const needsTools = text && (
-          needsEvidence(text) ||
-          isRankingQuery(text) ||
-          /https?:\/\/[^\s]+/i.test(text)
-        );
+        const needsTools =
+          text &&
+          (needsEvidence(text) ||
+            isRankingQuery(text) ||
+            /https?:\/\/[^\s]+/i.test(text));
 
         if (needsTools) {
           // Image + research query: run intent classification, but pass images to final synthesis
@@ -344,7 +457,7 @@ export default function AIChat() {
           // We inject them into the action args
           for (const action of intent.actions) {
             if (action.tool === "chat" && "message" in action.args) {
-              (action.args as any).images = images;
+              action.args = { ...action.args, images };
             }
           }
 
@@ -377,7 +490,11 @@ export default function AIChat() {
           const imgTraceSteps: ToolTraceStep[] = [];
 
           try {
-            for await (const delta of callToolStream("chat", chatArgs, controller.signal)) {
+            for await (const delta of callToolStream(
+              "chat",
+              chatArgs,
+              controller.signal,
+            )) {
               if (controller.signal.aborted) return;
               fullText += delta;
 
@@ -406,7 +523,9 @@ export default function AIChat() {
               }
 
               if (thinkDone) {
-                const afterThink = fullText.slice(fullText.indexOf("</think>") + 8).trim();
+                const afterThink = fullText
+                  .slice(fullText.indexOf("</think>") + 8)
+                  .trim();
                 setStreamingContent(afterThink);
               } else {
                 setStreamPhase("answering");
@@ -415,7 +534,9 @@ export default function AIChat() {
             }
           } catch (err) {
             if (!controller.signal.aborted) {
-              fullText = fullText || `Error: ${err instanceof Error ? err.message : "Stream failed"}`;
+              fullText =
+                fullText ||
+                `Error: ${err instanceof Error ? err.message : "Stream failed"}`;
             }
           }
 
@@ -426,18 +547,29 @@ export default function AIChat() {
           setStreamingThinking("");
           setStreamingContent("");
 
-          imgTraceSteps.push({ tool: "chat", label: "Image analysis", icon: "🖼️", durationMs: duration });
-          addMessage({ role: "assistant", content: fullText, toolTrace: imgTraceSteps });
+          imgTraceSteps.push({
+            tool: "chat",
+            label: "Image analysis",
+            icon: "🖼️",
+            durationMs: duration,
+          });
+          addMessage({
+            role: "assistant",
+            content: fullText,
+            toolTrace: imgTraceSteps,
+          });
 
           // Auto-verify this provider+model on success
           if (!fullText.startsWith("Error:")) {
             confirmVisionWorked(
               settings.ai_base_url || "https://api.openai.com/v1",
-              settings.ai_model || ""
+              settings.ai_model || "",
             );
           }
 
-          const finalResult: ToolCallResult = { content: [{ type: "text", text: fullText }] };
+          const finalResult: ToolCallResult = {
+            content: [{ type: "text", text: fullText }],
+          };
           await logToMonitor("chat", chatArgs, finalResult, duration);
           return;
         }
@@ -451,7 +583,11 @@ export default function AIChat() {
       }
 
       if (intent.actions.length === 0) {
-        addMessage({ role: "assistant", content: "I couldn't determine what to do. Try a slash command or rephrase your request." });
+        addMessage({
+          role: "assistant",
+          content:
+            "I couldn't determine what to do. Try a slash command or rephrase your request.",
+        });
         return;
       }
 
@@ -459,19 +595,27 @@ export default function AIChat() {
       pushActivity("Routing request…");
 
       // Execute tool actions, collecting results (no chat bubbles)
-      const toolResults: Array<{ tool: string; result: ToolCallResult; duration: number }> = [];
+      const toolResults: Array<{
+        tool: string;
+        result: ToolCallResult;
+        duration: number;
+      }> = [];
 
       for (const action of intent.actions) {
         if (controller.signal.aborted) break;
 
-        const meta = TOOL_META[action.tool] || { icon: "🔧", label: action.tool };
+        const meta = TOOL_META[action.tool] || {
+          icon: "🔧",
+          label: action.tool,
+        };
         pushActivity(meta.label);
 
         if (action.tool === "chat" && "message" in action.args) {
-          (action.args as any).history = history;
-          if (images.length > 0) {
-            (action.args as any).images = images;
-          }
+          action.args = {
+            ...action.args,
+            history,
+            ...(images.length > 0 ? { images } : {}),
+          };
 
           // Use streaming for chat tool
           const start = Date.now();
@@ -486,7 +630,11 @@ export default function AIChat() {
           setStreamPhase("idle");
 
           try {
-            for await (const delta of callToolStream("chat", action.args as Record<string, unknown>, controller.signal)) {
+            for await (const delta of callToolStream(
+              "chat",
+              action.args as Record<string, unknown>,
+              controller.signal,
+            )) {
               if (controller.signal.aborted) return;
               fullText += delta;
 
@@ -522,7 +670,9 @@ export default function AIChat() {
 
               // Not in think block — stream main content
               if (thinkDone) {
-                const afterThink = fullText.slice(fullText.indexOf("</think>") + 8).trim();
+                const afterThink = fullText
+                  .slice(fullText.indexOf("</think>") + 8)
+                  .trim();
                 setStreamingContent(afterThink);
               } else {
                 setStreamPhase("answering");
@@ -531,7 +681,9 @@ export default function AIChat() {
             }
           } catch (err) {
             if (!controller.signal.aborted) {
-              fullText = fullText || `Error: ${err instanceof Error ? err.message : "Stream failed"}`;
+              fullText =
+                fullText ||
+                `Error: ${err instanceof Error ? err.message : "Stream failed"}`;
             }
           }
 
@@ -548,28 +700,61 @@ export default function AIChat() {
           setStreamingThinking("");
           setStreamingContent("");
 
-          const finalResult: ToolCallResult = { content: [{ type: "text", text: fullText }] };
-          await logToMonitor(action.tool, action.args as Record<string, unknown>, finalResult, duration);
+          const finalResult: ToolCallResult = {
+            content: [{ type: "text", text: fullText }],
+          };
+          await logToMonitor(
+            action.tool,
+            action.args as Record<string, unknown>,
+            finalResult,
+            duration,
+          );
 
-          toolResults.push({ tool: action.tool, result: finalResult, duration });
-          traceSteps.push({ tool: action.tool, label: meta.label, icon: meta.icon, durationMs: duration });
+          toolResults.push({
+            tool: action.tool,
+            result: finalResult,
+            duration,
+          });
+          traceSteps.push({
+            tool: action.tool,
+            label: meta.label,
+            icon: meta.icon,
+            durationMs: duration,
+          });
 
           // Add the final message directly
-          addMessage({ role: "assistant", content: fullText, toolTrace: traceSteps });
+          addMessage({
+            role: "assistant",
+            content: fullText,
+            toolTrace: traceSteps,
+          });
           return; // Chat streaming handled — skip remaining flow
         }
 
         const start = Date.now();
-        const result = await callTool(action.tool, action.args as Record<string, unknown>);
+        const result = await callTool(
+          action.tool,
+          action.args as Record<string, unknown>,
+        );
         const duration = Date.now() - start;
 
         if (controller.signal.aborted) return;
 
-        await logToMonitor(action.tool, action.args as Record<string, unknown>, result, duration);
+        await logToMonitor(
+          action.tool,
+          action.args as Record<string, unknown>,
+          result,
+          duration,
+        );
         maybeRegisterJob(action.tool, result);
 
         toolResults.push({ tool: action.tool, result, duration });
-        traceSteps.push({ tool: action.tool, label: meta.label, icon: meta.icon, durationMs: duration });
+        traceSteps.push({
+          tool: action.tool,
+          label: meta.label,
+          icon: meta.icon,
+          durationMs: duration,
+        });
       }
 
       if (controller.signal.aborted) return;
@@ -586,20 +771,21 @@ export default function AIChat() {
         const recencyProfile = detectRecencyProfile(text);
 
         const allEvidence = toolResults
-          .filter(r => r.tool !== "chat")
-          .map(r => {
+          .filter((r) => r.tool !== "chat")
+          .map((r) => {
             const norm = normalizeEvidence(r.tool, r.result);
             return { tool: r.tool, ...norm };
           });
 
         let combinedEvidence = allEvidence
-          .map(e => `--- Evidence from ${e.tool} ---\n${e.evidence}`)
+          .map((e) => `--- Evidence from ${e.tool} ---\n${e.evidence}`)
           .join("\n\n");
 
-        const onlySearchSoFar = toolResults.every(r => r.tool === "search");
+        const onlySearchSoFar = toolResults.every((r) => r.tool === "search");
         const queryNeedsDepth = isRankingQuery(text);
         const alreadyDeep = searchEvidenceHasDepth(combinedEvidence);
-        const shouldEscalate = onlySearchSoFar && queryNeedsDepth && !alreadyDeep;
+        const shouldEscalate =
+          onlySearchSoFar && queryNeedsDepth && !alreadyDeep;
 
         if (shouldEscalate && !controller.signal.aborted) {
           pushActivity("Gathering deeper sources…");
@@ -613,18 +799,34 @@ export default function AIChat() {
 
           if (controller.signal.aborted) return;
 
-          await logToMonitor("search_and_scrape", { query: text, maxResults: 3 }, escalationResult, escalationDuration);
+          await logToMonitor(
+            "search_and_scrape",
+            { query: text, maxResults: 3 },
+            escalationResult,
+            escalationDuration,
+          );
           maybeRegisterJob("search_and_scrape", escalationResult);
 
-          traceSteps.push({ tool: "search_and_scrape", label: "Searching & scraping", icon: "🔎", durationMs: escalationDuration });
+          traceSteps.push({
+            tool: "search_and_scrape",
+            label: "Searching & scraping",
+            icon: "🔎",
+            durationMs: escalationDuration,
+          });
 
           if (!escalationResult.isError) {
-            const escalationEvidence = normalizeEvidence("search_and_scrape", escalationResult);
+            const escalationEvidence = normalizeEvidence(
+              "search_and_scrape",
+              escalationResult,
+            );
             const hasUsableContent = escalationEvidence.evidence.length > 200;
             if (hasUsableContent) {
-              allEvidence.push({ tool: "search_and_scrape", ...escalationEvidence });
+              allEvidence.push({
+                tool: "search_and_scrape",
+                ...escalationEvidence,
+              });
               combinedEvidence = allEvidence
-                .map(e => `--- Evidence from ${e.tool} ---\n${e.evidence}`)
+                .map((e) => `--- Evidence from ${e.tool} ---\n${e.evidence}`)
                 .join("\n\n");
             } else {
               // Escalation returned no usable content — remove from trace
@@ -636,8 +838,16 @@ export default function AIChat() {
           }
         }
 
-        const allSourceUrls = [...new Set(allEvidence.flatMap(e => e.sourceUrls))];
-        const toolsUsed = [...new Set(toolResults.map(r => r.tool).concat(shouldEscalate ? ["search_and_scrape"] : []))];
+        const allSourceUrls = [
+          ...new Set(allEvidence.flatMap((e) => e.sourceUrls)),
+        ];
+        const toolsUsed = [
+          ...new Set(
+            toolResults
+              .map((r) => r.tool)
+              .concat(shouldEscalate ? ["search_and_scrape"] : []),
+          ),
+        ];
         const evidenceIsSubstantial = combinedEvidence.length > 100;
 
         if (evidenceIsSubstantial) {
@@ -654,22 +864,30 @@ export default function AIChat() {
             "3. Cite sources by title or URL when making claims.",
             "4. Be structured, clear, and concise.",
             "5. If evidence contains conflicting information, note the discrepancy.",
-            recencyProfile.mode !== "none" ? "When evidence may be stale relative to the user's time frame, do not imply it is current." : "",
+            recencyProfile.mode !== "none"
+              ? "When evidence may be stale relative to the user's time frame, do not imply it is current."
+              : "",
             `6. Evidence was gathered using: ${toolsUsed.join(", ")}`,
-            allSourceUrls.length > 0 ? `7. Available source URLs: ${allSourceUrls.slice(0, 10).join(", ")}` : "",
+            allSourceUrls.length > 0
+              ? `7. Available source URLs: ${allSourceUrls.slice(0, 10).join(", ")}`
+              : "",
           ];
 
-          const rankingRules = isRanking ? [
-            "",
-            "RANKING/COMPARISON ANSWER RULES:",
-            `8. SOURCE STRENGTH: You have evidence from ${sourceCount} source(s). Be explicit about whether a ranking comes from one primary source or multiple independent sources.`,
-            "9. SOURCE ROLES: Distinguish between primary ranking sources, supporting sources, and commentary sources.",
-            "10. CATEGORY MIXING: If sources mix foundation models with tools/products, explicitly note the distinction.",
-            "11. CONFIDENCE FRAMING: Use language like 'Based on the scraped sources...' Never say 'the definitive top 10' unless multiple sources agree.",
-            "12. STRUCTURE: Brief qualification → ranked list → supporting mentions → discrepancies → conclusion",
-          ] : [];
+          const rankingRules = isRanking
+            ? [
+                "",
+                "RANKING/COMPARISON ANSWER RULES:",
+                `8. SOURCE STRENGTH: You have evidence from ${sourceCount} source(s). Be explicit about whether a ranking comes from one primary source or multiple independent sources.`,
+                "9. SOURCE ROLES: Distinguish between primary ranking sources, supporting sources, and commentary sources.",
+                "10. CATEGORY MIXING: If sources mix foundation models with tools/products, explicitly note the distinction.",
+                "11. CONFIDENCE FRAMING: Use language like 'Based on the scraped sources...' Never say 'the definitive top 10' unless multiple sources agree.",
+                "12. STRUCTURE: Brief qualification → ranked list → supporting mentions → discrepancies → conclusion",
+              ]
+            : [];
 
-          const synthesisPrompt = [...baseRules, ...rankingRules].filter(Boolean).join("\n");
+          const synthesisPrompt = [...baseRules, ...rankingRules]
+            .filter(Boolean)
+            .join("\n");
 
           // Stream synthesis
           let synthText = "";
@@ -679,12 +897,16 @@ export default function AIChat() {
           setStreamPhase("answering");
 
           try {
-            for await (const delta of callToolStream("chat", {
-              message: `User question: ${text}\n\n${combinedEvidence.slice(0, 14000)}`,
-              history: [{ role: "system", content: synthesisPrompt }],
-              mode: "synthesis",
-              recencyProfile,
-            }, controller.signal)) {
+            for await (const delta of callToolStream(
+              "chat",
+              {
+                message: `User question: ${text}\n\n${combinedEvidence.slice(0, 14000)}`,
+                history: [{ role: "system", content: synthesisPrompt }],
+                mode: "synthesis",
+                recencyProfile,
+              },
+              controller.signal,
+            )) {
               if (controller.signal.aborted) return;
               synthText += delta;
               setStreamingContent(synthText);
@@ -705,17 +927,29 @@ export default function AIChat() {
 
           let sourcesFooter = "";
           if (allSourceUrls.length > 0 && !answer.includes("http")) {
-            sourcesFooter = `\n\n**Sources:**\n${allSourceUrls.slice(0, 6).map((u, i) => `${i + 1}. ${u}`).join("\n")}`;
+            sourcesFooter = `\n\n**Sources:**\n${allSourceUrls
+              .slice(0, 6)
+              .map((u, i) => `${i + 1}. ${u}`)
+              .join("\n")}`;
           }
 
-          addMessage({ role: "assistant", content: answer + sourcesFooter, toolTrace: traceSteps });
+          addMessage({
+            role: "assistant",
+            content: answer + sourcesFooter,
+            toolTrace: traceSteps,
+          });
           return;
         }
       }
 
       // === ASYNC JOB RESULT FORMATTING ===
-      if (["crawl", "batch_scrape", "agent"].includes(lastResult.tool) && !lastResult.result.isError) {
-        const resultText = lastResult.result.content.map(c => c.text ?? "").join("\n");
+      if (
+        ["crawl", "batch_scrape", "agent"].includes(lastResult.tool) &&
+        !lastResult.result.isError
+      ) {
+        const resultText = lastResult.result.content
+          .map((c) => c.text ?? "")
+          .join("\n");
         try {
           const parsed = JSON.parse(resultText);
           if (parsed.jobId) {
@@ -726,11 +960,15 @@ export default function AIChat() {
             });
             return;
           }
-        } catch { /* not JSON, fall through */ }
+        } catch {
+          /* not JSON, fall through */
+        }
       }
 
       // === DIRECT RESULT DISPLAY ===
-      const resultText = lastResult.result.content.map(c => c.text ?? `[${c.type}]`).join("\n");
+      const resultText = lastResult.result.content
+        .map((c) => c.text ?? `[${c.type}]`)
+        .join("\n");
       addMessage({
         role: "assistant",
         content: resultText.slice(0, 8000),
@@ -754,27 +992,35 @@ export default function AIChat() {
 
   return (
     <div className="flex flex-col h-[calc(100vh-8rem)] max-w-3xl">
-      <h1 className="font-display text-xl font-bold tracking-wider text-gradient-cyber mb-4">AI CHAT</h1>
+      <h1 className="font-display text-xl font-bold tracking-wider text-gradient-cyber mb-4">
+        AI CHAT
+      </h1>
 
       {/* Messages area */}
-      <div ref={scrollRef} className="flex-1 overflow-auto space-y-3 scrollbar-cyber pr-2 mb-4">
+      <div
+        ref={scrollRef}
+        className="flex-1 overflow-auto space-y-3 scrollbar-cyber pr-2 mb-4"
+      >
         {messages.length === 0 && (
           <div className="flex items-center justify-center h-full">
             <div className="text-center space-y-3">
               <Bot className="h-10 w-10 text-muted-foreground/30 mx-auto" />
               <p className="text-sm text-muted-foreground/60 font-mono">
-                Tools-first AI assistant — 15 MCP tools
+                Tools-first AI assistant — 17 MCP tools
               </p>
               <div className="text-[11px] text-muted-foreground/40 font-mono space-y-1">
                 <p>Ask anything — I'll pick the right tool automatically</p>
                 <p className="flex items-center justify-center gap-1.5">
-                  <Search className="h-3 w-3" /> Factual questions → <span className="text-primary">search + evidence</span>
+                  <Search className="h-3 w-3" /> Factual questions →{" "}
+                  <span className="text-primary">search + evidence</span>
                 </p>
                 <p className="flex items-center justify-center gap-1.5">
-                  <Globe className="h-3 w-3" /> Paste a URL → <span className="text-primary">auto-scrape</span>
+                  <Globe className="h-3 w-3" /> Paste a URL →{" "}
+                  <span className="text-primary">auto-scrape</span>
                 </p>
                 <p className="flex items-center justify-center gap-1.5">
-                  <Zap className="h-3 w-3" /> Type / for commands → <span className="text-primary">direct tool access</span>
+                  <Zap className="h-3 w-3" /> Type / for commands →{" "}
+                  <span className="text-primary">direct tool access</span>
                 </p>
               </div>
               {providerLabel && (
@@ -791,83 +1037,172 @@ export default function AIChat() {
           if (msg.role === "tool") return null;
 
           return (
-            <div key={msg.id} className={cn("flex gap-3", msg.role === "user" && "justify-end")}>
+            <div
+              key={msg.id}
+              className={cn("flex gap-3", msg.role === "user" && "justify-end")}
+            >
               {msg.role === "assistant" && (
                 <div className="h-7 w-7 rounded-full bg-primary/20 flex items-center justify-center shrink-0 mt-0.5">
                   <Bot className="h-3.5 w-3.5 text-primary" />
                 </div>
               )}
-              <div className={cn(
-                "rounded-lg px-4 py-2.5 max-w-[80%] text-sm",
-                msg.role === "user"
-                  ? "bg-primary/15 text-foreground"
-                  : "glass text-foreground"
-              )}>
-                {msg.role === "assistant" ? (() => {
-                  const thinkMatch = msg.content.match(/<think>([\s\S]*?)<\/think>/i);
-                  const thinkingContent = thinkMatch?.[1]?.trim() || null;
-                  const cleanContent = msg.content
-                    .replace(/<think>[\s\S]*?<\/think>/gi, "")
-                    .replace(/\n---\n\*Orchestration:[\s\S]*?\*$/gm, "")
-                    .trim();
-                  const totalMs = msg.toolTrace?.reduce((sum, t) => sum + (t.durationMs ?? 0), 0) ?? 0;
-                  const usedTools = msg.toolTrace
-                    ? [...new Set(msg.toolTrace.map(t => t.tool).filter(t => t !== "chat"))]
-                    : [];
-                  const truncateModel = (m: string) => {
-                    if (!m) return "";
-                    const after = m.includes("/") ? m.split("/").pop()! : m;
-                    const clean = after.replace(/:free$/i, "").replace(/-instruct$/i, "");
-                    return clean.length > 20 ? clean.slice(0, 17) + "…" : clean;
-                  };
-                  const modelName = truncateModel(settings.ai_model || "");
-                  const pillParts: string[] = [];
-                  if (usedTools.length > 0) pillParts.push(usedTools.join(", "));
-                  if (modelName) pillParts.push(modelName);
-                  if (totalMs > 0) pillParts.push(`${(totalMs / 1000).toFixed(1)}s`);
-                  return (
-                    <>
-                      {thinkingContent && (
-                        <ThinkingPanel content={thinkingContent} durationMs={totalMs} />
-                      )}
-                      <div className="prose prose-invert prose-sm max-w-none">
-                        <ReactMarkdown
-                          components={{
-                            h1: ({children}) => <h1 className="text-lg font-bold text-primary mt-2 mb-1">{children}</h1>,
-                            h2: ({children}) => <h2 className="text-base font-bold text-primary/80 mt-2 mb-1">{children}</h2>,
-                            h3: ({children}) => <h3 className="text-sm font-semibold text-primary/70 mt-1 mb-1">{children}</h3>,
-                            strong: ({children}) => <strong className="font-bold text-foreground">{children}</strong>,
-                            em: ({children}) => <em className="italic text-muted-foreground">{children}</em>,
-                            code: ({children, className}) => {
-                              const isBlock = className?.includes("language-");
-                              return isBlock ? (
-                                <code className={cn("font-mono text-xs", className)}>{children}</code>
-                              ) : (
-                                <code className="bg-muted px-1 rounded text-primary font-mono text-xs">{children}</code>
-                              );
-                            },
-                            pre: ({children}) => <pre className="bg-muted/50 p-3 rounded-lg overflow-x-auto my-2 border border-primary/10">{children}</pre>,
-                            ul: ({children}) => <ul className="list-disc list-inside space-y-1 my-1">{children}</ul>,
-                            ol: ({children}) => <ol className="list-decimal list-inside space-y-1 my-1">{children}</ol>,
-                            li: ({children}) => <li className="text-foreground/90">{children}</li>,
-                            a: ({href, children}) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary underline hover:text-primary/80">{children}</a>,
-                            p: ({children}) => <p className="mb-2 last:mb-0">{children}</p>,
-                            blockquote: ({children}) => <blockquote className="border-l-2 border-primary pl-3 italic text-muted-foreground my-2">{children}</blockquote>,
-                          }}
-                        >
-                          {cleanContent}
-                        </ReactMarkdown>
-                      </div>
-                      {pillParts.length > 0 && (
-                        <div className="mt-1.5 flex justify-end">
-                          <span className="text-[10px] font-mono text-muted-foreground/40">
-                            · {pillParts.join(" · ")}
-                          </span>
+              <div
+                className={cn(
+                  "rounded-lg px-4 py-2.5 max-w-[80%] text-sm",
+                  msg.role === "user"
+                    ? "bg-primary/15 text-foreground"
+                    : "glass text-foreground",
+                )}
+              >
+                {msg.role === "assistant" ? (
+                  (() => {
+                    const thinkMatch = msg.content.match(
+                      /<think>([\s\S]*?)<\/think>/i,
+                    );
+                    const thinkingContent = thinkMatch?.[1]?.trim() || null;
+                    const cleanContent = msg.content
+                      .replace(/<think>[\s\S]*?<\/think>/gi, "")
+                      .replace(/\n---\n\*Orchestration:[\s\S]*?\*$/gm, "")
+                      .trim();
+                    const totalMs =
+                      msg.toolTrace?.reduce(
+                        (sum, t) => sum + (t.durationMs ?? 0),
+                        0,
+                      ) ?? 0;
+                    const usedTools = msg.toolTrace
+                      ? [
+                          ...new Set(
+                            msg.toolTrace
+                              .map((t) => t.tool)
+                              .filter((t) => t !== "chat"),
+                          ),
+                        ]
+                      : [];
+                    const truncateModel = (m: string) => {
+                      if (!m) return "";
+                      const after = m.includes("/") ? m.split("/").pop()! : m;
+                      const clean = after
+                        .replace(/:free$/i, "")
+                        .replace(/-instruct$/i, "");
+                      return clean.length > 20
+                        ? clean.slice(0, 17) + "…"
+                        : clean;
+                    };
+                    const modelName = truncateModel(settings.ai_model || "");
+                    const pillParts: string[] = [];
+                    if (usedTools.length > 0)
+                      pillParts.push(usedTools.join(", "));
+                    if (modelName) pillParts.push(modelName);
+                    if (totalMs > 0)
+                      pillParts.push(`${(totalMs / 1000).toFixed(1)}s`);
+                    return (
+                      <>
+                        {thinkingContent && (
+                          <ThinkingPanel
+                            content={thinkingContent}
+                            durationMs={totalMs}
+                          />
+                        )}
+                        <div className="prose prose-invert prose-sm max-w-none">
+                          <ReactMarkdown
+                            components={{
+                              h1: ({ children }) => (
+                                <h1 className="text-lg font-bold text-primary mt-2 mb-1">
+                                  {children}
+                                </h1>
+                              ),
+                              h2: ({ children }) => (
+                                <h2 className="text-base font-bold text-primary/80 mt-2 mb-1">
+                                  {children}
+                                </h2>
+                              ),
+                              h3: ({ children }) => (
+                                <h3 className="text-sm font-semibold text-primary/70 mt-1 mb-1">
+                                  {children}
+                                </h3>
+                              ),
+                              strong: ({ children }) => (
+                                <strong className="font-bold text-foreground">
+                                  {children}
+                                </strong>
+                              ),
+                              em: ({ children }) => (
+                                <em className="italic text-muted-foreground">
+                                  {children}
+                                </em>
+                              ),
+                              code: ({ children, className }) => {
+                                const isBlock =
+                                  className?.includes("language-");
+                                return isBlock ? (
+                                  <code
+                                    className={cn(
+                                      "font-mono text-xs",
+                                      className,
+                                    )}
+                                  >
+                                    {children}
+                                  </code>
+                                ) : (
+                                  <code className="bg-muted px-1 rounded text-primary font-mono text-xs">
+                                    {children}
+                                  </code>
+                                );
+                              },
+                              pre: ({ children }) => (
+                                <pre className="bg-muted/50 p-3 rounded-lg overflow-x-auto my-2 border border-primary/10">
+                                  {children}
+                                </pre>
+                              ),
+                              ul: ({ children }) => (
+                                <ul className="list-disc list-inside space-y-1 my-1">
+                                  {children}
+                                </ul>
+                              ),
+                              ol: ({ children }) => (
+                                <ol className="list-decimal list-inside space-y-1 my-1">
+                                  {children}
+                                </ol>
+                              ),
+                              li: ({ children }) => (
+                                <li className="text-foreground/90">
+                                  {children}
+                                </li>
+                              ),
+                              a: ({ href, children }) => (
+                                <a
+                                  href={href}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-primary underline hover:text-primary/80"
+                                >
+                                  {children}
+                                </a>
+                              ),
+                              p: ({ children }) => (
+                                <p className="mb-2 last:mb-0">{children}</p>
+                              ),
+                              blockquote: ({ children }) => (
+                                <blockquote className="border-l-2 border-primary pl-3 italic text-muted-foreground my-2">
+                                  {children}
+                                </blockquote>
+                              ),
+                            }}
+                          >
+                            {cleanContent}
+                          </ReactMarkdown>
                         </div>
-                      )}
-                    </>
-                  );
-                })() : (
+                        {pillParts.length > 0 && (
+                          <div className="mt-1.5 flex justify-end">
+                            <span className="text-[10px] font-mono text-muted-foreground/40">
+                              · {pillParts.join(" · ")}
+                            </span>
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()
+                ) : (
                   <>
                     {msg.images && msg.images.length > 0 && (
                       <div className="flex flex-wrap gap-2 mb-2">
@@ -883,7 +1218,9 @@ export default function AIChat() {
                       </div>
                     )}
                     {msg.content && (
-                      <span className="whitespace-pre-wrap break-words">{msg.content}</span>
+                      <span className="whitespace-pre-wrap break-words">
+                        {msg.content}
+                      </span>
                     )}
                   </>
                 )}
@@ -914,35 +1251,92 @@ export default function AIChat() {
                 <div className="prose prose-invert prose-sm max-w-none">
                   <ReactMarkdown
                     components={{
-                      h1: ({children}) => <h1 className="text-lg font-bold text-primary mt-2 mb-1">{children}</h1>,
-                      h2: ({children}) => <h2 className="text-base font-bold text-primary/80 mt-2 mb-1">{children}</h2>,
-                      h3: ({children}) => <h3 className="text-sm font-semibold text-primary/70 mt-1 mb-1">{children}</h3>,
-                      strong: ({children}) => <strong className="font-bold text-foreground">{children}</strong>,
-                      em: ({children}) => <em className="italic text-muted-foreground">{children}</em>,
-                      code: ({children, className: cls}) => {
+                      h1: ({ children }) => (
+                        <h1 className="text-lg font-bold text-primary mt-2 mb-1">
+                          {children}
+                        </h1>
+                      ),
+                      h2: ({ children }) => (
+                        <h2 className="text-base font-bold text-primary/80 mt-2 mb-1">
+                          {children}
+                        </h2>
+                      ),
+                      h3: ({ children }) => (
+                        <h3 className="text-sm font-semibold text-primary/70 mt-1 mb-1">
+                          {children}
+                        </h3>
+                      ),
+                      strong: ({ children }) => (
+                        <strong className="font-bold text-foreground">
+                          {children}
+                        </strong>
+                      ),
+                      em: ({ children }) => (
+                        <em className="italic text-muted-foreground">
+                          {children}
+                        </em>
+                      ),
+                      code: ({ children, className: cls }) => {
                         const isBlock = cls?.includes("language-");
                         return isBlock ? (
-                          <code className={cn("font-mono text-xs", cls)}>{children}</code>
+                          <code className={cn("font-mono text-xs", cls)}>
+                            {children}
+                          </code>
                         ) : (
-                          <code className="bg-muted px-1 rounded text-primary font-mono text-xs">{children}</code>
+                          <code className="bg-muted px-1 rounded text-primary font-mono text-xs">
+                            {children}
+                          </code>
                         );
                       },
-                      pre: ({children}) => <pre className="bg-muted/50 p-3 rounded-lg overflow-x-auto my-2 border border-primary/10">{children}</pre>,
-                      ul: ({children}) => <ul className="list-disc list-inside space-y-1 my-1">{children}</ul>,
-                      ol: ({children}) => <ol className="list-decimal list-inside space-y-1 my-1">{children}</ol>,
-                      li: ({children}) => <li className="text-foreground/90">{children}</li>,
-                      a: ({href, children}) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary underline hover:text-primary/80">{children}</a>,
-                      p: ({children}) => <p className="mb-2 last:mb-0">{children}</p>,
-                      blockquote: ({children}) => <blockquote className="border-l-2 border-primary pl-3 italic text-muted-foreground my-2">{children}</blockquote>,
+                      pre: ({ children }) => (
+                        <pre className="bg-muted/50 p-3 rounded-lg overflow-x-auto my-2 border border-primary/10">
+                          {children}
+                        </pre>
+                      ),
+                      ul: ({ children }) => (
+                        <ul className="list-disc list-inside space-y-1 my-1">
+                          {children}
+                        </ul>
+                      ),
+                      ol: ({ children }) => (
+                        <ol className="list-decimal list-inside space-y-1 my-1">
+                          {children}
+                        </ol>
+                      ),
+                      li: ({ children }) => (
+                        <li className="text-foreground/90">{children}</li>
+                      ),
+                      a: ({ href, children }) => (
+                        <a
+                          href={href}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-primary underline hover:text-primary/80"
+                        >
+                          {children}
+                        </a>
+                      ),
+                      p: ({ children }) => (
+                        <p className="mb-2 last:mb-0">{children}</p>
+                      ),
+                      blockquote: ({ children }) => (
+                        <blockquote className="border-l-2 border-primary pl-3 italic text-muted-foreground my-2">
+                          {children}
+                        </blockquote>
+                      ),
                     }}
                   >
                     {streamingContent}
                   </ReactMarkdown>
                 </div>
               )}
-              {streamPhase === "idle" && !streamingContent && !streamingThinking && (
-                <span className="text-muted-foreground/50 text-xs font-mono">Connecting…</span>
-              )}
+              {streamPhase === "idle" &&
+                !streamingContent &&
+                !streamingThinking && (
+                  <span className="text-muted-foreground/50 text-xs font-mono">
+                    Connecting…
+                  </span>
+                )}
             </div>
           </div>
         )}
@@ -957,36 +1351,67 @@ export default function AIChat() {
       <div className="relative glass rounded-lg p-3 flex gap-2 items-center">
         <SlashCommandPicker
           input={input}
-          visible={showSlashPicker && input.startsWith("/") && !input.includes(" ")}
-          onSelect={(cmd) => { setInput(cmd); setShowSlashPicker(false); }}
+          visible={
+            showSlashPicker && input.startsWith("/") && !input.includes(" ")
+          }
+          onSelect={(cmd) => {
+            setInput(cmd);
+            setShowSlashPicker(false);
+          }}
           onDismiss={() => setShowSlashPicker(false)}
         />
         <ImageUploadButton
           images={pendingImages}
-          onAdd={(imgs) => setPendingImages((prev) => [...prev, ...imgs].slice(0, 4))}
-          onRemove={(i) => setPendingImages((prev) => prev.filter((_, idx) => idx !== i))}
+          onAdd={(imgs) =>
+            setPendingImages((prev) => [...prev, ...imgs].slice(0, 4))
+          }
+          onRemove={(i) =>
+            setPendingImages((prev) => prev.filter((_, idx) => idx !== i))
+          }
           disabled={loading}
         />
         <Input
           value={input}
-          onChange={(e) => { setInput(e.target.value); setShowSlashPicker(e.target.value.startsWith("/")); }}
+          onChange={(e) => {
+            setInput(e.target.value);
+            setShowSlashPicker(e.target.value.startsWith("/"));
+          }}
           onKeyDown={(e) => {
-            if (showSlashPicker && input.startsWith("/") && !input.includes(" ")) {
+            if (
+              showSlashPicker &&
+              input.startsWith("/") &&
+              !input.includes(" ")
+            ) {
               if (["ArrowUp", "ArrowDown", "Escape"].includes(e.key)) return;
               if (e.key === "Enter") return;
             }
             if (e.key === "Enter" && !e.shiftKey) handleSend();
           }}
-          placeholder={pendingImages.length > 0 ? "Describe image or send as-is..." : "Ask anything, paste a URL, or type / for commands..."}
+          placeholder={
+            pendingImages.length > 0
+              ? "Describe image or send as-is..."
+              : "Ask anything, paste a URL, or type / for commands..."
+          }
           className="bg-transparent border-none font-mono text-sm focus-visible:ring-0 focus-visible:ring-offset-0"
           disabled={loading}
         />
         {loading ? (
-          <Button onClick={cancel} size="icon" variant="outline" className="shrink-0 border-destructive/50 text-destructive hover:bg-destructive/10">
+          <Button
+            onClick={cancel}
+            size="icon"
+            variant="outline"
+            className="shrink-0 border-destructive/50 text-destructive hover:bg-destructive/10"
+          >
             <XCircle className="h-4 w-4" />
           </Button>
         ) : (
-          <Button data-send-btn onClick={handleSend} disabled={!input.trim() && pendingImages.length === 0} size="icon" className="shrink-0 bg-primary text-primary-foreground">
+          <Button
+            data-send-btn
+            onClick={handleSend}
+            disabled={!input.trim() && pendingImages.length === 0}
+            size="icon"
+            className="shrink-0 bg-primary text-primary-foreground"
+          >
             <Send className="h-4 w-4" />
           </Button>
         )}
@@ -998,21 +1423,34 @@ export default function AIChat() {
       )}
 
       {/* Vision unknown confirmation */}
-      <AlertDialog open={!!visionWarning} onOpenChange={(open) => { if (!open) setVisionWarning(null); }}>
+      <AlertDialog
+        open={!!visionWarning}
+        onOpenChange={(open) => {
+          if (!open) setVisionWarning(null);
+        }}
+      >
         <AlertDialogContent className="glass border-primary/20">
           <AlertDialogHeader>
-            <AlertDialogTitle className="text-primary font-mono">⚠️ Vision Support Unverified</AlertDialogTitle>
+            <AlertDialogTitle className="text-primary font-mono">
+              ⚠️ Vision Support Unverified
+            </AlertDialogTitle>
             <AlertDialogDescription className="text-muted-foreground">
               {visionWarning?.reason}
               <br />
               <span className="text-xs mt-1 block text-muted-foreground/70">
-                If the request succeeds, this model will be remembered as vision-capable on this device.
+                If the request succeeds, this model will be remembered as
+                vision-capable on this device.
               </span>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel className="font-mono text-xs">Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleVisionTryAnyway} className="font-mono text-xs">
+            <AlertDialogCancel className="font-mono text-xs">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleVisionTryAnyway}
+              className="font-mono text-xs"
+            >
               Try anyway
             </AlertDialogAction>
           </AlertDialogFooter>

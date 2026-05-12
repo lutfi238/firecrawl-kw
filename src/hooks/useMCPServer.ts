@@ -1,11 +1,11 @@
 import { useState, useCallback } from "react";
 import { useAuthStore } from "@/stores/authStore";
-import { supabase } from "@/integrations/supabase/client";
+import {
+  getMcpEndpoint,
+  getSupabaseAnonKey,
+  getSupabaseClient,
+} from "@/lib/supabaseRuntime";
 import type { JsonRpcResponse, ToolCallResult } from "@/types/mcp";
-
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-const MCP_ENDPOINT = `${SUPABASE_URL}/functions/v1/mcp-server`;
 
 export function useMCPServer() {
   const [loading, setLoading] = useState(false);
@@ -13,13 +13,14 @@ export function useMCPServer() {
   const githubToken = useAuthStore((s) => s.githubToken);
 
   const getHeaders = useCallback(async () => {
+    const supabase = getSupabaseClient();
     const {
       data: { session },
     } = await supabase.auth.getSession();
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
       Accept: "application/json, text/event-stream",
-      apikey: SUPABASE_ANON_KEY,
+      apikey: getSupabaseAnonKey(),
     };
     if (session?.access_token) {
       headers["Authorization"] = `Bearer ${session.access_token}`;
@@ -48,7 +49,7 @@ export function useMCPServer() {
 
         const headers = await getHeaders();
 
-        const res = await fetch(MCP_ENDPOINT, {
+        const res = await fetch(getMcpEndpoint(), {
           method: "POST",
           headers,
           body: JSON.stringify(body),
@@ -112,7 +113,7 @@ export function useMCPServer() {
       };
 
       const headers = await getHeaders();
-      const res = await fetch(MCP_ENDPOINT, {
+      const res = await fetch(getMcpEndpoint(), {
         method: "POST",
         headers,
         body: JSON.stringify(body),
@@ -170,7 +171,7 @@ export function useMCPServer() {
 
   const pingServer = useCallback(async (): Promise<boolean> => {
     try {
-      const res = await fetch(MCP_ENDPOINT, {
+      const res = await fetch(getMcpEndpoint(), {
         method: "GET",
         headers: { Accept: "application/json" },
       });

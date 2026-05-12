@@ -1,8 +1,7 @@
 import { useAuthStore } from "@/stores/authStore";
 import { Button } from "@/components/ui/button";
 import { Github, Loader2 } from "lucide-react";
-
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+import { getBackendConfig } from "@/lib/backendConfig";
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, loading } = useAuthStore();
@@ -18,7 +17,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   if (!isAuthenticated) {
     const handleLogin = () => {
       const origin = window.top?.location.origin || window.location.origin;
-      const authUrl = `${SUPABASE_URL}/functions/v1/github-auth?redirect_uri=${encodeURIComponent(origin)}&scope=${encodeURIComponent("read:user user:email copilot github_copilot_chat")}`;
+      const authUrl = `${getBackendConfig().supabaseUrl}/functions/v1/github-auth?redirect_uri=${encodeURIComponent(origin)}&scope=${encodeURIComponent("read:user user:email")}`;
       // Use window.top to break out of iframe (Lovable preview)
       if (window.top && window.top !== window) {
         window.top.location.href = authUrl;
@@ -31,11 +30,16 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
       <div className="flex min-h-screen items-center justify-center bg-background dot-grid">
         <div className="glass rounded-xl p-8 max-w-sm w-full mx-4 text-center flex flex-col items-center gap-6">
           <div>
-            <h1 className="font-display text-2xl font-bold text-gradient-cyber mb-2">FIRECRAWL MCP</h1>
-            <p className="text-sm text-muted-foreground">Personal Web Intelligence Server</p>
+            <h1 className="font-display text-2xl font-bold text-gradient-cyber mb-2">
+              FIRECRAWL MCP
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              Personal Web Intelligence Server
+            </p>
           </div>
           <p className="text-xs text-muted-foreground leading-relaxed">
-            Sign in with GitHub to access your MCP dashboard. Your GitHub token will be used for Copilot API access.
+            Sign in with GitHub to access your MCP dashboard. GitHub Models uses
+            a separate token with models:read in Settings.
           </p>
           <Button
             onClick={handleLogin}

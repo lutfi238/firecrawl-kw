@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMCPServer } from "./useMCPServer";
-import { supabase } from "@/integrations/supabase/client";
+import { getSupabaseClient } from "@/lib/supabaseRuntime";
 import type { ToolCallResult } from "@/types/mcp";
 
 export function useToolExecutor() {
@@ -26,13 +26,16 @@ export function useToolExecutor() {
 
     // Log to database
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const supabase = getSupabaseClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
       if (user) {
         await supabase.from("mcp_logs").insert({
           user_id: user.id,
           tool: toolName,
-          input: args as any,
-          output: res as any,
+          input: args,
+          output: res,
           status: res.isError ? "error" : "success",
           duration_ms: duration,
         });

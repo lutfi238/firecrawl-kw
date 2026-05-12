@@ -1,6 +1,9 @@
 import type { AiSettings } from "../ai/settings.ts";
 
-export function getToolDefinitions(userSettings: Record<string, string>, aiSettings: AiSettings | null) {
+export function getToolDefinitions(
+  userSettings: Record<string, string>,
+  aiSettings: AiSettings | null,
+) {
   const extractDesc = aiSettings
     ? `Scrape URL and use AI (${aiSettings.model}) to extract structured data`
     : "Scrape URL and use AI to extract structured data (not configured)";
@@ -23,7 +26,10 @@ export function getToolDefinitions(userSettings: Record<string, string>, aiSetti
         type: "object",
         properties: {
           query: { type: "string", description: "Search query." },
-          maxResults: { type: "number", description: "Maximum number of results to return." },
+          maxResults: {
+            type: "number",
+            description: "Maximum number of results to return.",
+          },
         },
         required: ["query"],
         additionalProperties: false,
@@ -47,8 +53,14 @@ export function getToolDefinitions(userSettings: Record<string, string>, aiSetti
       inputSchema: {
         type: "object",
         properties: {
-          url: { type: "string", description: "Target URL to render and scrape." },
-          waitFor: { type: "number", description: "Optional wait time in milliseconds before capture." },
+          url: {
+            type: "string",
+            description: "Target URL to render and scrape.",
+          },
+          waitFor: {
+            type: "number",
+            description: "Optional wait time in milliseconds before capture.",
+          },
         },
         required: ["url"],
         additionalProperties: false,
@@ -62,7 +74,10 @@ export function getToolDefinitions(userSettings: Record<string, string>, aiSetti
         properties: {
           url: { type: "string", description: "Start URL for the crawl." },
           maxPages: { type: "number", description: "Maximum pages to crawl." },
-          extractContent: { type: "boolean", description: "Whether to extract page content while crawling." },
+          extractContent: {
+            type: "boolean",
+            description: "Whether to extract page content while crawling.",
+          },
         },
         required: ["url"],
         additionalProperties: false,
@@ -74,8 +89,14 @@ export function getToolDefinitions(userSettings: Record<string, string>, aiSetti
       inputSchema: {
         type: "object",
         properties: {
-          url: { type: "string", description: "Start URL for the map operation." },
-          maxPages: { type: "number", description: "Maximum pages to inspect." },
+          url: {
+            type: "string",
+            description: "Start URL for the map operation.",
+          },
+          maxPages: {
+            type: "number",
+            description: "Maximum pages to inspect.",
+          },
         },
         required: ["url"],
         additionalProperties: false,
@@ -87,9 +108,16 @@ export function getToolDefinitions(userSettings: Record<string, string>, aiSetti
       inputSchema: {
         type: "object",
         properties: {
-          url: { type: "string", description: "Target URL to extract data from." },
+          url: {
+            type: "string",
+            description: "Target URL to extract data from.",
+          },
           prompt: { type: "string", description: "Extraction instructions." },
-          schema: { type: "string", description: "Optional JSON schema or structure hint for the output." },
+          schema: {
+            type: "string",
+            description:
+              "Optional JSON schema or structure hint for the output.",
+          },
         },
         required: ["url", "prompt"],
         additionalProperties: false,
@@ -116,9 +144,38 @@ export function getToolDefinitions(userSettings: Record<string, string>, aiSetti
         type: "object",
         properties: {
           query: { type: "string", description: "Search query." },
-          maxResults: { type: "number", description: "Maximum search results to scrape." },
+          maxResults: {
+            type: "number",
+            description: "Maximum search results to scrape.",
+          },
         },
         required: ["query"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "test_ai_provider",
+      description:
+        "Test the saved AI provider from backend without exposing the API key in browser requests",
+      inputSchema: {
+        type: "object",
+        properties: {},
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "github_models_catalog",
+      description:
+        "List available GitHub Models using a token with models:read",
+      inputSchema: {
+        type: "object",
+        properties: {
+          token: {
+            type: "string",
+            description:
+              "Optional GitHub token with models:read. If omitted, the saved AI API key is used when AI provider is GitHub Models.",
+          },
+        },
         additionalProperties: false,
       },
     },
@@ -140,7 +197,11 @@ export function getToolDefinitions(userSettings: Record<string, string>, aiSetti
       inputSchema: {
         type: "object",
         properties: {
-          urls: { type: "string", description: "URLs to scrape, typically newline- or comma-separated." },
+          urls: {
+            type: "string",
+            description:
+              "URLs to scrape, typically newline- or comma-separated.",
+          },
         },
         required: ["urls"],
         additionalProperties: false,
@@ -148,7 +209,8 @@ export function getToolDefinitions(userSettings: Record<string, string>, aiSetti
     },
     {
       name: "chat",
-      description: "AI assistant with tools-first orchestration — searches, scrapes, and synthesizes evidence for factual/ranking queries; lightweight for casual chat. Pass mode:'synthesis' to bypass orchestration for direct LLM calls.",
+      description:
+        "AI assistant with tools-first orchestration — searches, scrapes, and synthesizes evidence for factual/ranking queries; lightweight for casual chat. Pass mode:'synthesis' to bypass orchestration for direct LLM calls.",
       inputSchema: {
         type: "object",
         properties: {
@@ -164,7 +226,10 @@ export function getToolDefinitions(userSettings: Record<string, string>, aiSetti
                   enum: ["system", "user", "assistant", "tool"],
                   description: "Message role.",
                 },
-                content: { type: "string", description: "Message text content." },
+                content: {
+                  type: "string",
+                  description: "Message text content.",
+                },
               },
               required: ["role", "content"],
               additionalProperties: false,
@@ -181,7 +246,8 @@ export function getToolDefinitions(userSettings: Record<string, string>, aiSetti
           mode: {
             type: "string",
             enum: ["orchestrate", "synthesis"],
-            description: "orchestrate (default): full intent routing. synthesis: bypass orchestration, direct LLM call.",
+            description:
+              "orchestrate (default): full intent routing. synthesis: bypass orchestration, direct LLM call.",
           },
         },
         required: ["message"],
@@ -206,7 +272,10 @@ export function getToolDefinitions(userSettings: Record<string, string>, aiSetti
       inputSchema: {
         type: "object",
         properties: {
-          jobId: { type: "string", description: "Job ID returned from batch_scrape." },
+          jobId: {
+            type: "string",
+            description: "Job ID returned from batch_scrape.",
+          },
         },
         required: ["jobId"],
         additionalProperties: false,
@@ -218,14 +287,23 @@ export function getToolDefinitions(userSettings: Record<string, string>, aiSetti
       inputSchema: {
         type: "object",
         properties: {
-          prompt: { type: "string", description: "Research prompt or task description." },
+          prompt: {
+            type: "string",
+            description: "Research prompt or task description.",
+          },
           urls: {
             type: "array",
             description: "Optional seed URLs to prioritize during research.",
             items: { type: "string", description: "Seed URL." },
           },
-          schema: { type: "string", description: "Optional desired output schema or format hint." },
-          maxSteps: { type: "number", description: "Optional upper bound for research iterations." },
+          schema: {
+            type: "string",
+            description: "Optional desired output schema or format hint.",
+          },
+          maxSteps: {
+            type: "number",
+            description: "Optional upper bound for research iterations.",
+          },
         },
         required: ["prompt"],
         additionalProperties: false,

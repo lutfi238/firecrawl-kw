@@ -1,10 +1,18 @@
-import { type AiSettings } from "./settings.ts";
+import {
+  getAiRequestHeaders,
+  getChatCompletionsUrl,
+  type AiSettings,
+} from "./settings.ts";
 import { createJob, processBatchScrapeJob } from "../jobs/batchScrape.ts";
 import { processAgentJob } from "../jobs/agentJobs.ts";
 import { processCrawlJob } from "../jobs/crawlJobs.ts";
 import { checkJobStatus } from "../jobs/jobStatus.ts";
 import { detectSearchRecencyProfile } from "../search/recency.ts";
-import { isUsableArticleContent, scrapeUrl, searchWeb } from "../scrapers/webSearch.ts";
+import {
+  isUsableArticleContent,
+  scrapeUrl,
+  searchWeb,
+} from "../scrapers/webSearch.ts";
 
 export type ChatIntent =
   | "casual"
@@ -21,16 +29,29 @@ export function classifyChatIntent(message: string): ChatIntent {
   const msg = message.trim();
   const lower = msg.toLowerCase();
 
-  if (/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i.test(msg)) {
+  if (
+    /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i.test(
+      msg,
+    )
+  ) {
     return "job_status";
   }
 
   const urls = msg.match(/https?:\/\/[^\s,]+/g);
   if (urls && urls.length > 1) return "multi_url";
-  if (urls && urls.length === 1 && msg.split(/\s+/).length <= 10) return "url_scrape";
-  if (/\b(crawl|map|sitemap|all pages|spider)\b/i.test(lower)) return "crawl_request";
-  if (/\b(extract)\b/i.test(lower) && urls && urls.length >= 1) return "extract_request";
-  if (/\b(research|in-depth|comprehensive|analyze|deep dive|investigate)\b/i.test(lower) && lower.length > 40) return "deep_research";
+  if (urls && urls.length === 1 && msg.split(/\s+/).length <= 10)
+    return "url_scrape";
+  if (/\b(crawl|map|sitemap|all pages|spider)\b/i.test(lower))
+    return "crawl_request";
+  if (/\b(extract)\b/i.test(lower) && urls && urls.length >= 1)
+    return "extract_request";
+  if (
+    /\b(research|in-depth|comprehensive|analyze|deep dive|investigate)\b/i.test(
+      lower,
+    ) &&
+    lower.length > 40
+  )
+    return "deep_research";
 
   if (
     /\btop\s*\d+/i.test(lower) ||
@@ -48,14 +69,23 @@ export function classifyChatIntent(message: string): ChatIntent {
   }
 
   if (
-    /\b(what|who|when|where|why|how|which|is|are|was|were|did|does|do|can|could|will|should)\b/i.test(lower) ||
-    /\b(latest|current|recent|new|2024|2025|2026|today|yesterday|this week|this month)\b/i.test(lower) ||
+    /\b(what|who|when|where|why|how|which|is|are|was|were|did|does|do|can|could|will|should)\b/i.test(
+      lower,
+    ) ||
+    /\b(latest|current|recent|new|2024|2025|2026|today|yesterday|this week|this month)\b/i.test(
+      lower,
+    ) ||
     /\?$/.test(msg.trim())
   ) {
     return "factual";
   }
 
-  if (lower.length < 30 || /^(hi|hello|hey|thanks|thank you|ok|sure|cool|great|bye|good morning|good night)/i.test(lower)) {
+  if (
+    lower.length < 30 ||
+    /^(hi|hello|hey|thanks|thank you|ok|sure|cool|great|bye|good morning|good night)/i.test(
+      lower,
+    )
+  ) {
     return "casual";
   }
 
@@ -65,24 +95,40 @@ export function classifyChatIntent(message: string): ChatIntent {
 function chatSearchEvidenceHasDepth(evidence: string): boolean {
   const stripped = evidence
     .split("\n")
-    .filter((line: string) => !line.match(/^\s*"?(title|url|sourceUrl|snippet|rawDesc|acquisitionType|searchSource)"?\s*:/) && !line.match(/^\s*[[]{}],?\s*$/))
+    .filter(
+      (line: string) =>
+        !line.match(
+          /^\s*"?(title|url|sourceUrl|snippet|rawDesc|acquisitionType|searchSource)"?\s*:/,
+        ) && !line.match(/^\s*[[]{}],?\s*$/),
+    )
     .join(" ")
     .trim();
   return stripped.length > 2000;
 }
 
-export function buildHistoryContext(history: Array<{ role: string; content: string }>, current: string): string {
+export function buildHistoryContext(
+  history: Array<{ role: string; content: string }>,
+  current: string,
+): string {
   if (history.length === 0) return current;
-  const ctx = history.map((message) => `${message.role}: ${message.content}`).join("\n");
+  const ctx = history
+    .map((message) => `${message.role}: ${message.content}`)
+    .join("\n");
   return `Previous conversation:\n${ctx}\n\nCurrent message: ${current}`;
 }
 
 export function buildMultimodalContent(
   text: string,
   images?: string[],
-): string | Array<{ type: string; text?: string; image_url?: { url: string } }> {
+):
+  | string
+  | Array<{ type: string; text?: string; image_url?: { url: string } }> {
   if (!images || images.length === 0) return text;
-  const parts: Array<{ type: string; text?: string; image_url?: { url: string } }> = [];
+  const parts: Array<{
+    type: string;
+    text?: string;
+    image_url?: { url: string };
+  }> = [];
   for (const img of images) {
     parts.push({ type: "image_url", image_url: { url: img } });
   }
@@ -93,20 +139,18 @@ export function buildMultimodalContent(
 export async function callAI(
   aiSettings: AiSettings,
   systemPrompt: string,
-  userContent: string | Array<{ type: string; text?: string; image_url?: { url: string } }>,
+  userContent:
+    | string
+    | Array<{ type: string; text?: string; image_url?: { url: string } }>,
   maxTokens = 4096,
 ): Promise<string> {
-  const userMessage = typeof userContent === "string"
-    ? { role: "user", content: userContent }
-    : { role: "user", content: userContent };
-  const res = await fetch(`${aiSettings.baseUrl}/chat/completions`, {
+  const userMessage =
+    typeof userContent === "string"
+      ? { role: "user", content: userContent }
+      : { role: "user", content: userContent };
+  const res = await fetch(getChatCompletionsUrl(aiSettings), {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${aiSettings.apiKey}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": "https://id-preview--4485e6f5-86ea-4999-acd7-7209fb13e21d.lovable.app",
-      "X-Title": "Personal Firecrawl MCP",
-    },
+    headers: getAiRequestHeaders(aiSettings),
     body: JSON.stringify({
       model: aiSettings.model,
       messages: [{ role: "system", content: systemPrompt }, userMessage],
@@ -124,25 +168,23 @@ export async function callAI(
 export function callAIStream(
   aiSettings: AiSettings,
   systemPrompt: string,
-  userContent: string | Array<{ type: string; text?: string; image_url?: { url: string } }>,
+  userContent:
+    | string
+    | Array<{ type: string; text?: string; image_url?: { url: string } }>,
   maxTokens = 4096,
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
-  const userMessage = typeof userContent === "string"
-    ? { role: "user", content: userContent }
-    : { role: "user", content: userContent };
+  const userMessage =
+    typeof userContent === "string"
+      ? { role: "user", content: userContent }
+      : { role: "user", content: userContent };
 
   return new ReadableStream({
     async start(controller) {
       try {
-        const res = await fetch(`${aiSettings.baseUrl}/chat/completions`, {
+        const res = await fetch(getChatCompletionsUrl(aiSettings), {
           method: "POST",
-          headers: {
-            Authorization: `Bearer ${aiSettings.apiKey}`,
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://id-preview--4485e6f5-86ea-4999-acd7-7209fb13e21d.lovable.app",
-            "X-Title": "Personal Firecrawl MCP",
-          },
+          headers: getAiRequestHeaders(aiSettings),
           body: JSON.stringify({
             model: aiSettings.model,
             messages: [{ role: "system", content: systemPrompt }, userMessage],
@@ -153,7 +195,11 @@ export function callAIStream(
 
         if (!res.ok) {
           const errText = await res.text();
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: `AI API error ${res.status}: ${errText.slice(0, 300)}` })}\n\n`));
+          controller.enqueue(
+            encoder.encode(
+              `data: ${JSON.stringify({ error: `AI API error ${res.status}: ${errText.slice(0, 300)}` })}\n\n`,
+            ),
+          );
           controller.enqueue(encoder.encode("data: [DONE]\n\n"));
           controller.close();
           return;
@@ -183,7 +229,9 @@ export function callAIStream(
                 const json = JSON.parse(trimmed.slice(6));
                 const delta = json.choices?.[0]?.delta?.content;
                 if (delta) {
-                  controller.enqueue(encoder.encode(`data: ${JSON.stringify({ delta })}\n\n`));
+                  controller.enqueue(
+                    encoder.encode(`data: ${JSON.stringify({ delta })}\n\n`),
+                  );
                 }
               } catch {
                 // skip malformed
@@ -195,7 +243,11 @@ export function callAIStream(
         controller.enqueue(encoder.encode("data: [DONE]\n\n"));
         controller.close();
       } catch (error) {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: error instanceof Error ? error.message : "Stream error" })}\n\n`));
+        controller.enqueue(
+          encoder.encode(
+            `data: ${JSON.stringify({ error: error instanceof Error ? error.message : "Stream error" })}\n\n`,
+          ),
+        );
         controller.enqueue(encoder.encode("data: [DONE]\n\n"));
         controller.close();
       }
@@ -211,27 +263,50 @@ export async function handleChatWithOrchestration(
   args: Record<string, unknown>,
   aiSettings: AiSettings,
   authHeader: string | null,
-): Promise<{ content: Array<{ type: string; text?: string }>; isError?: boolean }> {
+): Promise<{
+  content: Array<{ type: string; text?: string }>;
+  isError?: boolean;
+}> {
   const message = (args.message as string) || "";
-  const history = (args.history as Array<{ role: string; content: string }>) || [];
+  const history =
+    (args.history as Array<{ role: string; content: string }>) || [];
   const mode = (args.mode as string) || "orchestrate";
   const images = (args.images as string[]) || [];
 
   if (mode === "synthesis") {
-    console.log("[chat] Synthesis bypass mode — direct LLM call, no orchestration");
-    const systemPrompt = history.find((entry) => entry.role === "system")?.content || "You are a helpful assistant.";
+    console.log(
+      "[chat] Synthesis bypass mode — direct LLM call, no orchestration",
+    );
+    const systemPrompt =
+      history.find((entry) => entry.role === "system")?.content ||
+      "You are a helpful assistant.";
     const nonSystemHistory = history.filter((entry) => entry.role !== "system");
-    const userContent = buildMultimodalContent(buildHistoryContext(nonSystemHistory, message), images);
+    const userContent = buildMultimodalContent(
+      buildHistoryContext(nonSystemHistory, message),
+      images,
+    );
     const answer = await callAI(aiSettings, systemPrompt, userContent, 4096);
     return { content: [{ type: "text", text: answer }] };
   }
 
   const intent = classifyChatIntent(message);
-  console.log("[chat-orchestrator] Message:", message.slice(0, 100), "| Intent:", intent, "| Mode:", isHeavyChatIntent(intent) ? "async" : "sync");
+  console.log(
+    "[chat-orchestrator] Message:",
+    message.slice(0, 100),
+    "| Intent:",
+    intent,
+    "| Mode:",
+    isHeavyChatIntent(intent) ? "async" : "sync",
+  );
 
   if (images.length > 0) {
-    console.log("[chat-orchestrator] Images attached — using direct multimodal LLM");
-    const userContent = buildMultimodalContent(buildHistoryContext(history, message), images);
+    console.log(
+      "[chat-orchestrator] Images attached — using direct multimodal LLM",
+    );
+    const userContent = buildMultimodalContent(
+      buildHistoryContext(history, message),
+      images,
+    );
     const answer = await callAI(
       aiSettings,
       "You are a helpful AI assistant. The user has sent images. Analyze the images carefully and respond to their message. If no text accompanies the images, describe what you see.",
@@ -258,11 +333,15 @@ export async function handleChatWithOrchestration(
     }
 
     if (intent === "job_status") {
-      const jobIdMatch = message.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+      const jobIdMatch = message.match(
+        /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i,
+      );
       if (jobIdMatch) {
         addStep("Intent: job_status — checking job " + jobIdMatch[0]);
         const status = await checkJobStatus(authHeader, jobIdMatch[0]);
-        return { content: [{ type: "text", text: JSON.stringify(status, null, 2) }] };
+        return {
+          content: [{ type: "text", text: JSON.stringify(status, null, 2) }],
+        };
       }
     }
 
@@ -272,9 +351,19 @@ export async function handleChatWithOrchestration(
         addStep("Intent: url_scrape — scraping " + urlMatch[0]);
         try {
           const { markdown, title } = await scrapeUrl(urlMatch[0]);
-          return { content: [{ type: "text", text: `# ${title}\n\n${markdown}` }] };
+          return {
+            content: [{ type: "text", text: `# ${title}\n\n${markdown}` }],
+          };
         } catch (error) {
-          return { content: [{ type: "text", text: `Failed to scrape ${urlMatch[0]}: ${error instanceof Error ? error.message : "unknown"}` }], isError: true };
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Failed to scrape ${urlMatch[0]}: ${error instanceof Error ? error.message : "unknown"}`,
+              },
+            ],
+            isError: true,
+          };
         }
       }
     }
@@ -282,24 +371,62 @@ export async function handleChatWithOrchestration(
     if (intent === "multi_url") {
       const urls = message.match(/https?:\/\/[^\s,]+/g) || [];
       addStep("Intent: multi_url — batch scraping " + urls.length + " URLs");
-      const job = await createJob(authHeader, "batch_scrape", { urls: urls.join(", ") });
+      const job = await createJob(authHeader, "batch_scrape", {
+        urls: urls.join(", "),
+      });
       if (job.error) {
-        return { content: [{ type: "text", text: `Error creating batch job: ${job.error}` }], isError: true };
+        return {
+          content: [
+            { type: "text", text: `Error creating batch job: ${job.error}` },
+          ],
+          isError: true,
+        };
       }
-      EdgeRuntime.waitUntil(processBatchScrapeJob(job.jobId, { urls: urls.join(", ") }));
-      return { content: [{ type: "text", text: `Batch scrape started for ${urls.length} URLs.\n\nJob ID: ${job.jobId}\n\nUse \`check_batch_status\` or send the job ID to check results.` }] };
+      EdgeRuntime.waitUntil(
+        processBatchScrapeJob(job.jobId, { urls: urls.join(", ") }),
+      );
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Batch scrape started for ${urls.length} URLs.\n\nJob ID: ${job.jobId}\n\nUse \`check_batch_status\` or send the job ID to check results.`,
+          },
+        ],
+      };
     }
 
     if (intent === "crawl_request") {
       const urlMatch = message.match(/https?:\/\/[^\s,]+/);
       if (urlMatch) {
         addStep("Intent: crawl — starting crawl for " + urlMatch[0]);
-        const job = await createJob(authHeader, "crawl", { url: urlMatch[0], maxPages: 10, extractContent: true });
+        const job = await createJob(authHeader, "crawl", {
+          url: urlMatch[0],
+          maxPages: 10,
+          extractContent: true,
+        });
         if (job.error) {
-          return { content: [{ type: "text", text: `Error creating crawl job: ${job.error}` }], isError: true };
+          return {
+            content: [
+              { type: "text", text: `Error creating crawl job: ${job.error}` },
+            ],
+            isError: true,
+          };
         }
-        EdgeRuntime.waitUntil(processCrawlJob(job.jobId, { url: urlMatch[0], maxPages: 10, extractContent: true }));
-        return { content: [{ type: "text", text: `Crawl started for ${urlMatch[0]}.\n\nJob ID: ${job.jobId}\n\nUse \`check_crawl_status\` or send the job ID to check results.` }] };
+        EdgeRuntime.waitUntil(
+          processCrawlJob(job.jobId, {
+            url: urlMatch[0],
+            maxPages: 10,
+            extractContent: true,
+          }),
+        );
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Crawl started for ${urlMatch[0]}.\n\nJob ID: ${job.jobId}\n\nUse \`check_crawl_status\` or send the job ID to check results.`,
+            },
+          ],
+        };
       }
     }
 
@@ -317,33 +444,58 @@ export async function handleChatWithOrchestration(
           );
           return { content: [{ type: "text", text: answer }] };
         } catch (error) {
-          return { content: [{ type: "text", text: `Failed to extract from ${urlMatch[0]}: ${error instanceof Error ? error.message : "unknown"}` }], isError: true };
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Failed to extract from ${urlMatch[0]}: ${error instanceof Error ? error.message : "unknown"}`,
+              },
+            ],
+            isError: true,
+          };
         }
       }
     }
 
     if (isHeavyChatIntent(intent)) {
       addStep(`Intent: ${intent} — delegating to async agent job`);
-      const job = await createJob(authHeader, "agent", { prompt: message, maxSteps: 5 });
+      const job = await createJob(authHeader, "agent", {
+        prompt: message,
+        maxSteps: 5,
+      });
       if (job.error) {
-        return { content: [{ type: "text", text: `Error creating research job: ${job.error}` }], isError: true };
+        return {
+          content: [
+            { type: "text", text: `Error creating research job: ${job.error}` },
+          ],
+          isError: true,
+        };
       }
-      EdgeRuntime.waitUntil(processAgentJob(job.jobId, { prompt: message, maxSteps: 5 }, aiSettings));
+      EdgeRuntime.waitUntil(
+        processAgentJob(
+          job.jobId,
+          { prompt: message, maxSteps: 5 },
+          aiSettings,
+        ),
+      );
 
-      const modeLabel = intent === "ranking" ? "ranking/comparison research" : "deep research";
+      const modeLabel =
+        intent === "ranking" ? "ranking/comparison research" : "deep research";
       return {
-        content: [{
-          type: "text",
-          text: [
-            `🔬 **${modeLabel.charAt(0).toUpperCase() + modeLabel.slice(1)} started** (async)`,
-            "",
-            "This query requires multi-source evidence collection and synthesis, which would exceed the sync timeout. It has been delegated to the async research agent.",
-            "",
-            `**Job ID:** \`${job.jobId}\``,
-            "",
-            "Check progress with the `agent_status` tool using this job ID, or paste the job ID in chat.",
-          ].join("\n"),
-        }],
+        content: [
+          {
+            type: "text",
+            text: [
+              `🔬 **${modeLabel.charAt(0).toUpperCase() + modeLabel.slice(1)} started** (async)`,
+              "",
+              "This query requires multi-source evidence collection and synthesis, which would exceed the sync timeout. It has been delegated to the async research agent.",
+              "",
+              `**Job ID:** \`${job.jobId}\``,
+              "",
+              "Check progress with the `agent_status` tool using this job ID, or paste the job ID in chat.",
+            ].join("\n"),
+          },
+        ],
       };
     }
 
@@ -362,11 +514,18 @@ export async function handleChatWithOrchestration(
     addStep(`Search returned ${searchResults.length} results`);
 
     let combinedEvidence = searchEvidence;
-    if (!chatSearchEvidenceHasDepth(searchEvidence) && searchResults.length > 0) {
-      const top = searchResults.find((result) => result.acquisitionType !== "unresolved_wrapper");
+    if (
+      !chatSearchEvidenceHasDepth(searchEvidence) &&
+      searchResults.length > 0
+    ) {
+      const top = searchResults.find(
+        (result) => result.acquisitionType !== "unresolved_wrapper",
+      );
       if (top) {
         try {
-          addStep(`Snippets thin — scraping top result: ${top.url.slice(0, 60)}`);
+          addStep(
+            `Snippets thin — scraping top result: ${top.url.slice(0, 60)}`,
+          );
           const { markdown, title } = await scrapeUrl(top.url);
           if (isUsableArticleContent(markdown)) {
             combinedEvidence = `# ${title}\nSource: ${top.url}\n\n${markdown.slice(0, 4000)}\n\n---\n\nAdditional search results:\n${searchEvidence}`;
@@ -404,9 +563,15 @@ export async function handleChatWithOrchestration(
 
     return { content: [{ type: "text", text: answer }] };
   } catch (error) {
-    const errMsg = error instanceof Error ? error.message : "Unknown orchestration error";
+    const errMsg =
+      error instanceof Error ? error.message : "Unknown orchestration error";
     console.error("[chat-orchestrator] Error:", errMsg);
-    return { content: [{ type: "text", text: `Error during chat orchestration: ${errMsg}` }], isError: true };
+    return {
+      content: [
+        { type: "text", text: `Error during chat orchestration: ${errMsg}` },
+      ],
+      isError: true,
+    };
   }
 }
 

@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
+import { getSupabaseClient } from "@/lib/supabaseRuntime";
 import type { McpLogEntry } from "@/types/mcp";
 
 interface LogFilters {
@@ -15,6 +15,7 @@ export function useRequestLogs(filters?: LogFilters) {
   const query = useQuery({
     queryKey: ["mcp-logs", filters],
     queryFn: async (): Promise<McpLogEntry[]> => {
+      const supabase = getSupabaseClient();
       let q = supabase
         .from("mcp_logs")
         .select("*")
@@ -35,9 +36,15 @@ export function useRequestLogs(filters?: LogFilters) {
 
   const clearLogs = useMutation({
     mutationFn: async () => {
-      const { data: { user } } = await supabase.auth.getUser();
+      const supabase = getSupabaseClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
-      const { error } = await supabase.from("mcp_logs").delete().eq("user_id", user.id);
+      const { error } = await supabase
+        .from("mcp_logs")
+        .delete()
+        .eq("user_id", user.id);
       if (error) throw error;
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["mcp-logs"] }),
@@ -53,6 +60,7 @@ export function useLogStats() {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
+      const supabase = getSupabaseClient();
       const { data, error } = await supabase
         .from("mcp_logs")
         .select("tool, status, created_at")
