@@ -2,7 +2,6 @@ import { useState, useCallback } from "react";
 import { useAuthStore } from "@/stores/authStore";
 import { supabase } from "@/integrations/supabase/client";
 import type { JsonRpcResponse, ToolCallResult } from "@/types/mcp";
-import { useSettings } from "@/hooks/useSettings";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
@@ -12,10 +11,11 @@ export function useMCPServer() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const githubToken = useAuthStore((s) => s.githubToken);
-  const { settings } = useSettings();
 
   const getHeaders = useCallback(async () => {
-    const { data: { session } } = await supabase.auth.getSession();
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
       Accept: "application/json, text/event-stream",
@@ -27,14 +27,14 @@ export function useMCPServer() {
     if (githubToken) {
       headers["X-GitHub-Token"] = githubToken;
     }
-    if (settings?.mcp_secret) {
-      headers["X-MCP-Secret"] = settings.mcp_secret;
-    }
     return headers;
-  }, [githubToken, settings]);
+  }, [githubToken]);
 
   const callTool = useCallback(
-    async (toolName: string, args: Record<string, unknown>): Promise<ToolCallResult> => {
+    async (
+      toolName: string,
+      args: Record<string, unknown>,
+    ): Promise<ToolCallResult> => {
       setLoading(true);
       setError(null);
 
@@ -94,7 +94,7 @@ export function useMCPServer() {
         setLoading(false);
       }
     },
-    [getHeaders]
+    [getHeaders],
   );
 
   /** Stream a tool call — yields delta strings as they arrive. */
@@ -161,11 +161,11 @@ export function useMCPServer() {
           return;
         }
         const result = data.result as ToolCallResult;
-        const text = result.content.map(c => c.text ?? "").join("\n");
+        const text = result.content.map((c) => c.text ?? "").join("\n");
         yield text;
       }
     },
-    [getHeaders]
+    [getHeaders],
   );
 
   const pingServer = useCallback(async (): Promise<boolean> => {

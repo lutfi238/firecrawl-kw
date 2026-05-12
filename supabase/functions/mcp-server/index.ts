@@ -15,7 +15,8 @@ import {
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-github-token, x-mcp-secret, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version, mcp-protocol-version",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type, x-github-token, x-mcp-secret, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version, mcp-protocol-version",
   "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
   "Access-Control-Expose-Headers": "WWW-Authenticate",
 };
@@ -39,13 +40,32 @@ Deno.serve(async (req: Request) => {
 
   const url = new URL(req.url);
   // Edge Function paths arrive as e.g. /mcp-server/.well-known/... -- normalize to suffix only.
-  const path = url.pathname.replace(/^\/functions\/v1\/mcp-server/, "").replace(/^\/mcp-server/, "");
+  const path = url.pathname
+    .replace(/^\/functions\/v1\/mcp-server/, "")
+    .replace(/^\/mcp-server/, "");
 
   // ---- OAuth discovery & endpoints (no auth required) ----
-  if (req.method === "GET" && (path === "/.well-known/oauth-protected-resource" || path === "/.well-known/oauth-protected-resource/")) {
+  const protectedResourcePaths = new Set([
+    "/.well-known/oauth-protected-resource",
+    "/.well-known/oauth-protected-resource/",
+    "/.well-known/oauth-protected-resource/functions/v1/mcp-server",
+    "/.well-known/oauth-protected-resource/functions/v1/mcp-server/",
+  ]);
+  const authorizationServerPaths = new Set([
+    "/.well-known/oauth-authorization-server",
+    "/.well-known/oauth-authorization-server/",
+    "/.well-known/oauth-authorization-server/functions/v1/mcp-server",
+    "/.well-known/oauth-authorization-server/functions/v1/mcp-server/",
+    "/.well-known/openid-configuration",
+    "/.well-known/openid-configuration/",
+    "/.well-known/openid-configuration/functions/v1/mcp-server",
+    "/.well-known/openid-configuration/functions/v1/mcp-server/",
+  ]);
+
+  if (req.method === "GET" && protectedResourcePaths.has(path)) {
     return oauthProtectedResource(req, corsHeaders);
   }
-  if (req.method === "GET" && (path === "/.well-known/oauth-authorization-server" || path === "/.well-known/oauth-authorization-server/")) {
+  if (req.method === "GET" && authorizationServerPaths.has(path)) {
     return oauthAuthorizationServer(req, corsHeaders);
   }
   if (req.method === "POST" && path === "/register") {
@@ -61,7 +81,13 @@ Deno.serve(async (req: Request) => {
 
   // ---- Health / status (no auth) ----
   if (req.method === "GET" && (path === "" || path === "/")) {
-    return jsonResponse({ status: "ok", server: "personal-firecrawl", version: "2.1.0", tools: 15, oauth: true });
+    return jsonResponse({
+      status: "ok",
+      server: "personal-firecrawl",
+      version: "2.1.0",
+      tools: 15,
+      oauth: true,
+    });
   }
 
   if (req.method !== "POST") {
@@ -102,23 +128,41 @@ Deno.serve(async (req: Request) => {
     if (method === "tools/call") {
       const { name, arguments: args } = params;
       console.log("[mcp] tools/call name=", name);
-      const outcome = await handleToolCall({ args, authHeader, corsHeaders, name });
+      const outcome = await handleToolCall({
+        args,
+        authHeader,
+        corsHeaders,
+        name,
+      });
 
       if (outcome.kind === "response") {
         return outcome.response;
       }
 
       if (outcome.kind === "unknown-tool") {
-        return jsonResponse({ jsonrpc: "2.0", id, error: { code: -32601, message: `Unknown tool: ${name}` } });
+        return jsonResponse({
+          jsonrpc: "2.0",
+          id,
+          error: { code: -32601, message: `Unknown tool: ${name}` },
+        });
       }
 
       return jsonResponse({ jsonrpc: "2.0", id, result: outcome.result });
     }
 
-    return jsonResponse({ jsonrpc: "2.0", id, error: { code: -32601, message: `Unknown method: ${method}` } });
+    return jsonResponse({
+      jsonrpc: "2.0",
+      id,
+      error: { code: -32601, message: `Unknown method: ${method}` },
+    });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Internal server error";
+    const message =
+      err instanceof Error ? err.message : "Internal server error";
     console.error("MCP error:", message);
-    return jsonResponse({ jsonrpc: "2.0", id: null, error: { code: -32603, message } });
+    return jsonResponse({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32603, message },
+    });
   }
 });
