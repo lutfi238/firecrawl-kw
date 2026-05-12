@@ -31,8 +31,10 @@ async function sha256(input: string): Promise<string> {
 
 export function getBaseUrl(req: Request): string {
   const url = new URL(req.url);
-  // Edge Functions strip the function name from the path; reconstruct canonical mcp-server URL
-  return `${url.origin}/functions/v1/mcp-server`;
+  // Force https: requests arrive over Cloudflare-terminated TLS but inner protocol is http.
+  const proto = req.headers.get("x-forwarded-proto") || "https";
+  const host = req.headers.get("x-forwarded-host") || url.host;
+  return `${proto}://${host}/functions/v1/mcp-server`;
 }
 
 // ---- Discovery ----
