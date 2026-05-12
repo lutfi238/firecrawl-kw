@@ -1,17 +1,28 @@
 import { getAiSettingsFromMap } from "./ai/settings.ts";
-import { checkMcpSecret } from "./auth/mcpSecret.ts";
+import { checkMcpAuth } from "./auth/mcpSecret.ts";
 import { getUserSettings } from "./auth/userSettings.ts";
 import { getToolDefinitions } from "./tools/definitions.ts";
 import { handleToolCall } from "./tools/callTool.ts";
+import {
+  getBaseUrl,
+  handleAuthorizeGet,
+  handleAuthorizePost,
+  handleRegister,
+  handleToken,
+  oauthAuthorizationServer,
+  oauthProtectedResource,
+} from "./auth/oauth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-github-token, x-mcp-secret, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-github-token, x-mcp-secret, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version, mcp-protocol-version",
   "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+  "Access-Control-Expose-Headers": "WWW-Authenticate",
 };
 
 declare const Deno: {
   serve(handler: (request: Request) => Response | Promise<Response>): void;
+  env: { get(key: string): string | undefined };
 };
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -26,15 +37,40 @@ Deno.serve(async (req: Request) => {
     return new Response(null, { headers: corsHeaders });
   }
 
-  if (req.method === "GET") {
-    return jsonResponse({ status: "ok", server: "personal-firecrawl", version: "2.0.0", tools: 15 });
+  const url = new URL(req.url);
+  // Edge Function paths arrive as e.g. /mcp-server/.well-known/... -- normalize to suffix only.
+  const path = url.pathname.replace(/^\/functions\/v1\/mcp-server/, "").replace(/^\/mcp-server/, "");
+
+  // ---- OAuth discovery & endpoints (no auth required) ----
+  if (req.method === "GET" && (path === "/.well-known/oauth-protected-resource" || path === "/.well-known/oauth-protected-resource/")) {
+    return oauthProtectedResource(req, corsHeaders);
+  }
+  if (req.method === "GET" && (path === "/.well-known/oauth-authorization-server" || path === "/.well-known/oauth-authorization-server/")) {
+    return oauthAuthorizationServer(req, corsHeaders);
+  }
+  if (req.method === "POST" && path === "/register") {
+    return handleRegister(req, corsHeaders);
+  }
+  if (path === "/authorize") {
+    if (req.method === "GET") return handleAuthorizeGet(req, corsHeaders);
+    if (req.method === "POST") return handleAuthorizePost(req, corsHeaders);
+  }
+  if (req.method === "POST" && path === "/token") {
+    return handleToken(req, corsHeaders);
+  }
+
+  // ---- Health / status (no auth) ----
+  if (req.method === "GET" && (path === "" || path === "/")) {
+    return jsonResponse({ status: "ok", server: "personal-firecrawl", version: "2.1.0", tools: 15, oauth: true });
   }
 
   if (req.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405);
   }
 
-  const denied = checkMcpSecret(req, corsHeaders);
+  // ---- MCP JSON-RPC (auth required) ----
+  const resourceMetadataUrl = `${getBaseUrl(req)}/.well-known/oauth-protected-resource`;
+  const denied = await checkMcpAuth(req, corsHeaders, resourceMetadataUrl);
   if (denied) return denied;
 
   const authHeader = req.headers.get("authorization") || null;
@@ -44,13 +80,14 @@ Deno.serve(async (req: Request) => {
     const { id, method, params } = body;
 
     if (method === "initialize") {
+      console.log("[mcp] initialize id=", id);
       return jsonResponse({
         jsonrpc: "2.0",
         id,
         result: {
           protocolVersion: "2024-11-05",
           capabilities: { tools: { listChanged: false } },
-          serverInfo: { name: "personal-firecrawl", version: "2.0.0" },
+          serverInfo: { name: "personal-firecrawl", version: "2.1.0" },
         },
       });
     }
@@ -64,6 +101,7 @@ Deno.serve(async (req: Request) => {
 
     if (method === "tools/call") {
       const { name, arguments: args } = params;
+      console.log("[mcp] tools/call name=", name);
       const outcome = await handleToolCall({ args, authHeader, corsHeaders, name });
 
       if (outcome.kind === "response") {
