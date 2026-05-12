@@ -20,18 +20,29 @@ const commands = [
   'supabase secrets set CLAUDE_OAUTH_CLIENT_SECRET="<new-random-client-secret>"',
 ];
 
+function copyText(text: string, label = "Copied") {
+  navigator.clipboard.writeText(text);
+  toast.success(label);
+}
+
 function CommandBlock({ lines }: { lines: string[] }) {
-  const text = lines.join("\n");
+  return <ConfigBlock text={lines.join("\n")} copiedLabel="Commands copied" />;
+}
+
+function ConfigBlock({
+  text,
+  copiedLabel = "Configuration copied",
+}: {
+  text: string;
+  copiedLabel?: string;
+}) {
   return (
     <div className="relative rounded-lg border border-border bg-background/60 p-4">
       <Button
         variant="ghost"
         size="icon"
         className="absolute right-2 top-2 h-7 w-7"
-        onClick={() => {
-          navigator.clipboard.writeText(text);
-          toast.success("Commands copied");
-        }}
+        onClick={() => copyText(text, copiedLabel)}
       >
         <Copy className="h-3.5 w-3.5" />
       </Button>
@@ -44,6 +55,65 @@ function CommandBlock({ lines }: { lines: string[] }) {
 
 export default function DeploymentGuide() {
   const backend = getBackendConfig();
+  const mcpEndpoint =
+    backend.mcpEndpoint ||
+    "https://<project-ref>.supabase.co/functions/v1/mcp-server";
+  const localProxyPath =
+    "D:\\Project_Gabut\\firecrawl-kw\\scripts\\mcp-stdio-proxy.mjs";
+  const stdioEnv = {
+    MCP_ENDPOINT: mcpEndpoint,
+    MCP_SECRET: "<value-of-MCP_SECRET>",
+    SUPABASE_ANON_KEY: "<optional-supabase-anon-key>",
+    GITHUB_TOKEN: "<optional-github-token-for-github-tools>",
+  };
+  const claudeDesktopConfig = JSON.stringify(
+    {
+      mcpServers: {
+        "firecrawl-kw": {
+          command: "node",
+          args: [localProxyPath],
+          env: stdioEnv,
+        },
+      },
+    },
+    null,
+    2,
+  );
+  const vsCodeConfig = JSON.stringify(
+    {
+      servers: {
+        "firecrawl-kw": {
+          type: "stdio",
+          command: "node",
+          args: [localProxyPath],
+          env: stdioEnv,
+        },
+      },
+    },
+    null,
+    2,
+  );
+  const zedConfig = JSON.stringify(
+    {
+      context_servers: {
+        "firecrawl-kw": {
+          command: {
+            path: "node",
+            args: [localProxyPath],
+            env: stdioEnv,
+          },
+        },
+      },
+    },
+    null,
+    2,
+  );
+  const genericRemoteOauth = [
+    `Remote MCP server URL: ${mcpEndpoint}`,
+    "OAuth Client ID: firecrawl-kw-claude",
+    "OAuth Client Secret: <value-of-CLAUDE_OAUTH_CLIENT_SECRET>",
+    "Authorize password: <value-of-MCP_MASTER_PASSWORD>",
+  ].join("\n");
 
   return (
     <div className="max-w-4xl space-y-6">
@@ -122,19 +192,107 @@ export default function DeploymentGuide() {
 
       <GlassCard>
         <h2 className="mb-3 text-xs font-mono font-semibold uppercase tracking-widest text-muted-foreground">
-          4. Claude Web connector
+          4. MCP client configuration
         </h2>
-        <div className="space-y-2 text-sm text-muted-foreground">
-          <p>Remote MCP server URL:</p>
-          <code className="block rounded border border-border bg-background/50 p-2 text-xs">
-            {backend.mcpEndpoint ||
-              "https://<project-ref>.supabase.co/functions/v1/mcp-server"}
-          </code>
-          <p>
-            OAuth Client ID: value of `CLAUDE_OAUTH_CLIENT_ID`, for example
-            `firecrawl-kw-claude`.
-          </p>
-          <p>OAuth Client Secret: value of `CLAUDE_OAUTH_CLIENT_SECRET`.</p>
+        <div className="space-y-4 text-sm text-muted-foreground">
+          <div className="rounded-md border border-primary/30 bg-primary/5 p-3 text-xs leading-relaxed">
+            Use <span className="font-mono text-foreground">remote OAuth</span>{" "}
+            for Claude Web. Use the local{" "}
+            <span className="font-mono text-foreground">stdio proxy</span> for
+            editors that only launch local MCP processes, such as VS Code, Zed,
+            Claude Desktop, Cursor, and many MCP plugins. Keep secrets in local
+            client config or Supabase secrets, never in browser-visible Vite env
+            vars.
+          </div>
+
+          <div className="space-y-2">
+            <h3 className="text-xs font-mono uppercase tracking-widest text-foreground">
+              Claude Web custom connector
+            </h3>
+            <p>
+              Claude Web supports remote MCP OAuth directly. Paste these values
+              into Claude Web → Settings → Connectors → Add custom connector.
+            </p>
+            <ConfigBlock text={genericRemoteOauth} />
+          </div>
+
+          <div className="space-y-2">
+            <h3 className="text-xs font-mono uppercase tracking-widest text-foreground">
+              Claude Code / Claude Desktop / Cursor style config
+            </h3>
+            <p>
+              Use this for clients that accept an{" "}
+              <span className="font-mono">mcpServers</span> JSON object. In
+              Claude Code, add it through the MCP settings/import flow or create
+              the equivalent server with command, args, and env values.
+            </p>
+            <ConfigBlock text={claudeDesktopConfig} />
+          </div>
+
+          <div className="space-y-2">
+            <h3 className="text-xs font-mono uppercase tracking-widest text-foreground">
+              VS Code MCP config
+            </h3>
+            <p>
+              Put this in your workspace/user MCP config, commonly{" "}
+              <span className="font-mono">.vscode/mcp.json</span>, if your VS
+              Code MCP integration supports stdio servers.
+            </p>
+            <ConfigBlock text={vsCodeConfig} />
+          </div>
+
+          <div className="space-y-2">
+            <h3 className="text-xs font-mono uppercase tracking-widest text-foreground">
+              Zed Editor config
+            </h3>
+            <p>
+              Add this to Zed settings and adjust the script path to wherever
+              you cloned this repository.
+            </p>
+            <ConfigBlock text={zedConfig} />
+          </div>
+
+          <div className="space-y-2">
+            <h3 className="text-xs font-mono uppercase tracking-widest text-foreground">
+              What each value means
+            </h3>
+            <ul className="list-disc space-y-1 pl-5 text-xs">
+              <li>
+                <span className="font-mono text-foreground">MCP_ENDPOINT</span>:
+                your deployed Supabase MCP function URL.
+              </li>
+              <li>
+                <span className="font-mono text-foreground">MCP_SECRET</span>:
+                legacy/local-client secret used by the stdio proxy. Required for
+                stdio configs unless you provide a valid bearer token instead.
+              </li>
+              <li>
+                <span className="font-mono text-foreground">
+                  CLAUDE_OAUTH_CLIENT_ID / SECRET
+                </span>
+                : only for remote OAuth clients such as Claude Web.
+              </li>
+              <li>
+                <span className="font-mono text-foreground">
+                  MCP_MASTER_PASSWORD
+                </span>
+                : the password you type on the OAuth consent page when Claude
+                Web authorizes the connector.
+              </li>
+              <li>
+                <span className="font-mono text-foreground">GITHUB_TOKEN</span>:
+                optional local override for GitHub-backed tools. GitHub Models
+                provider tokens are normally saved in Settings.
+              </li>
+              <li>
+                <span className="font-mono text-foreground">
+                  SUPABASE_ANON_KEY
+                </span>
+                : optional helper header for the stdio proxy; safe to use, but
+                do not use the service-role key here.
+              </li>
+            </ul>
+          </div>
         </div>
       </GlassCard>
 
