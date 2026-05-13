@@ -86,7 +86,7 @@ Deno.serve(async (req: Request) => {
       status: "ok",
       server: "personal-firecrawl",
       version: "2.1.0",
-      tools: 17,
+      tools: 20,
       oauth: true,
     });
   }

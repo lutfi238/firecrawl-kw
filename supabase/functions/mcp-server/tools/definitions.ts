@@ -327,5 +327,100 @@ export function getToolDefinitions(
         additionalProperties: false,
       },
     },
+    {
+      name: "scrape_stealth",
+      description:
+        "Scrape a heavily protected page using stealth browser with Cloudflare bypass and optional residential proxy",
+      inputSchema: {
+        type: "object",
+        properties: {
+          url: {
+            type: "string",
+            description: "Target URL to scrape.",
+          },
+          proxyCountry: {
+            type: "string",
+            description:
+              "Optional 2-letter ISO country code for residential proxy (e.g. 'us', 'jp').",
+          },
+          waitFor: {
+            type: "number",
+            description:
+              "Optional wait time in milliseconds after Cloudflare solve before capture.",
+          },
+        },
+        required: ["url"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "login_and_scrape",
+      description:
+        "Automate login to a website then scrape the authenticated page content",
+      inputSchema: {
+        type: "object",
+        properties: {
+          loginUrl: {
+            type: "string",
+            description: "URL of the login page.",
+          },
+          targetUrl: {
+            type: "string",
+            description: "URL to scrape after successful login.",
+          },
+          email: {
+            type: "string",
+            description: "Email/username to enter in the login form.",
+          },
+          password: {
+            type: "string",
+            description: "Password to enter in the login form.",
+          },
+          emailSelector: {
+            type: "string",
+            description:
+              "CSS selector for the email/username input (default: \"input[name='email'],input[type='email']\").",
+          },
+          passwordSelector: {
+            type: "string",
+            description:
+              "CSS selector for the password input (default: \"input[name='password'],input[type='password']\").",
+          },
+          submitSelector: {
+            type: "string",
+            description:
+              "CSS selector for the submit button (default: \"button[type='submit']\").",
+          },
+          successSelector: {
+            type: "string",
+            description:
+              'CSS selector to wait for after login to confirm success (default: "body").',
+          },
+        },
+        required: ["loginUrl", "targetUrl", "email", "password"],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "network_intercept",
+      description:
+        "Navigate to a URL and capture all API/fetch/XHR requests made by the page JavaScript",
+      inputSchema: {
+        type: "object",
+        properties: {
+          url: {
+            type: "string",
+            description: "Target URL to navigate to and intercept requests.",
+          },
+          waitFor: {
+            type: "number",
+            description:
+              "Optional wait time in milliseconds to capture requests (default: 5000).",
+          },
+        },
+        required: ["url"],
+        additionalProperties: false,
+      },
+    },
   ];
 }

@@ -139,7 +139,7 @@ export async function handleToolCall({
         ).replace(/\/+$/, "");
         const waitMs = (args.waitFor as number) || 3000;
         const res = await fetch(
-          `${browserlessUrl}/chromium/bql?token=${encodeURIComponent(token)}`,
+          `${browserlessUrl}/stealth/bql?token=${encodeURIComponent(token)}`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -148,6 +148,11 @@ export async function handleToolCall({
                 mutation ScrapeJS($url: String!, $wait: Float!) {
                   goto(url: $url, waitUntil: networkIdle) {
                     status
+                  }
+                  solve(type: cloudflare) {
+                    found
+                    solved
+                    time
                   }
                   waitForTimeout(time: $wait) {
                     time
@@ -411,7 +416,7 @@ export async function handleToolCall({
         const width = (args.width as number) || 1280;
         const height = (args.height as number) || 800;
         const res = await fetch(
-          `${browserlessUrl}/chromium/bql?token=${encodeURIComponent(token)}`,
+          `${browserlessUrl}/stealth/bql?token=${encodeURIComponent(token)}`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -829,6 +834,393 @@ export async function handleToolCall({
       return {
         kind: "result",
         result: await handleChatWithOrchestration(args, aiSettings, authHeader),
+      };
+    }
+
+    case "scrape_stealth": {
+      const userSettings = await getUserSettings(authHeader);
+      const provider = userSettings.renderer_provider || "none";
+
+      if (provider !== "browserless") {
+        return {
+          kind: "result",
+          result: {
+            content: [
+              {
+                type: "text",
+                text: "Error: scrape_stealth requires Browserless provider. Configure it in Settings.",
+              },
+            ],
+            isError: true,
+          },
+        };
+      }
+
+      const token = userSettings.renderer_secret || "";
+      if (!token) {
+        return {
+          kind: "result",
+          result: {
+            content: [
+              {
+                type: "text",
+                text: "Error: Browserless token not configured in Settings.",
+              },
+            ],
+            isError: true,
+          },
+        };
+      }
+
+      const browserlessUrl = (
+        userSettings.renderer_url || "https://production-sfo.browserless.io"
+      ).replace(/\/+$/, "");
+      const waitMs = (args.waitFor as number) || 2000;
+      const proxyCountry =
+        (args.proxyCountry as string) ||
+        userSettings.renderer_proxy_country ||
+        "";
+      let stealthEndpoint = `${browserlessUrl}/stealth/bql?token=${encodeURIComponent(token)}`;
+      if (proxyCountry) {
+        stealthEndpoint += `&proxy=residential&proxyCountry=${encodeURIComponent(proxyCountry)}`;
+      }
+
+      const res = await fetch(stealthEndpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query: `
+            mutation StealthScrape($url: String!) {
+              goto(url: $url, waitUntil: networkIdle) {
+                status
+              }
+              solve(type: cloudflare) {
+                found
+                solved
+                time
+              }
+              waitForTimeout(time: ${waitMs}) {
+                time
+              }
+              html {
+                html
+              }
+            }
+          `,
+          variables: {
+            url: args.url as string,
+          },
+        }),
+      });
+
+      if (!res.ok) {
+        const errText = await res.text().catch(() => "");
+        return {
+          kind: "result",
+          result: {
+            content: [
+              {
+                type: "text",
+                text: `BrowserQL stealth error ${res.status}: ${errText.slice(0, 300)}`,
+              },
+            ],
+            isError: true,
+          },
+        };
+      }
+
+      const data = await res.json();
+      const html = data?.data?.html?.html || "";
+      if (!html) {
+        const errors =
+          data?.errors?.map((e: { message: string }) => e.message).join("; ") ||
+          "No HTML returned";
+        return {
+          kind: "result",
+          result: {
+            content: [
+              { type: "text", text: `BrowserQL stealth error: ${errors}` },
+            ],
+            isError: true,
+          },
+        };
+      }
+
+      return {
+        kind: "result",
+        result: { content: [{ type: "text", text: htmlToMarkdown(html) }] },
+      };
+    }
+
+    case "login_and_scrape": {
+      const userSettings = await getUserSettings(authHeader);
+      const provider = userSettings.renderer_provider || "none";
+
+      if (provider !== "browserless") {
+        return {
+          kind: "result",
+          result: {
+            content: [
+              {
+                type: "text",
+                text: "Error: login_and_scrape requires Browserless provider. Configure it in Settings.",
+              },
+            ],
+            isError: true,
+          },
+        };
+      }
+
+      const token = userSettings.renderer_secret || "";
+      if (!token) {
+        return {
+          kind: "result",
+          result: {
+            content: [
+              {
+                type: "text",
+                text: "Error: Browserless token not configured in Settings.",
+              },
+            ],
+            isError: true,
+          },
+        };
+      }
+
+      const browserlessUrl = (
+        userSettings.renderer_url || "https://production-sfo.browserless.io"
+      ).replace(/\/+$/, "");
+
+      const loginUrl = args.loginUrl as string;
+      const targetUrl = args.targetUrl as string;
+      const email = args.email as string;
+      const password = args.password as string;
+      const emailSelector =
+        (args.emailSelector as string) ||
+        "input[name='email'],input[type='email']";
+      const passwordSelector =
+        (args.passwordSelector as string) ||
+        "input[name='password'],input[type='password']";
+      const submitSelector =
+        (args.submitSelector as string) || "button[type='submit']";
+      const successSelector = (args.successSelector as string) || "body";
+
+      const res = await fetch(
+        `${browserlessUrl}/stealth/bql?token=${encodeURIComponent(token)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            query: `
+              mutation LoginAndScrape($loginUrl: String!, $targetUrl: String!, $emailSelector: String!, $passwordSelector: String!, $submitSelector: String!, $email: String!, $password: String!, $successSelector: String!) {
+                goto(url: $loginUrl, waitUntil: networkIdle) {
+                  status
+                }
+                waitForSelector(selector: $emailSelector, visible: true) {
+                  time
+                }
+                typeEmail: type(text: $email, selector: $emailSelector) {
+                  time
+                }
+                typePassword: type(text: $password, selector: $passwordSelector, delay: [40, 150]) {
+                  time
+                }
+                click(selector: $submitSelector) {
+                  time
+                }
+                waitForSelector(selector: $successSelector, timeout: 30000, visible: true) {
+                  time
+                }
+                gotoTarget: goto(url: $targetUrl, waitUntil: networkIdle) {
+                  status
+                }
+                html {
+                  html
+                }
+              }
+            `,
+            variables: {
+              loginUrl,
+              targetUrl,
+              email,
+              password,
+              emailSelector,
+              passwordSelector,
+              submitSelector,
+              successSelector,
+            },
+          }),
+        },
+      );
+
+      if (!res.ok) {
+        const errText = await res.text().catch(() => "");
+        return {
+          kind: "result",
+          result: {
+            content: [
+              {
+                type: "text",
+                text: `BrowserQL login error ${res.status}: ${errText.slice(0, 300)}`,
+              },
+            ],
+            isError: true,
+          },
+        };
+      }
+
+      const data = await res.json();
+      const html = data?.data?.html?.html || "";
+      if (!html) {
+        const errors =
+          data?.errors?.map((e: { message: string }) => e.message).join("; ") ||
+          "No HTML returned";
+        return {
+          kind: "result",
+          result: {
+            content: [
+              { type: "text", text: `BrowserQL login error: ${errors}` },
+            ],
+            isError: true,
+          },
+        };
+      }
+
+      return {
+        kind: "result",
+        result: { content: [{ type: "text", text: htmlToMarkdown(html) }] },
+      };
+    }
+
+    case "network_intercept": {
+      const userSettings = await getUserSettings(authHeader);
+      const provider = userSettings.renderer_provider || "none";
+
+      if (provider !== "browserless") {
+        return {
+          kind: "result",
+          result: {
+            content: [
+              {
+                type: "text",
+                text: "Error: network_intercept requires Browserless provider. Configure it in Settings.",
+              },
+            ],
+            isError: true,
+          },
+        };
+      }
+
+      const token = userSettings.renderer_secret || "";
+      if (!token) {
+        return {
+          kind: "result",
+          result: {
+            content: [
+              {
+                type: "text",
+                text: "Error: Browserless token not configured in Settings.",
+              },
+            ],
+            isError: true,
+          },
+        };
+      }
+
+      const browserlessUrl = (
+        userSettings.renderer_url || "https://production-sfo.browserless.io"
+      ).replace(/\/+$/, "");
+      const waitMs = (args.waitFor as number) || 5000;
+
+      const res = await fetch(
+        `${browserlessUrl}/stealth/bql?token=${encodeURIComponent(token)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            query: `
+              mutation NetworkIntercept($url: String!) {
+                goto(url: $url, waitUntil: networkIdle) {
+                  status
+                }
+                solve(type: cloudflare) {
+                  found
+                  solved
+                  time
+                }
+                javascript(expression: """
+                  (() => {
+                    const captured = [];
+                    const origFetch = window.fetch;
+                    window.fetch = function(...args) {
+                      const url = typeof args[0] === 'string' ? args[0] : args[0]?.url || '';
+                      const method = args[1]?.method || 'GET';
+                      captured.push({ type: 'fetch', method, url });
+                      return origFetch.apply(this, args);
+                    };
+                    const origXHR = XMLHttpRequest.prototype.open;
+                    XMLHttpRequest.prototype.open = function(method, url) {
+                      captured.push({ type: 'xhr', method, url: String(url) });
+                      return origXHR.apply(this, arguments);
+                    };
+                    window.__capturedRequests = captured;
+                    return 'interceptors installed';
+                  })()
+                """) {
+                  value
+                }
+                waitForTimeout(time: ${waitMs}) {
+                  time
+                }
+                results: javascript(expression: "JSON.stringify(window.__capturedRequests || [])") {
+                  value
+                }
+              }
+            `,
+            variables: {
+              url: args.url as string,
+            },
+          }),
+        },
+      );
+
+      if (!res.ok) {
+        const errText = await res.text().catch(() => "");
+        return {
+          kind: "result",
+          result: {
+            content: [
+              {
+                type: "text",
+                text: `BrowserQL network intercept error ${res.status}: ${errText.slice(0, 300)}`,
+              },
+            ],
+            isError: true,
+          },
+        };
+      }
+
+      const data = await res.json();
+      const errors = data?.errors;
+      if (errors && errors.length > 0) {
+        return {
+          kind: "result",
+          result: {
+            content: [
+              {
+                type: "text",
+                text: `BrowserQL error: ${errors.map((e: { message: string }) => e.message).join("; ")}`,
+              },
+            ],
+            isError: true,
+          },
+        };
+      }
+
+      const capturedJson = data?.data?.results?.value || "[]";
+      return {
+        kind: "result",
+        result: { content: [{ type: "text", text: capturedJson }] },
       };
     }
 
