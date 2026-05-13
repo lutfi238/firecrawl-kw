@@ -32,7 +32,11 @@ export async function getUserSettings(
 ): Promise<Record<string, string>> {
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
   const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY");
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !authHeader) return {};
+  if (!authHeader) {
+    const defaultUserId = Deno.env.get("MCP_DEFAULT_USER_ID");
+    return defaultUserId ? getSettingsForUserId(defaultUserId) : {};
+  }
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return {};
 
   const bearer = authHeader.toLowerCase().startsWith("bearer ")
     ? authHeader.slice(7).trim()
@@ -66,6 +70,10 @@ export async function getUserSettings(
     for (const row of data) map[row.key] = row.value ?? "";
     return map;
   } catch {
-    return {};
+    const defaultUserId = Deno.env.get("MCP_DEFAULT_USER_ID");
+    return defaultUserId ? getSettingsForUserId(defaultUserId) : {};
   }
+
+  const defaultUserId = Deno.env.get("MCP_DEFAULT_USER_ID");
+  return defaultUserId ? getSettingsForUserId(defaultUserId) : {};
 }

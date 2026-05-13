@@ -1,10 +1,10 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMCPServer } from "@/hooks/useMCPServer";
 import { useLogStats } from "@/hooks/useRequestLogs";
 import { useSettings } from "@/hooks/useSettings";
 import { GlassCard } from "@/components/GlassCard";
-import { ConfigCopier } from "@/components/ConfigCopier";
+
 import { ToolCard } from "@/components/ToolCard";
 import { StatusBadge } from "@/components/StatusBadge";
 import { TOOL_DEFINITIONS } from "@/types/tools";
@@ -31,17 +31,6 @@ export default function Overview() {
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
-
-  const claudeConfig = useMemo(() => {
-    const config: Record<string, unknown> = {
-      mcpServers: {
-        "firecrawl-kw": {
-          url: mcpEndpoint,
-        },
-      },
-    };
-    return JSON.stringify(config, null, 2);
-  }, [mcpEndpoint]);
 
   return (
     <div className="space-y-6 max-w-6xl">
@@ -126,12 +115,6 @@ export default function Overview() {
           </div>
         </GlassCard>
       </div>
-
-      {/* Claude Config */}
-      <ConfigCopier
-        content={claudeConfig}
-        label="Claude Code CLI Config (~/.claude.json)"
-      />
 
       {/* Tool Cards Grid */}
       <div>

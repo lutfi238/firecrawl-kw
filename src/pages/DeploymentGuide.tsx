@@ -59,7 +59,7 @@ export default function DeploymentGuide() {
     backend.mcpEndpoint ||
     "https://<project-ref>.supabase.co/functions/v1/mcp-server";
   const localProxyPath =
-    "D:\\Project_Gabut\\firecrawl-kw\\scripts\\mcp-stdio-proxy.mjs";
+    "D:/Project_Gabut/firecrawl-kw/scripts/mcp-stdio-proxy.mjs";
   const stdioEnv = {
     MCP_ENDPOINT: mcpEndpoint,
     MCP_SECRET: "<value-of-MCP_SECRET>",
@@ -95,13 +95,12 @@ export default function DeploymentGuide() {
   );
   const zedConfig = JSON.stringify(
     {
-      context_servers: {
-        "firecrawl-kw": {
-          command: {
-            path: "node",
-            args: [localProxyPath],
-            env: stdioEnv,
-          },
+      "firecrawl-kw": {
+        command: "node",
+        args: [localProxyPath],
+        env: {
+          MCP_STDIO_DEBUG: "true",
+          ...stdioEnv,
         },
       },
     },
@@ -246,7 +245,8 @@ export default function DeploymentGuide() {
               Zed Editor config
             </h3>
             <p>
-              Add this to Zed settings and adjust the script path to wherever
+              Paste this into Zed's MCP server settings where it expects a
+              top-level map of server names. Adjust the script path to wherever
               you cloned this repository.
             </p>
             <ConfigBlock text={zedConfig} />

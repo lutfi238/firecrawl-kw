@@ -10,6 +10,14 @@ const TOKEN_TTL_SEC = 60 * 60 * 24 * 7; // 7 days
 const CODE_TTL_SEC = 5 * 60;
 const REFRESH_TTL_SEC = 60 * 60 * 24 * 90;
 const DEFAULT_CLAUDE_REDIRECT_URI = "https://claude.ai/api/mcp/auth_callback";
+const DEFAULT_AUTHORIZE_FRONTEND_URL =
+  "https://firecrawl-kw.vercel.app/mcp-authorize";
+
+function getAuthorizeFrontendUrl(): string {
+  return (
+    Deno.env.get("MCP_AUTHORIZE_FRONTEND_URL") || DEFAULT_AUTHORIZE_FRONTEND_URL
+  );
+}
 
 export type ValidBearerResult = {
   ok: boolean;
@@ -185,47 +193,45 @@ export async function handleAuthorizeGet(
   const code_challenge_method = params.get("code_challenge_method") || "plain";
   const scope = params.get("scope") || "mcp";
 
-  // Validate client + redirect
+  // Validate client + redirect before bouncing to the frontend consent page
   const sb = getServiceClient();
   const client = await findOAuthClient(sb, client_id);
   if (!client) {
-    return new Response(
-      htmlPage("Invalid client", `<p>Unknown <code>client_id</code>.</p>`),
+    return json(
       {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "text/html" },
+        error: "invalid_client",
+        error_description: "Unknown client_id",
       },
+      corsHeaders,
+      400,
     );
   }
   if (!client.redirect_uris.includes(redirect_uri)) {
-    return new Response(
-      htmlPage(
-        "Invalid redirect",
-        `<p>The redirect_uri is not registered for this client.</p>`,
-      ),
+    return json(
       {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "text/html" },
+        error: "invalid_redirect_uri",
+        error_description: "redirect_uri is not registered for this client",
       },
+      corsHeaders,
+      400,
     );
   }
 
-  const form = `
-    <form method="POST" action="${getBaseUrl(req)}/authorize">
-      <input type="hidden" name="client_id" value="${escapeHtml(client_id)}">
-      <input type="hidden" name="redirect_uri" value="${escapeHtml(redirect_uri)}">
-      <input type="hidden" name="state" value="${escapeHtml(state)}">
-      <input type="hidden" name="code_challenge" value="${escapeHtml(code_challenge)}">
-      <input type="hidden" name="code_challenge_method" value="${escapeHtml(code_challenge_method)}">
-      <input type="hidden" name="scope" value="${escapeHtml(scope)}">
-      <label>Master Password</label>
-      <input type="password" name="password" autofocus required>
-      <button type="submit">Authorize</button>
-    </form>
-    <p class="meta">Client: <code>${escapeHtml(client_id)}</code></p>
-  `;
-  return new Response(htmlPage("Authorize MCP Connector", form), {
-    headers: { ...corsHeaders, "Content-Type": "text/html" },
+  const frontend = new URL(getAuthorizeFrontendUrl());
+  frontend.searchParams.set("client_id", client_id);
+  frontend.searchParams.set("redirect_uri", redirect_uri);
+  frontend.searchParams.set("state", state);
+  frontend.searchParams.set("code_challenge", code_challenge);
+  frontend.searchParams.set("code_challenge_method", code_challenge_method);
+  frontend.searchParams.set("scope", scope);
+  frontend.searchParams.set(
+    "authorize_endpoint",
+    `${getBaseUrl(req)}/authorize`,
+  );
+
+  return new Response(null, {
+    status: 302,
+    headers: { ...corsHeaders, Location: frontend.toString() },
   });
 }
 
@@ -243,6 +249,9 @@ export async function handleAuthorizePost(
   );
   const scope = String(form.get("scope") || "mcp");
   const password = String(form.get("password") || "");
+  const wantsJson =
+    (req.headers.get("accept") || "").includes("application/json") ||
+    form.get("response_format") === "json";
 
   const expected = Deno.env.get("MCP_MASTER_PASSWORD") || "";
   if (!expected || password !== expected) {
@@ -250,6 +259,9 @@ export async function handleAuthorizePost(
       "[oauth] authorize failed: bad password client_id=",
       client_id,
     );
+    if (wantsJson) {
+      return json({ error: "invalid_password" }, corsHeaders, 401);
+    }
     return new Response(
       htmlPage(
         "Denied",
@@ -266,6 +278,9 @@ export async function handleAuthorizePost(
   const client = await findOAuthClient(sb, client_id);
   if (!client || !client.redirect_uris.includes(redirect_uri)) {
     console.warn("[oauth] authorize failed: bad client/redirect");
+    if (wantsJson) {
+      return json({ error: "invalid_client" }, corsHeaders, 400);
+    }
     return new Response("Invalid client/redirect_uri", {
       status: 400,
       headers: corsHeaders,
@@ -287,6 +302,9 @@ export async function handleAuthorizePost(
   });
   if (error) {
     console.error("[oauth] code insert failed", error);
+    if (wantsJson) {
+      return json({ error: "server_error" }, corsHeaders, 500);
+    }
     return new Response("server error", { status: 500, headers: corsHeaders });
   }
   console.log("[oauth] authorize success client_id=", client_id);
@@ -294,6 +312,10 @@ export async function handleAuthorizePost(
   const redirect = new URL(redirect_uri);
   redirect.searchParams.set("code", code);
   if (state) redirect.searchParams.set("state", state);
+
+  if (wantsJson) {
+    return json({ redirect: redirect.toString() }, corsHeaders);
+  }
   return new Response(null, {
     status: 302,
     headers: { ...corsHeaders, Location: redirect.toString() },

@@ -16,6 +16,7 @@ import RequestMonitor from "@/pages/RequestMonitor";
 import Settings from "@/pages/Settings";
 import AIChat from "@/pages/AIChat";
 import DeploymentGuide from "@/pages/DeploymentGuide";
+import McpAuthorize from "@/pages/McpAuthorize";
 import NotFound from "@/pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -138,12 +139,20 @@ const App = () => (
       <Toaster />
       <Sonner />
       <BrowserRouter>
-        <BackendConfigGate>
-          <AuthListener />
-          <AuthGate>
-            <AppContent />
-          </AuthGate>
-        </BackendConfigGate>
+        <Routes>
+          <Route path="/mcp-authorize" element={<McpAuthorize />} />
+          <Route
+            path="*"
+            element={
+              <BackendConfigGate>
+                <AuthListener />
+                <AuthGate>
+                  <AppContent />
+                </AuthGate>
+              </BackendConfigGate>
+            }
+          />
+        </Routes>
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>

@@ -40,7 +40,6 @@ import { resetSupabaseClientCache } from "@/lib/supabaseRuntime";
 
 const GITHUB_MODELS_PROVIDER = "GitHub Models";
 const GITHUB_MODELS_BASE_URL = "https://models.github.ai/inference";
-const GITHUB_MODELS_CATALOG_URL = "https://models.github.ai/catalog/models";
 
 type GitHubModelCatalogItem = {
   id: string;
@@ -239,30 +238,23 @@ export default function Settings() {
     aiBaseUrl.replace(/\/+$/, "") === GITHUB_MODELS_BASE_URL;
 
   const fetchGitHubModels = async () => {
-    if (!aiApiKey) {
-      toast.error("Enter a GitHub token with models:read first");
+    if (!aiApiKey && !settings.ai_api_key) {
+      toast.error("Enter or save a GitHub token with models:read first");
       return;
     }
 
     setLoadingGithubModels(true);
     setGithubModelsError("");
     try {
-      const res = await fetch(GITHUB_MODELS_CATALOG_URL, {
-        headers: {
-          Accept: "application/vnd.github+json",
-          Authorization: `Bearer ${aiApiKey}`,
-          "X-GitHub-Api-Version": "2026-03-10",
-        },
+      const result = await callTool("github_models_catalog", {
+        token: aiApiKey || undefined,
       });
-
-      if (!res.ok) {
-        const body = await res.text().catch(() => "");
-        throw new Error(
-          `GitHub Models catalog error ${res.status}: ${body.slice(0, 180)}`,
-        );
+      const text = result.content.map((item) => item.text ?? "").join("\n");
+      if (result.isError) {
+        throw new Error(text || "Failed to fetch GitHub Models catalog");
       }
 
-      const data = (await res.json()) as GitHubModelCatalogItem[];
+      const data = JSON.parse(text) as GitHubModelCatalogItem[];
       setGithubModels(data);
       if (!aiModel && data[0]?.id) setAiModel(data[0].id);
       toast.success(`Loaded ${data.length} GitHub models`);

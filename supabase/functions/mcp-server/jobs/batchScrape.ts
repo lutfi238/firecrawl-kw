@@ -13,9 +13,10 @@ function getServiceClient() {
 async function getUserIdFromAuth(
   authHeader: string | null,
 ): Promise<string | null> {
+  const defaultUserId = Deno.env.get("MCP_DEFAULT_USER_ID") || null;
   const url = Deno.env.get("SUPABASE_URL");
   const key = Deno.env.get("SUPABASE_ANON_KEY");
-  if (!url || !key || !authHeader) return Promise.resolve(null);
+  if (!url || !key || !authHeader) return defaultUserId;
 
   const bearer = authHeader.toLowerCase().startsWith("bearer ")
     ? authHeader.slice(7).trim()
@@ -28,10 +29,11 @@ async function getUserIdFromAuth(
     global: { headers: { Authorization: authHeader } },
     auth: { autoRefreshToken: false, persistSession: false },
   });
-  return sb.auth
+  const resolved = await sb.auth
     .getUser()
     .then(({ data }) => data.user?.id ?? null)
     .catch(() => null);
+  return resolved ?? defaultUserId;
 }
 
 export async function processBatchScrapeJob(
