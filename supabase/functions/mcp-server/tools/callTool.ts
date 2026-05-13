@@ -82,20 +82,29 @@ export async function handleToolCall({
 }: HandleToolCallParams): Promise<ToolDispatchOutcome> {
   if (name === "scrape_js" || name === "screenshot") {
     const userSettings = await getUserSettings(authHeader);
-    if (userSettings.renderer_enabled !== "true") {
+    const provider = userSettings.renderer_provider || "none";
+    const hasRenderer =
+      provider === "browserless"
+        ? !!userSettings.renderer_secret
+        : provider === "custom"
+          ? !!userSettings.renderer_url
+          : false;
+
+    if (!hasRenderer && name === "screenshot") {
       return {
         kind: "result",
         result: {
           content: [
             {
               type: "text",
-              text: "Tool disabled. Configure Render renderer URL in Settings to enable JS rendering.",
+              text: "Screenshot requires a JS renderer. Configure Browserless or a custom renderer in Settings.",
             },
           ],
           isError: true,
         },
       };
     }
+    // scrape_js will fall back to regular scrape below if no renderer
   }
 
   const registeredHandler = getToolHandler(toolRegistry, name);
@@ -106,33 +115,137 @@ export async function handleToolCall({
   switch (name) {
     case "scrape_js": {
       const userSettings = await getUserSettings(authHeader);
-      const rendererUrl = userSettings.renderer_url;
-      if (!rendererUrl) {
+      const provider = userSettings.renderer_provider || "none";
+
+      // ---- Browserless provider (BrowserQL) ----
+      if (provider === "browserless") {
+        const token = userSettings.renderer_secret || "";
+        if (!token) {
+          return {
+            kind: "result",
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: "Error: Browserless token not configured in Settings.",
+                },
+              ],
+              isError: true,
+            },
+          };
+        }
+        const browserlessUrl = (
+          userSettings.renderer_url || "https://production-sfo.browserless.io"
+        ).replace(/\/+$/, "");
+        const waitMs = (args.waitFor as number) || 3000;
+        const res = await fetch(
+          `${browserlessUrl}/chromium/bql?token=${encodeURIComponent(token)}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              query: `
+                mutation ScrapeJS($url: String!, $wait: Float!) {
+                  goto(url: $url, waitUntil: networkIdle) {
+                    status
+                  }
+                  waitForTimeout(time: $wait) {
+                    time
+                  }
+                  html {
+                    html
+                  }
+                }
+              `,
+              variables: {
+                url: args.url as string,
+                wait: waitMs,
+              },
+            }),
+          },
+        );
+        if (!res.ok) {
+          const errText = await res.text().catch(() => "");
+          return {
+            kind: "result",
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: `BrowserQL error ${res.status}: ${errText.slice(0, 300)}`,
+                },
+              ],
+              isError: true,
+            },
+          };
+        }
+        const data = await res.json();
+        const html = data?.data?.html?.html || "";
+        if (!html) {
+          const errors =
+            data?.errors
+              ?.map((e: { message: string }) => e.message)
+              .join("; ") || "No HTML returned";
+          return {
+            kind: "result",
+            result: {
+              content: [{ type: "text", text: `BrowserQL error: ${errors}` }],
+              isError: true,
+            },
+          };
+        }
         return {
           kind: "result",
-          result: {
-            content: [
-              {
-                type: "text",
-                text: "Error: Renderer URL not configured in Settings.",
-              },
-            ],
-            isError: true,
-          },
+          result: { content: [{ type: "text", text: htmlToMarkdown(html) }] },
         };
       }
 
-      const secret = userSettings.renderer_secret || "";
-      const res = await fetch(`${rendererUrl}/render`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Secret": secret },
-        body: JSON.stringify({ url: args.url, waitFor: args.waitFor || 3000 }),
-      });
-      if (!res.ok) throw new Error(`Renderer returned ${res.status}`);
-      const { html } = await res.json();
+      // ---- Custom renderer provider ----
+      if (provider === "custom") {
+        const rendererUrl = userSettings.renderer_url;
+        if (!rendererUrl) {
+          return {
+            kind: "result",
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: "Error: Custom renderer URL not configured in Settings.",
+                },
+              ],
+              isError: true,
+            },
+          };
+        }
+        const secret = userSettings.renderer_secret || "";
+        const res = await fetch(`${rendererUrl}/render`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Secret": secret },
+          body: JSON.stringify({
+            url: args.url,
+            waitFor: args.waitFor || 3000,
+          }),
+        });
+        if (!res.ok) throw new Error(`Renderer returned ${res.status}`);
+        const { html } = await res.json();
+        return {
+          kind: "result",
+          result: { content: [{ type: "text", text: htmlToMarkdown(html) }] },
+        };
+      }
+
+      // ---- Fallback: use regular scrape ----
+      const { markdown, title } = await scrapeUrl(args.url as string);
       return {
         kind: "result",
-        result: { content: [{ type: "text", text: htmlToMarkdown(html) }] },
+        result: {
+          content: [
+            {
+              type: "text",
+              text: `[Fallback: JS renderer not configured, using plain HTTP scrape]\n\n# ${title}\n\n${markdown}`,
+            },
+          ],
+        },
       };
     }
 
@@ -273,38 +386,144 @@ export async function handleToolCall({
 
     case "screenshot": {
       const userSettings = await getUserSettings(authHeader);
-      const rendererUrl = userSettings.renderer_url;
-      if (!rendererUrl) {
+      const provider = userSettings.renderer_provider || "none";
+
+      // ---- Browserless provider (BrowserQL) ----
+      if (provider === "browserless") {
+        const token = userSettings.renderer_secret || "";
+        if (!token) {
+          return {
+            kind: "result",
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: "Error: Browserless token not configured.",
+                },
+              ],
+              isError: true,
+            },
+          };
+        }
+        const browserlessUrl = (
+          userSettings.renderer_url || "https://production-sfo.browserless.io"
+        ).replace(/\/+$/, "");
+        const width = (args.width as number) || 1280;
+        const height = (args.height as number) || 800;
+        const res = await fetch(
+          `${browserlessUrl}/chromium/bql?token=${encodeURIComponent(token)}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              query: `
+                mutation Screenshot($url: String!, $w: Float!, $h: Float!) {
+                  goto(url: $url, waitUntil: networkIdle) {
+                    status
+                  }
+                  viewport(width: $w, height: $h) {
+                    width
+                    height
+                  }
+                  screenshot(type: png) {
+                    base64
+                  }
+                }
+              `,
+              variables: {
+                url: args.url as string,
+                w: width,
+                h: height,
+              },
+            }),
+          },
+        );
+        if (!res.ok) {
+          const errText = await res.text().catch(() => "");
+          return {
+            kind: "result",
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: `BrowserQL screenshot error ${res.status}: ${errText.slice(0, 300)}`,
+                },
+              ],
+              isError: true,
+            },
+          };
+        }
+        const data = await res.json();
+        const base64 = data?.data?.screenshot?.base64 || "";
+        if (!base64) {
+          const errors =
+            data?.errors
+              ?.map((e: { message: string }) => e.message)
+              .join("; ") || "No screenshot returned";
+          return {
+            kind: "result",
+            result: {
+              content: [{ type: "text", text: `BrowserQL error: ${errors}` }],
+              isError: true,
+            },
+          };
+        }
         return {
           kind: "result",
           result: {
-            content: [
-              {
-                type: "text",
-                text: "Error: Renderer URL not configured in Settings.",
-              },
-            ],
-            isError: true,
+            content: [{ type: "image", data: base64, mimeType: "image/png" }],
           },
         };
       }
 
-      const secret = userSettings.renderer_secret || "";
-      const res = await fetch(`${rendererUrl}/screenshot`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Secret": secret },
-        body: JSON.stringify({
-          url: args.url,
-          width: args.width || 1280,
-          height: args.height || 720,
-        }),
-      });
-      if (!res.ok) throw new Error(`Renderer returned ${res.status}`);
-      const { image } = await res.json();
+      // ---- Custom renderer provider ----
+      if (provider === "custom") {
+        const rendererUrl = userSettings.renderer_url;
+        if (!rendererUrl) {
+          return {
+            kind: "result",
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: "Error: Custom renderer URL not configured.",
+                },
+              ],
+              isError: true,
+            },
+          };
+        }
+        const secret = userSettings.renderer_secret || "";
+        const res = await fetch(`${rendererUrl}/screenshot`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Secret": secret },
+          body: JSON.stringify({
+            url: args.url,
+            width: args.width || 1280,
+            height: args.height || 720,
+          }),
+        });
+        if (!res.ok) throw new Error(`Renderer returned ${res.status}`);
+        const { image } = await res.json();
+        return {
+          kind: "result",
+          result: {
+            content: [{ type: "image", data: image, mimeType: "image/png" }],
+          },
+        };
+      }
+
+      // No renderer available for screenshot
       return {
         kind: "result",
         result: {
-          content: [{ type: "image", data: image, mimeType: "image/png" }],
+          content: [
+            {
+              type: "text",
+              text: "Screenshot requires a JS renderer. Configure Browserless or a custom renderer in Settings → JS Renderer.",
+            },
+          ],
+          isError: true,
         },
       };
     }

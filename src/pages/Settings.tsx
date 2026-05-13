@@ -171,15 +171,16 @@ export default function Settings() {
   const { settings, upsert } = useSettings();
   const { clearLogs } = useRequestLogs();
   const { callTool } = useMCPServer();
+  const [rendererProvider, setRendererProvider] = useState("none");
   const [renderUrl, setRenderUrl] = useState("");
   const [renderSecret, setRenderSecret] = useState("");
-  const [rendererEnabled, setRendererEnabled] = useState(false);
-  const [githubPat, setGithubPat] = useState("");
-  const [savingPat, setSavingPat] = useState(false);
+  const [savingRenderer, setSavingRenderer] = useState(false);
   const [testingRenderer, setTestingRenderer] = useState(false);
   const [rendererStatus, setRendererStatus] = useState<
     "online" | "offline" | null
   >(null);
+  const [githubPat, setGithubPat] = useState("");
+  const [savingPat, setSavingPat] = useState(false);
   const [aiProvider, setAiProvider] = useState("OpenAI");
   const [aiBaseUrl, setAiBaseUrl] = useState("https://api.openai.com/v1");
   const [aiApiKey, setAiApiKey] = useState("");
@@ -203,9 +204,10 @@ export default function Settings() {
 
   // Initialize from settings
   useEffect(() => {
+    if (settings.renderer_provider)
+      setRendererProvider(settings.renderer_provider);
     if (settings.renderer_url) setRenderUrl(settings.renderer_url);
     if (settings.renderer_secret) setRenderSecret(settings.renderer_secret);
-    setRendererEnabled(settings.renderer_enabled === "true");
     if (settings.github_pat) setGithubPat(settings.github_pat);
 
     if (settings.ai_provider) setAiProvider(settings.ai_provider);
@@ -309,36 +311,45 @@ export default function Settings() {
     setSavingAi(false);
   };
 
-  const handleToggleRenderer = async (enabled: boolean) => {
-    setRendererEnabled(enabled);
+  const handleSaveRenderer = async () => {
+    setSavingRenderer(true);
     try {
       await upsert.mutateAsync({
-        key: "renderer_enabled",
-        value: enabled ? "true" : "false",
+        key: "renderer_provider",
+        value: rendererProvider,
       });
-      toast.success(enabled ? "JS Renderer enabled" : "JS Renderer disabled");
-    } catch {
-      toast.error("Failed to save");
-      setRendererEnabled(!enabled);
-    }
-  };
-
-  const handleSaveRenderer = async () => {
-    try {
       await upsert.mutateAsync({ key: "renderer_url", value: renderUrl });
       await upsert.mutateAsync({ key: "renderer_secret", value: renderSecret });
+      // Keep legacy key in sync for backward compat
+      await upsert.mutateAsync({
+        key: "renderer_enabled",
+        value: rendererProvider !== "none" ? "true" : "false",
+      });
       toast.success("Renderer config saved");
     } catch {
       toast.error("Failed to save");
     }
+    setSavingRenderer(false);
   };
 
   const handleTestRenderer = async () => {
     setTestingRenderer(true);
     setRendererStatus(null);
     try {
-      const res = await fetch(`${renderUrl}/health`);
-      setRendererStatus(res.ok ? "online" : "offline");
+      if (rendererProvider === "browserless" || rendererProvider === "custom") {
+        // Test via MCP scrape_js tool which uses the saved renderer settings
+        const result = await callTool("scrape_js", {
+          url: "https://example.com",
+          waitFor: 3000,
+        });
+        if (result.isError) {
+          setRendererStatus("offline");
+        } else {
+          setRendererStatus("online");
+        }
+      } else {
+        setRendererStatus("offline");
+      }
     } catch {
       setRendererStatus("offline");
     }
@@ -745,75 +756,124 @@ export default function Settings() {
         </div>
       </GlassCard>
 
-      {/* Render Renderer */}
+      {/* JS Renderer */}
       <GlassCard>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xs font-mono uppercase tracking-widest text-muted-foreground font-semibold">
             JS Renderer
           </h2>
-          <div className="flex items-center gap-3">
-            {rendererEnabled && <StatusBadge status="online" label="ACTIVE" />}
-            <div className="flex items-center gap-2">
-              <Label
-                htmlFor="renderer-toggle"
-                className="text-xs font-mono text-muted-foreground cursor-pointer"
-              >
-                Enable
-              </Label>
-              <Switch
-                id="renderer-toggle"
-                checked={rendererEnabled}
-                onCheckedChange={handleToggleRenderer}
-              />
-            </div>
-          </div>
+          {rendererProvider !== "none" && (
+            <StatusBadge
+              status="online"
+              label={rendererProvider.toUpperCase()}
+            />
+          )}
         </div>
         <p className="text-xs text-muted-foreground mb-4">
-          Deploy your renderer to Render.com for free. Enables scrape_js and
-          screenshot tools.
+          Enables <code className="text-primary">scrape_js</code> and{" "}
+          <code className="text-primary">screenshot</code> tools. Without a
+          renderer, scrape_js falls back to plain HTTP scrape.
         </p>
         <div className="space-y-3">
           <div>
             <Label className="text-xs font-mono text-muted-foreground">
-              Renderer URL
+              Provider
             </Label>
-            <Input
-              value={renderUrl}
-              onChange={(e) => setRenderUrl(e.target.value)}
-              placeholder="https://your-renderer.onrender.com"
-              className="font-mono text-sm bg-background/50 border-border"
-              disabled={!rendererEnabled}
-            />
+            <Select
+              value={rendererProvider}
+              onValueChange={setRendererProvider}
+            >
+              <SelectTrigger className="font-mono text-sm bg-background/50 border-border">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="bg-card border-border">
+                <SelectItem value="none" className="text-xs font-mono">
+                  None (fallback to plain scrape)
+                </SelectItem>
+                <SelectItem value="browserless" className="text-xs font-mono">
+                  Browserless.io
+                </SelectItem>
+                <SelectItem value="custom" className="text-xs font-mono">
+                  Custom Renderer
+                </SelectItem>
+              </SelectContent>
+            </Select>
           </div>
-          <div>
-            <Label className="text-xs font-mono text-muted-foreground">
-              Secret
-            </Label>
-            <Input
-              type="password"
-              value={renderSecret}
-              onChange={(e) => setRenderSecret(e.target.value)}
-              placeholder="Optional shared secret"
-              className="font-mono text-sm bg-background/50 border-border"
-              disabled={!rendererEnabled}
-            />
-          </div>
+          {rendererProvider === "browserless" && (
+            <>
+              <div>
+                <Label className="text-xs font-mono text-muted-foreground">
+                  Browserless URL (optional, defaults to chrome.browserless.io)
+                </Label>
+                <Input
+                  value={renderUrl}
+                  onChange={(e) => setRenderUrl(e.target.value)}
+                  placeholder="https://production-sfo.browserless.io"
+                  className="font-mono text-sm bg-background/50 border-border"
+                />
+              </div>
+              <div>
+                <Label className="text-xs font-mono text-muted-foreground">
+                  API Token
+                </Label>
+                <Input
+                  type="password"
+                  value={renderSecret}
+                  onChange={(e) => setRenderSecret(e.target.value)}
+                  placeholder="Your Browserless API token"
+                  className="font-mono text-sm bg-background/50 border-border"
+                />
+              </div>
+            </>
+          )}
+          {rendererProvider === "custom" && (
+            <>
+              <div>
+                <Label className="text-xs font-mono text-muted-foreground">
+                  Renderer URL
+                </Label>
+                <Input
+                  value={renderUrl}
+                  onChange={(e) => setRenderUrl(e.target.value)}
+                  placeholder="https://your-renderer.fly.dev"
+                  className="font-mono text-sm bg-background/50 border-border"
+                />
+              </div>
+              <div>
+                <Label className="text-xs font-mono text-muted-foreground">
+                  Secret (optional)
+                </Label>
+                <Input
+                  type="password"
+                  value={renderSecret}
+                  onChange={(e) => setRenderSecret(e.target.value)}
+                  placeholder="Optional shared secret"
+                  className="font-mono text-sm bg-background/50 border-border"
+                />
+              </div>
+            </>
+          )}
           <div className="flex items-center gap-2">
             <Button
               variant="outline"
               size="sm"
               onClick={handleSaveRenderer}
-              disabled={!rendererEnabled}
+              disabled={savingRenderer}
               className="text-xs font-mono border-border gap-1.5"
             >
+              {savingRenderer ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <CheckCircle className="h-3 w-3" />
+              )}
               Save
             </Button>
-            {rendererEnabled && (
+            {rendererProvider !== "none" && (
               <Button
                 variant="outline"
                 size="sm"
                 onClick={handleTestRenderer}
-                disabled={!renderUrl || testingRenderer}
+                disabled={testingRenderer}
                 className="text-xs font-mono border-border gap-1.5"
               >
                 {testingRenderer ? (

@@ -324,16 +324,7 @@ export default function AIChat() {
       const {
         data: { user },
       } = await supabase.auth.getUser();
-      if (user) {
-        await supabase.from("mcp_logs").insert({
-          user_id: user.id,
-          tool: toolName,
-          input: toolInput,
-          output,
-          status: output.isError ? "error" : "success",
-          duration_ms: duration,
-        });
-      }
+      // Server-side mcp-server now records every tools/call, so no extra insert here.
     } catch {
       /* don't block */
     }

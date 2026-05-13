@@ -5,6 +5,7 @@ import type { McpLogEntry } from "@/types/mcp";
 interface LogFilters {
   tool?: string;
   status?: string;
+  source?: string;
   dateFrom?: string;
   dateTo?: string;
 }
@@ -24,6 +25,7 @@ export function useRequestLogs(filters?: LogFilters) {
 
       if (filters?.tool) q = q.eq("tool", filters.tool);
       if (filters?.status) q = q.eq("status", filters.status);
+      if (filters?.source) q = q.eq("source", filters.source);
       if (filters?.dateFrom) q = q.gte("created_at", filters.dateFrom);
       if (filters?.dateTo) q = q.lte("created_at", filters.dateTo);
 

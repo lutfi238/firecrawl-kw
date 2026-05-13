@@ -7,12 +7,18 @@ export function getToolDefinitions(
   const extractDesc = aiSettings
     ? `Scrape URL and use AI (${aiSettings.model}) to extract structured data`
     : "Scrape URL and use AI to extract structured data (not configured)";
-  const rendererEnabled = userSettings.renderer_enabled === "true";
-  const scrapeJsDesc = rendererEnabled
-    ? "Scrape a JS-rendered page via Render renderer"
-    : "Scrape a JS-rendered page (disabled - configure Render renderer in Settings)";
-  const screenshotDesc = rendererEnabled
-    ? "Take a screenshot via Render renderer"
+  const rendererProvider = userSettings.renderer_provider || "none";
+  const rendererReady =
+    rendererProvider === "browserless"
+      ? !!userSettings.renderer_secret
+      : rendererProvider === "custom"
+        ? !!userSettings.renderer_url
+        : false;
+  const scrapeJsDesc = rendererReady
+    ? `Scrape a JS-rendered page using a headless browser via ${rendererProvider}`
+    : "Scrape a JS-rendered page (falls back to plain HTTP if no renderer configured)";
+  const screenshotDesc = rendererReady
+    ? `Take a screenshot via ${rendererProvider} headless browser`
     : "Take a screenshot (disabled - configure Render renderer in Settings)";
   const agentDesc = aiSettings
     ? `Autonomous AI research agent — searches, scrapes, and synthesizes information using ${aiSettings.model}`

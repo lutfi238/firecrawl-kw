@@ -1,6 +1,7 @@
 import { getAiSettingsFromMap } from "./ai/settings.ts";
 import { checkMcpAuth } from "./auth/mcpSecret.ts";
 import { getUserSettings } from "./auth/userSettings.ts";
+import { logToolCall } from "./logging/toolLog.ts";
 import { getToolDefinitions } from "./tools/definitions.ts";
 import { handleToolCall } from "./tools/callTool.ts";
 import {
@@ -128,6 +129,7 @@ Deno.serve(async (req: Request) => {
     if (method === "tools/call") {
       const { name, arguments: args } = params;
       console.log("[mcp] tools/call name=", name);
+      const startedAt = Date.now();
       const outcome = await handleToolCall({
         args,
         authHeader,
@@ -136,16 +138,38 @@ Deno.serve(async (req: Request) => {
       });
 
       if (outcome.kind === "response") {
+        await logToolCall(req, authHeader, {
+          tool: name,
+          input: args,
+          output: { type: "raw-response" },
+          status: "success",
+          durationMs: Date.now() - startedAt,
+        });
         return outcome.response;
       }
 
       if (outcome.kind === "unknown-tool") {
+        await logToolCall(req, authHeader, {
+          tool: name,
+          input: args,
+          output: { error: `Unknown tool: ${name}` },
+          status: "error",
+          durationMs: Date.now() - startedAt,
+        });
         return jsonResponse({
           jsonrpc: "2.0",
           id,
           error: { code: -32601, message: `Unknown tool: ${name}` },
         });
       }
+
+      await logToolCall(req, authHeader, {
+        tool: name,
+        input: args,
+        output: outcome.result,
+        status: outcome.result?.isError ? "error" : "success",
+        durationMs: Date.now() - startedAt,
+      });
 
       return jsonResponse({ jsonrpc: "2.0", id, result: outcome.result });
     }

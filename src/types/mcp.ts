@@ -35,6 +35,7 @@ export interface McpLogEntry {
   status: string;
   duration_ms: number | null;
   created_at: string;
+  source?: string | null;
 }
 
 export interface ToolTraceStep {
