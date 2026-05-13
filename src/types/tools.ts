@@ -372,6 +372,127 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
     ],
   },
+  {
+    name: "scrape_stealth",
+    description:
+      "Scrape a heavily protected page using stealth browser with Cloudflare bypass and optional residential proxy.",
+    icon: "Globe",
+    category: "scrape",
+    inputs: [
+      {
+        name: "url",
+        type: "string",
+        description: "Target URL to scrape",
+        required: true,
+        placeholder: "https://protected-site.com",
+      },
+      {
+        name: "proxyCountry",
+        type: "string",
+        description:
+          "Optional 2-letter ISO country code for residential proxy (e.g. 'us', 'jp')",
+        required: false,
+        placeholder: "us",
+      },
+      {
+        name: "waitFor",
+        type: "number",
+        description:
+          "Optional wait time in milliseconds after Cloudflare solve before capture",
+        required: false,
+        default: 2000,
+      },
+    ],
+  },
+  {
+    name: "login_and_scrape",
+    description:
+      "Automate login to a website then scrape the authenticated page content.",
+    icon: "Globe",
+    category: "scrape",
+    inputs: [
+      {
+        name: "loginUrl",
+        type: "string",
+        description: "URL of the login page",
+        required: true,
+        placeholder: "https://example.com/login",
+      },
+      {
+        name: "targetUrl",
+        type: "string",
+        description: "URL to scrape after successful login",
+        required: true,
+        placeholder: "https://example.com/dashboard",
+      },
+      {
+        name: "email",
+        type: "string",
+        description: "Email/username to enter in the login form",
+        required: true,
+        placeholder: "user@example.com",
+      },
+      {
+        name: "password",
+        type: "string",
+        description: "Password to enter in the login form",
+        required: true,
+        placeholder: "password",
+      },
+      {
+        name: "emailSelector",
+        type: "string",
+        description: "CSS selector for the email/username input",
+        required: false,
+        default: "input[name='email'],input[type='email']",
+      },
+      {
+        name: "passwordSelector",
+        type: "string",
+        description: "CSS selector for the password input",
+        required: false,
+        default: "input[name='password'],input[type='password']",
+      },
+      {
+        name: "submitSelector",
+        type: "string",
+        description: "CSS selector for the submit button",
+        required: false,
+        default: "button[type='submit']",
+      },
+      {
+        name: "successSelector",
+        type: "string",
+        description: "CSS selector to wait for after login to confirm success",
+        required: false,
+        default: "body",
+      },
+    ],
+  },
+  {
+    name: "network_intercept",
+    description:
+      "Navigate to a URL and capture all API/fetch/XHR requests made by the page JavaScript.",
+    icon: "Network",
+    category: "utility",
+    inputs: [
+      {
+        name: "url",
+        type: "string",
+        description: "Target URL to navigate to and intercept requests",
+        required: true,
+        placeholder: "https://example.com",
+      },
+      {
+        name: "waitFor",
+        type: "number",
+        description:
+          "Optional wait time in milliseconds to capture requests (default: 5000)",
+        required: false,
+        default: 5000,
+      },
+    ],
+  },
 ];
 
 export function getToolDefinition(name: string): ToolDefinition | undefined {

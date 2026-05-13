@@ -74,6 +74,24 @@ const createPendingJobResult = (
   ],
 });
 
+async function pollJobUntilDone(
+  jobId: string,
+  authHeader: string | null,
+  maxWaitMs: number = 50000,
+  intervalMs: number = 2000,
+): Promise<Record<string, unknown> | null> {
+  const deadline = Date.now() + maxWaitMs;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, intervalMs));
+    const status = await checkJobStatus(authHeader, jobId);
+    if (status.error) return null;
+    if (status.status === "completed" || status.status === "failed") {
+      return status;
+    }
+  }
+  return null; // timed out, still pending
+}
+
 export async function handleToolCall({
   args,
   authHeader,
@@ -255,6 +273,17 @@ export async function handleToolCall({
     }
 
     case "crawl": {
+      // If jobId provided, act as status checker
+      if (args.jobId) {
+        const status = await checkJobStatus(authHeader, args.jobId as string);
+        return {
+          kind: "result",
+          result: {
+            content: [{ type: "text", text: JSON.stringify(status, null, 2) }],
+          },
+        };
+      }
+
       const job = await createJob(authHeader, "crawl", args);
       if (job.error) {
         return {
@@ -268,11 +297,26 @@ export async function handleToolCall({
         };
       }
       EdgeRuntime.waitUntil(processCrawlJob(job.jobId, args));
+
+      // Auto-poll until done or timeout
+      const crawlResult = await pollJobUntilDone(job.jobId, authHeader);
+      if (crawlResult) {
+        return {
+          kind: "result",
+          result: {
+            content: [
+              { type: "text", text: JSON.stringify(crawlResult, null, 2) },
+            ],
+          },
+        };
+      }
+
+      // Timeout fallback
       return {
         kind: "result",
         result: createPendingJobResult(
           job.jobId,
-          "Crawl started. Use check_crawl_status tool with this jobId to poll for results.",
+          "Crawl is still running. Use this tool again with jobId to check status.",
         ),
       };
     }
@@ -683,6 +727,17 @@ export async function handleToolCall({
     }
 
     case "batch_scrape": {
+      // If jobId provided, act as status checker
+      if (args.jobId) {
+        const status = await checkJobStatus(authHeader, args.jobId as string);
+        return {
+          kind: "result",
+          result: {
+            content: [{ type: "text", text: JSON.stringify(status, null, 2) }],
+          },
+        };
+      }
+
       const job = await createJob(authHeader, "batch_scrape", args);
       if (job.error) {
         return {
@@ -696,11 +751,26 @@ export async function handleToolCall({
         };
       }
       EdgeRuntime.waitUntil(processBatchScrapeJob(job.jobId, args));
+
+      // Auto-poll until done or timeout
+      const batchResult = await pollJobUntilDone(job.jobId, authHeader);
+      if (batchResult) {
+        return {
+          kind: "result",
+          result: {
+            content: [
+              { type: "text", text: JSON.stringify(batchResult, null, 2) },
+            ],
+          },
+        };
+      }
+
+      // Timeout fallback
       return {
         kind: "result",
         result: createPendingJobResult(
           job.jobId,
-          "Batch scrape started. Use check_batch_status tool with this jobId to poll for results.",
+          "Batch scrape is still running. Use this tool again with jobId to check status.",
         ),
       };
     }
@@ -715,6 +785,17 @@ export async function handleToolCall({
     }
 
     case "agent": {
+      // If jobId provided, act as status checker
+      if (args.jobId) {
+        const status = await checkJobStatus(authHeader, args.jobId as string);
+        return {
+          kind: "result",
+          result: {
+            content: [{ type: "text", text: JSON.stringify(status, null, 2) }],
+          },
+        };
+      }
+
       const userSettings = await getUserSettings(authHeader);
       const aiSettings = getAiSettingsFromMap(userSettings);
       if (!aiSettings) {
@@ -745,11 +826,26 @@ export async function handleToolCall({
         };
       }
       EdgeRuntime.waitUntil(processAgentJob(job.jobId, args, aiSettings));
+
+      // Auto-poll until done or timeout
+      const agentResult = await pollJobUntilDone(job.jobId, authHeader);
+      if (agentResult) {
+        return {
+          kind: "result",
+          result: {
+            content: [
+              { type: "text", text: JSON.stringify(agentResult, null, 2) },
+            ],
+          },
+        };
+      }
+
+      // Timeout fallback
       return {
         kind: "result",
         result: createPendingJobResult(
           job.jobId,
-          "Agent research started. Use agent_status tool with this jobId to poll for results.",
+          "Agent research is still running. Use this tool again with jobId to check status.",
         ),
       };
     }
@@ -1132,6 +1228,9 @@ export async function handleToolCall({
       ).replace(/\/+$/, "");
       const waitMs = (args.waitFor as number) || 5000;
 
+      const evalScript =
+        "(function(){var r=[];var seen={};var all=document.querySelectorAll('[src],[href],[data-src],[data-url],[action]');for(var i=0;i<all.length;i++){var u=all[i].src||all[i].href||all[i].getAttribute('data-src')||all[i].getAttribute('data-url')||all[i].getAttribute('action')||'';if(u&&u.indexOf('http')===0&&!seen[u]){seen[u]=1;r.push(u)}}return JSON.stringify(r.slice(0,100))})()";
+
       const res = await fetch(
         `${browserlessUrl}/stealth/bql?token=${encodeURIComponent(token)}`,
         {
@@ -1139,7 +1238,7 @@ export async function handleToolCall({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             query: `
-              mutation NetworkIntercept($url: String!) {
+              mutation NetworkIntercept($url: String!, $script: String!) {
                 goto(url: $url, waitUntil: networkIdle) {
                   status
                 }
@@ -1148,37 +1247,17 @@ export async function handleToolCall({
                   solved
                   time
                 }
-                javascript(expression: """
-                  (() => {
-                    const captured = [];
-                    const origFetch = window.fetch;
-                    window.fetch = function(...args) {
-                      const url = typeof args[0] === 'string' ? args[0] : args[0]?.url || '';
-                      const method = args[1]?.method || 'GET';
-                      captured.push({ type: 'fetch', method, url });
-                      return origFetch.apply(this, args);
-                    };
-                    const origXHR = XMLHttpRequest.prototype.open;
-                    XMLHttpRequest.prototype.open = function(method, url) {
-                      captured.push({ type: 'xhr', method, url: String(url) });
-                      return origXHR.apply(this, arguments);
-                    };
-                    window.__capturedRequests = captured;
-                    return 'interceptors installed';
-                  })()
-                """) {
-                  value
-                }
                 waitForTimeout(time: ${waitMs}) {
                   time
                 }
-                results: javascript(expression: "JSON.stringify(window.__capturedRequests || [])") {
+                discover: evaluate(content: $script) {
                   value
                 }
               }
             `,
             variables: {
               url: args.url as string,
+              script: evalScript,
             },
           }),
         },
@@ -1217,10 +1296,32 @@ export async function handleToolCall({
         };
       }
 
-      const capturedJson = data?.data?.results?.value || "[]";
+      const rawValue = data?.data?.discover?.value || "[]";
+      let endpoints: string[] = [];
+      try {
+        endpoints = JSON.parse(rawValue);
+      } catch {
+        endpoints = [];
+      }
+
       return {
         kind: "result",
-        result: { content: [{ type: "text", text: capturedJson }] },
+        result: {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  url: args.url,
+                  endpointsFound: endpoints.length,
+                  endpoints,
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        },
       };
     }
 

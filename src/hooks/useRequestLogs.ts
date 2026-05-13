@@ -78,6 +78,12 @@ export function useLogStats() {
           acc[l.tool] = (acc[l.tool] || 0) + 1;
           return acc;
         }, {}),
+        toolErrorCounts: logs
+          .filter((l) => l.status === "error")
+          .reduce((acc: Record<string, number>, l) => {
+            acc[l.tool] = (acc[l.tool] || 0) + 1;
+            return acc;
+          }, {}),
       };
     },
     refetchInterval: 5000,

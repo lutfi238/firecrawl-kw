@@ -11,6 +11,7 @@ import { TOOL_DEFINITIONS } from "@/types/tools";
 import { Copy, Check, Zap, Wrench, BarChart3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getBackendConfig } from "@/lib/backendConfig";
+import { getMcpEndpoint } from "@/lib/supabaseRuntime";
 
 export default function Overview() {
   const navigate = useNavigate();
@@ -21,9 +22,25 @@ export default function Overview() {
   const mcpEndpoint = backendConfig.mcpEndpoint;
   const [online, setOnline] = useState<boolean | null>(null);
   const [copied, setCopied] = useState(false);
+  const [serverToolCount, setServerToolCount] = useState<number | null>(null);
 
   useEffect(() => {
     pingServer().then(setOnline);
+
+    // Fetch live tool count from MCP health endpoint
+    fetch(getMcpEndpoint(), {
+      method: "GET",
+      headers: { Accept: "application/json" },
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data?.tools && typeof data.tools === "number") {
+          setServerToolCount(data.tools);
+        }
+      })
+      .catch(() => {
+        // fallback to frontend definition count
+      });
   }, [pingServer]);
 
   const handleCopyUrl = () => {
@@ -31,6 +48,8 @@ export default function Overview() {
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
+
+  const toolCount = serverToolCount ?? TOOL_DEFINITIONS.length;
 
   return (
     <div className="space-y-6 max-w-6xl">
@@ -40,8 +59,8 @@ export default function Overview() {
           PERSONAL FIRECRAWL MCP
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Web intelligence server — 17 tools for search, scrape, crawl & AI
-          extraction
+          Web intelligence server — {toolCount} tools for search, scrape, crawl
+          & AI extraction
         </p>
       </div>
 
@@ -107,7 +126,7 @@ export default function Overview() {
               <div className="flex items-center justify-center gap-1.5 text-cyber-violet mb-1">
                 <Wrench className="h-4 w-4" />
               </div>
-              <p className="text-xl font-display font-bold">17</p>
+              <p className="text-xl font-display font-bold">{toolCount}</p>
               <p className="text-[10px] font-mono text-muted-foreground uppercase">
                 Tools
               </p>
@@ -116,21 +135,40 @@ export default function Overview() {
         </GlassCard>
       </div>
 
-      {/* Tool Cards Grid */}
-      <div>
-        <h2 className="font-display text-sm font-semibold tracking-wider text-muted-foreground mb-4">
-          AVAILABLE TOOLS
-        </h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {TOOL_DEFINITIONS.map((tool) => (
-            <ToolCard
-              key={tool.name}
-              {...tool}
-              usageCount={stats?.toolCounts?.[tool.name] ?? 0}
-              onClick={() => navigate(`/tester?tool=${tool.name}`)}
-            />
+      {/* Tool Cards Grid — grouped by category */}
+      <div className="space-y-6">
+        {[
+          { key: "search", label: "SEARCH" },
+          { key: "scrape", label: "SCRAPE" },
+          { key: "crawl", label: "CRAWL" },
+          { key: "ai", label: "AI" },
+          { key: "async", label: "ASYNC JOBS" },
+          { key: "utility", label: "UTILITY" },
+        ]
+          .filter(({ key }) => TOOL_DEFINITIONS.some((t) => t.category === key))
+          .map(({ key, label }) => (
+            <div key={key}>
+              <h2 className="font-display text-sm font-semibold tracking-wider text-muted-foreground mb-3">
+                {label}
+              </h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {TOOL_DEFINITIONS.filter((t) => t.category === key).map(
+                  (tool) => {
+                    const errorCount = stats?.toolErrorCounts?.[tool.name] ?? 0;
+                    return (
+                      <ToolCard
+                        key={tool.name}
+                        {...tool}
+                        usageCount={stats?.toolCounts?.[tool.name] ?? 0}
+                        errorCount={errorCount}
+                        onClick={() => navigate(`/tester?tool=${tool.name}`)}
+                      />
+                    );
+                  },
+                )}
+              </div>
+            </div>
           ))}
-        </div>
       </div>
     </div>
   );

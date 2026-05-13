@@ -997,7 +997,7 @@ export default function AIChat() {
             <div className="text-center space-y-3">
               <Bot className="h-10 w-10 text-muted-foreground/30 mx-auto" />
               <p className="text-sm text-muted-foreground/60 font-mono">
-                Tools-first AI assistant — 17 MCP tools
+                Tools-first AI assistant — 20 MCP tools
               </p>
               <div className="text-[11px] text-muted-foreground/40 font-mono space-y-1">
                 <p>Ask anything — I'll pick the right tool automatically</p>

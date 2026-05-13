@@ -78,14 +78,23 @@ export function getToolDefinitions(
       inputSchema: {
         type: "object",
         properties: {
-          url: { type: "string", description: "Start URL for the crawl." },
+          url: {
+            type: "string",
+            description:
+              "Start URL for the crawl. Required when starting a new crawl.",
+          },
           maxPages: { type: "number", description: "Maximum pages to crawl." },
           extractContent: {
             type: "boolean",
             description: "Whether to extract page content while crawling.",
           },
+          jobId: {
+            type: "string",
+            description:
+              "Optional job ID to check status of a previous job. If provided, returns the job status instead of starting a new one.",
+          },
         },
-        required: ["url"],
+        required: [],
         additionalProperties: false,
       },
     },
@@ -206,10 +215,15 @@ export function getToolDefinitions(
           urls: {
             type: "string",
             description:
-              "URLs to scrape, typically newline- or comma-separated.",
+              "URLs to scrape, typically newline- or comma-separated. Required when starting a new batch scrape.",
+          },
+          jobId: {
+            type: "string",
+            description:
+              "Optional job ID to check status of a previous job. If provided, returns the job status instead of starting a new one.",
           },
         },
-        required: ["urls"],
+        required: [],
         additionalProperties: false,
       },
     },
@@ -262,7 +276,8 @@ export function getToolDefinitions(
     },
     {
       name: "check_crawl_status",
-      description: "Check status of an async crawl job",
+      description:
+        "(Legacy) Check status of an async crawl job. You can also pass jobId directly to the crawl tool instead.",
       inputSchema: {
         type: "object",
         properties: {
@@ -274,7 +289,8 @@ export function getToolDefinitions(
     },
     {
       name: "check_batch_status",
-      description: "Check status of an async batch scrape job",
+      description:
+        "(Legacy) Check status of an async batch scrape job. You can also pass jobId directly to the batch_scrape tool instead.",
       inputSchema: {
         type: "object",
         properties: {
@@ -295,7 +311,8 @@ export function getToolDefinitions(
         properties: {
           prompt: {
             type: "string",
-            description: "Research prompt or task description.",
+            description:
+              "Research prompt or task description. Required when starting a new agent job.",
           },
           urls: {
             type: "array",
@@ -310,14 +327,20 @@ export function getToolDefinitions(
             type: "number",
             description: "Optional upper bound for research iterations.",
           },
+          jobId: {
+            type: "string",
+            description:
+              "Optional job ID to check status of a previous job. If provided, returns the job status instead of starting a new one.",
+          },
         },
-        required: ["prompt"],
+        required: [],
         additionalProperties: false,
       },
     },
     {
       name: "agent_status",
-      description: "Check status of an autonomous agent research job",
+      description:
+        "(Legacy) Check status of an autonomous agent research job. You can also pass jobId directly to the agent tool instead.",
       inputSchema: {
         type: "object",
         properties: {
