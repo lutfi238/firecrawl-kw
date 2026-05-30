@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { isApiKey, verifyApiKey } from "./apiKey.ts";
 import { validateBearer } from "./oauth.ts";
 
 declare const Deno: {
@@ -24,11 +25,20 @@ export async function checkMcpAuth(
   const provided = request.headers.get("x-mcp-secret");
 
   if (provided) {
+    // 1) Legacy shared secret
     if (secret && provided === secret) {
       console.log("[mcp] auth secret ok");
       return null;
     }
-    console.warn("[mcp] auth secret mismatch");
+    // 2) User API key
+    if (isApiKey(provided)) {
+      const result = await verifyApiKey(provided);
+      if (result) {
+        console.log("[mcp] auth api-key ok user_id=", result.userId);
+        return null;
+      }
+    }
+    console.warn("[mcp] auth secret/api-key mismatch");
     return unauthorized(
       corsHeaders,
       resourceMetadataUrl,
@@ -115,3 +125,32 @@ function unauthorized(
 
 // Backwards compat name (in case anything still imports it).
 export const checkMcpSecret = checkMcpAuth;
+
+/**
+ * Resolves the authenticated user ID from available credentials.
+ * Checks in order: API key (X-MCP-Secret), OAuth bearer, Supabase session bearer, default user.
+ */
+export async function resolveUserId(
+  authHeader: string | null,
+  mcpSecretHeader: string | null,
+): Promise<string | null> {
+  // 1) User API key via X-MCP-Secret
+  if (mcpSecretHeader && isApiKey(mcpSecretHeader)) {
+    const result = await verifyApiKey(mcpSecretHeader);
+    if (result) return result.userId;
+  }
+
+  // 2) OAuth bearer token
+  if (authHeader && authHeader.toLowerCase().startsWith("bearer ")) {
+    const token = authHeader.slice(7).trim();
+    const oauth = await validateBearer(token);
+    if (oauth.ok && oauth.user_id) return oauth.user_id;
+
+    // 3) Supabase session token
+    const supabaseUserId = await validateSupabaseSession(token);
+    if (supabaseUserId) return supabaseUserId;
+  }
+
+  // 4) Fallback to default user
+  return Deno.env.get("MCP_DEFAULT_USER_ID") || null;
+}

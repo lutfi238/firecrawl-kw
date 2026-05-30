@@ -15,6 +15,8 @@ import {
   LogOut,
   ChevronLeft,
   Rocket,
+  Terminal,
+  Key,
 } from "lucide-react";
 import { StatusBadge } from "./StatusBadge";
 import { cn } from "@/lib/utils";
@@ -22,6 +24,8 @@ import { cn } from "@/lib/utils";
 const navItems = [
   { to: "/", icon: LayoutDashboard, label: "Overview" },
   { to: "/tester", icon: FlaskConical, label: "Tool Tester" },
+  { to: "/api-tester", icon: Terminal, label: "API Tester" },
+  { to: "/api-keys", icon: Key, label: "API Keys" },
   { to: "/monitor", icon: Activity, label: "Monitor" },
   { to: "/settings", icon: Settings, label: "Settings" },
   { to: "/chat", icon: MessageSquare, label: "AI Chat" },

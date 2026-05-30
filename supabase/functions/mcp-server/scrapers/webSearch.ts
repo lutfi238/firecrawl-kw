@@ -16,63 +16,244 @@ export interface SearchResult {
   matchedYear?: number;
 }
 
-const BROWSER_HEADERS = {
-  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-  "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-  "Accept-Language": "en-US,en;q=0.9",
-  "Cache-Control": "no-cache",
-};
+// ─── Enhanced anti-detection: UA rotation + random delay ─────────────────────
 
-/** Fallback: Jina AI Reader proxy — free, handles Cloudflare/JS rendering, returns clean markdown. */
-async function scrapeViaJinaReader(url: string): Promise<{ markdown: string; title: string }> {
-  const proxyUrl = `https://r.jina.ai/${url}`;
-  const res = await fetch(proxyUrl, {
-    headers: {
-      "Accept": "text/plain",
-      "X-Return-Format": "markdown",
-    },
-    redirect: "follow",
-    signal: AbortSignal.timeout(30000),
-  });
-  if (!res.ok) throw new Error(`Jina Reader fallback HTTP ${res.status} for ${url}`);
-  const text = await res.text();
-  // Jina returns: "Title: ...\nURL Source: ...\nMarkdown Content:\n..."
+const USER_AGENTS = [
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Safari/605.1.15",
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 14.7; rv:133.0) Gecko/20100101 Firefox/133.0",
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1",
+  "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
+  "Mozilla/5.0 (iPad; CPU OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1",
+];
+
+function getRandomUA(): string {
+  return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+}
+
+function randomDelay(minMs: number = 800, maxMs: number = 2500): Promise<void> {
+  const delay = minMs + Math.floor(Math.random() * (maxMs - minMs));
+  return new Promise((r) => setTimeout(r, delay));
+}
+
+function buildBrowserHeaders(): Record<string, string> {
+  const ua = getRandomUA();
+  // Derive Accept-Language from UA pattern for consistency
+  const isMobile = /iPhone|Android|Mobile/i.test(ua);
+  return {
+    "User-Agent": ua,
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+    "Accept-Language": isMobile ? "en-US,en;q=0.9" : "en-US,en;q=0.9,id;q=0.8",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Sec-Ch-Ua": `"Chromium";v="131", "Not_A Brand";v="24"`,
+    "Sec-Ch-Ua-Mobile": isMobile ? "?1" : "?0",
+    "Sec-Ch-Ua-Platform": /Macintosh|iPhone|iPad/i.test(ua) ? `"macOS"` : /Android/i.test(ua) ? `"Android"` : `"Windows"`,
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
+  };
+}
+
+// ─── Free reader proxy definitions ────────────────────────────────────────────
+
+interface ReaderProxy {
+  name: string;
+  buildUrl: (url: string) => string;
+  headers?: Record<string, string>;
+  parseResponse?: (text: string) => { markdown: string; title: string };
+  timeoutMs?: number;
+}
+
+/** Parse Jina Reader response: "Title: ...\nURL Source: ...\nMarkdown Content:\n..." */
+function parseJinaResponse(text: string): { markdown: string; title: string } {
   const titleMatch = text.match(/^Title:\s*(.+)$/m);
-  const title = titleMatch ? titleMatch[1].trim() : url;
+  const title = titleMatch ? titleMatch[1].trim() : "";
   const contentSplit = text.split(/Markdown Content:\s*\n/);
   const markdown = contentSplit.length > 1 ? contentSplit[1].trim() : text;
   return { markdown, title };
 }
 
-export async function scrapeUrl(url: string): Promise<{ markdown: string; title: string }> {
+/** Parse Google Cache response — returns HTML, we convert to markdown */
+function parseGoogleCacheResponse(html: string, url: string): { markdown: string; title: string } {
+  const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  const title = titleMatch ? titleMatch[1].trim().replace(/^Cache of\s*/i, "") : url;
+  // Google Cache wraps content in a specific div
+  const contentMatch = html.match(/<div[^>]*class=["']maia-body["'][^>]*>([\s\S]*?)<\/div>/i)
+    || html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+  const contentHtml = contentMatch ? contentMatch[1] : html;
+  return { markdown: htmlToMarkdown(contentHtml), title };
+}
+
+/** Parse Wayback Machine response — returns original HTML */
+function parseWaybackResponse(html: string, url: string): { markdown: string; title: string } {
+  const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  const title = titleMatch ? titleMatch[1].trim() : url;
+  // Wayback adds toolbar at top, try to strip it
+  const cleanHtml = html.replace(/<!-- BEGIN WAYBACK TOOLBAR INSERT -->[\s\S]*?<!-- END WAYBACK TOOLBAR INSERT -->/gi, "");
+  return { markdown: htmlToMarkdown(cleanHtml), title };
+}
+
+const FREE_READERS: ReaderProxy[] = [
+  {
+    name: "jina",
+    buildUrl: (url: string) => `https://r.jina.ai/${url}`,
+    headers: {
+      "Accept": "text/plain",
+      "X-Return-Format": "markdown",
+      "X-No-Cache": "true",
+    },
+    parseResponse: parseJinaResponse,
+    timeoutMs: 30000,
+  },
+  {
+    name: "google-cache",
+    buildUrl: (url: string) => `https://webcache.googleusercontent.com/search?q=cache:${encodeURIComponent(url)}`,
+    headers: {},
+    parseResponse: (html: string, _url: string) => parseGoogleCacheResponse(html, _url),
+    timeoutMs: 15000,
+  },
+  {
+    name: "wayback",
+    buildUrl: (url: string) => `https://web.archive.org/web/2024id_/${url}`,
+    headers: {},
+    parseResponse: (html: string, _url: string) => parseWaybackResponse(html, _url),
+    timeoutMs: 20000,
+  },
+];
+
+/** Try a single reader proxy, return result or null on failure */
+async function tryReaderProxy(
+  reader: ReaderProxy,
+  url: string,
+): Promise<{ markdown: string; title: string } | null> {
+  const proxyUrl = reader.buildUrl(url);
+  const headers = reader.headers ? { ...reader.headers, "User-Agent": getRandomUA() } : { "User-Agent": getRandomUA() };
+  const timeout = reader.timeoutMs || 15000;
+
+  console.log(`[reader] Trying ${reader.name} for ${url.slice(0, 80)}`);
+
   try {
+    const res = await fetch(proxyUrl, {
+      headers,
+      redirect: "follow",
+      signal: AbortSignal.timeout(timeout),
+    });
+
+    if (!res.ok) {
+      console.log(`[reader] ${reader.name} returned HTTP ${res.status}`);
+      return null;
+    }
+
+    const text = await res.text();
+    if (!text || text.length < 50) {
+      console.log(`[reader] ${reader.name} returned empty/short response`);
+      return null;
+    }
+
+    const parsed = reader.parseResponse
+      ? reader.parseResponse(text, url)
+      : { markdown: htmlToMarkdown(text), title: url };
+
+    if (!parsed.markdown || parsed.markdown.length < 100) {
+      console.log(`[reader] ${reader.name} returned insufficient content`);
+      return null;
+    }
+
+    console.log(`[reader] ${reader.name} succeeded (${parsed.markdown.length} chars)`);
+    return parsed;
+  } catch (err) {
+    console.log(`[reader] ${reader.name} failed: ${err instanceof Error ? err.message : "unknown"}`);
+    return null;
+  }
+}
+
+/** Try all free reader proxies in sequence until one succeeds */
+async function tryAllReaderProxies(
+  url: string,
+  excludeReaders: string[] = [],
+): Promise<{ markdown: string; title: string } | null> {
+  const readers = FREE_READERS.filter((r) => !excludeReaders.includes(r.name));
+
+  for (const reader of readers) {
+    // Random delay between reader attempts to appear more human-like
+    if (reader.name !== readers[0].name) {
+      await randomDelay(500, 1500);
+    }
+
+    const result = await tryReaderProxy(reader, url);
+    if (result) return result;
+  }
+
+  return null;
+}
+
+// ─── Main scrape function with enhanced fallback chain ────────────────────────
+
+export async function scrapeUrl(url: string): Promise<{ markdown: string; title: string }> {
+  // ── Phase 1: Direct fetch with rotated headers + human-like delay ──
+  await randomDelay(300, 1200);
+
+  try {
+    const headers = buildBrowserHeaders();
     const res = await fetch(url, {
-      headers: BROWSER_HEADERS,
+      headers,
       redirect: "follow",
       signal: AbortSignal.timeout(15000),
     });
-    // Cloudflare / anti-bot blocks → fallback
-    if (res.status === 403 || res.status === 503 || res.status === 429) {
-      console.log(`[scrape] Got ${res.status} for ${url}, falling back to Jina Reader`);
-      return await scrapeViaJinaReader(url);
+
+    // Cloudflare / anti-bot blocks → fallback chain
+    if (res.status === 403 || res.status === 503 || res.status === 429 || res.status === 401) {
+      console.log(`[scrape] Got ${res.status} for ${url}, entering fallback chain`);
+      return await fallbackChain(url);
     }
+
     if (!res.ok) throw new Error(`HTTP ${res.status} fetching ${url}`);
+
     const html = await res.text();
+
     // Detect Cloudflare challenge page even with 200 status
-    if (/cf-challenge|Just a moment|Checking your browser|cf-browser-verification/i.test(html) && html.length < 50000) {
-      console.log(`[scrape] Cloudflare challenge detected for ${url}, falling back to Jina Reader`);
-      return await scrapeViaJinaReader(url);
+    if (/cf-challenge|Just a moment|Checking your browser|cf-browser-verification|captchaChallenge/i.test(html) && html.length < 50000) {
+      console.log(`[scrape] Cloudflare challenge detected for ${url}, entering fallback chain`);
+      return await fallbackChain(url);
     }
+
+    // Detect other common anti-bot pages
+    if (/(access denied|blocked|suspended|verify you are human)/i.test(html) && html.length < 30000) {
+      console.log(`[scrape] Anti-bot page detected for ${url}, entering fallback chain`);
+      return await fallbackChain(url);
+    }
+
     const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
     const title = titleMatch ? titleMatch[1].trim() : url;
     return { markdown: htmlToMarkdown(html), title };
   } catch (err) {
-    // Network error → also try fallback once
     const message = err instanceof Error ? err.message : "unknown";
-    if (/HTTP (403|503|429)/.test(message)) throw err; // already handled above
-    console.log(`[scrape] Direct fetch failed (${message}), falling back to Jina Reader`);
-    return await scrapeViaJinaReader(url);
+    console.log(`[scrape] Direct fetch failed (${message}), entering fallback chain`);
+    return await fallbackChain(url);
   }
+}
+
+/** Fallback chain: try multiple free reader proxies sequentially */
+async function fallbackChain(url: string): Promise<{ markdown: string; title: string }> {
+  // Try free reader proxies
+  const readerResult = await tryAllReaderProxies(url);
+  if (readerResult) return readerResult;
+
+  // All free proxies exhausted
+  throw new Error(
+    `All scraping methods failed for ${url}. ` +
+    `Tried: direct fetch, Jina Reader, Google Cache, Wayback Machine. ` +
+    `Configure a JS renderer (Browserless/custom) in Settings for better results.`,
+  );
 }
 
 async function resolveGoogleNewsRssUrl(url: string, rawDesc?: string): Promise<{ finalUrl?: string; resolveStatus: "resolved" | "unresolved_wrapper" | "failed"; error?: string; method?: string }> {
@@ -115,7 +296,7 @@ async function resolveGoogleNewsRssUrl(url: string, rawDesc?: string): Promise<{
     console.log("[gnews-resolve] Trying HTTP fetch fallback");
     const res = await fetch(url, {
       redirect: "follow",
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; RSS/2.0)" },
+      headers: { "User-Agent": getRandomUA() },
       signal: AbortSignal.timeout(10000),
     });
 
@@ -261,8 +442,8 @@ async function searchDuckDuckGo(query: string, maxResults: number): Promise<Sear
     console.log("[search-ddg] Fetching:", ddgUrl);
     const res = await fetch(ddgUrl, {
       headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        Accept: "text/html",
+        ...buildBrowserHeaders(),
+        "Accept": "text/html",
       },
       signal: AbortSignal.timeout(10000),
     });
@@ -321,7 +502,7 @@ async function searchGoogleNewsRss(query: string, maxResults: number): Promise<S
   try {
     console.log("[search-gnews] Fetching:", feedUrl);
     const res = await fetch(feedUrl, {
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; RSS/2.0)" },
+      headers: { "User-Agent": getRandomUA() },
       signal: AbortSignal.timeout(10000),
     });
     if (!res.ok) {
@@ -410,7 +591,7 @@ async function searchBingNewsRss(query: string, maxResults: number): Promise<Sea
   try {
     console.log("[search-bing] Fetching:", feedUrl);
     const res = await fetch(feedUrl, {
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; RSS/2.0)" },
+      headers: { "User-Agent": getRandomUA() },
       signal: AbortSignal.timeout(10000),
     });
     if (!res.ok) {

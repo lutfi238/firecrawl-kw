@@ -17,6 +17,8 @@ import Settings from "@/pages/Settings";
 import AIChat from "@/pages/AIChat";
 import DeploymentGuide from "@/pages/DeploymentGuide";
 import McpAuthorize from "@/pages/McpAuthorize";
+import APITester from "@/pages/APITester";
+import ApiKeysPage from "@/pages/ApiKeysPage";
 import NotFound from "@/pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -127,6 +129,8 @@ function AppContent() {
         <Route path="/settings" element={<Settings />} />
         <Route path="/chat" element={<AIChat />} />
         <Route path="/deploy" element={<DeploymentGuide />} />
+        <Route path="/api-tester" element={<APITester />} />
+        <Route path="/api-keys" element={<ApiKeysPage />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </DashboardLayout>

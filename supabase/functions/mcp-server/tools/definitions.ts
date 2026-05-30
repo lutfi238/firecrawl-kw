@@ -445,5 +445,30 @@ export function getToolDefinitions(
         additionalProperties: false,
       },
     },
+    {
+      name: "api_key_manage",
+      description:
+        "Manage API keys for the current user. Actions: list, create, revoke, rename, delete",
+      inputSchema: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["list", "create", "revoke", "rename", "delete"],
+            description: "Action to perform",
+          },
+          name: {
+            type: "string",
+            description: "Key name (for create or rename action)",
+          },
+          keyId: {
+            type: "string",
+            description: "Key ID to revoke, rename, or delete",
+          },
+        },
+        required: ["action"],
+        additionalProperties: false,
+      },
+    },
   ];
 }

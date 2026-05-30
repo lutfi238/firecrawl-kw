@@ -20,6 +20,12 @@ import { htmlToMarkdown } from "../scrapers/htmlToMarkdown.ts";
 import { searchWeb, scrapeUrl } from "../scrapers/webSearch.ts";
 import { extractLinks } from "../scrapers/urlUtils.ts";
 import { getToolHandler, type ToolHandler } from "./registry.ts";
+import { generateApiKey } from "../auth/apiKey.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+declare const Deno: {
+  env: { get(key: string): string | undefined };
+};
 
 type ToolResult = {
   content: Array<Record<string, unknown>>;
@@ -36,6 +42,7 @@ type HandleToolCallParams = {
   authHeader: string | null;
   corsHeaders: Record<string, string>;
   name: string;
+  userId?: string | null;
 };
 
 const toolRegistry: Record<string, ToolHandler> = {
@@ -97,7 +104,11 @@ export async function handleToolCall({
   authHeader,
   corsHeaders,
   name,
+  userId,
 }: HandleToolCallParams): Promise<ToolDispatchOutcome> {
+  // Inject userId into args for tools that need auth context (e.g. api_key_manage)
+  if (userId) args = { ...args, userId };
+
   if (name === "scrape_js" || name === "screenshot") {
     const userSettings = await getUserSettings(authHeader);
     const provider = userSettings.renderer_provider || "none";
@@ -332,7 +343,13 @@ export async function handleToolCall({
         try {
           const res = await fetch(current, {
             headers: {
-              "User-Agent": "Mozilla/5.0 (compatible; FirecrawlMCP/1.0)",
+              "User-Agent":
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+              Accept:
+                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+              "Accept-Language": "en-US,en;q=0.9",
+              "Sec-Fetch-Dest": "document",
+              "Sec-Fetch-Mode": "navigate",
             },
             redirect: "follow",
           });
@@ -1321,6 +1338,323 @@ export async function handleToolCall({
               ),
             },
           ],
+        },
+      };
+    }
+
+    case "api_key_manage": {
+      const userId = (args.userId as string | undefined) || null;
+      const action = args.action as string;
+
+      if (!userId) {
+        return {
+          kind: "result",
+          result: {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  error: "Authentication required to manage API keys.",
+                }),
+              },
+            ],
+            isError: true,
+          },
+        };
+      }
+
+      const supabaseUrl = Deno.env.get("SUPABASE_URL");
+      const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+
+      if (!supabaseUrl || !serviceKey) {
+        return {
+          kind: "result",
+          result: {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  error:
+                    "Server configuration error: missing Supabase credentials.",
+                }),
+              },
+            ],
+            isError: true,
+          },
+        };
+      }
+
+      const supabase = createClient(supabaseUrl, serviceKey, {
+        auth: { autoRefreshToken: false, persistSession: false },
+      });
+
+      if (action === "list") {
+        const { data, error } = await supabase
+          .from("user_api_keys")
+          .select("id, name, key_prefix, created_at, last_used_at, revoked_at")
+          .eq("user_id", userId)
+          .order("created_at", { ascending: false });
+
+        if (error) {
+          return {
+            kind: "result",
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({ error: error.message }),
+                },
+              ],
+              isError: true,
+            },
+          };
+        }
+
+        return {
+          kind: "result",
+          result: {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({ keys: data || [] }, null, 2),
+              },
+            ],
+          },
+        };
+      }
+
+      if (action === "create") {
+        const keyName = (args.name as string) || "Untitled Key";
+        const { fullKey, hash, prefix } = await generateApiKey();
+
+        const { data, error } = await supabase
+          .from("user_api_keys")
+          .insert({
+            user_id: userId,
+            name: keyName,
+            key_hash: hash,
+            key_prefix: prefix,
+          })
+          .select("id")
+          .single();
+
+        if (error) {
+          return {
+            kind: "result",
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({ error: error.message }),
+                },
+              ],
+              isError: true,
+            },
+          };
+        }
+
+        return {
+          kind: "result",
+          result: {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  {
+                    id: data.id,
+                    fullKey,
+                    key_prefix: prefix,
+                    name: keyName,
+                    warning: "Save this key now — it will not be shown again.",
+                  },
+                  null,
+                  2,
+                ),
+              },
+            ],
+          },
+        };
+      }
+
+      if (action === "revoke") {
+        const keyId = args.keyId as string | undefined;
+        if (!keyId) {
+          return {
+            kind: "result",
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    error: "keyId is required for revoke action.",
+                  }),
+                },
+              ],
+              isError: true,
+            },
+          };
+        }
+
+        const { error } = await supabase
+          .from("user_api_keys")
+          .update({ revoked_at: new Date().toISOString() })
+          .eq("id", keyId)
+          .eq("user_id", userId)
+          .is("revoked_at", null);
+
+        if (error) {
+          return {
+            kind: "result",
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({ error: error.message }),
+                },
+              ],
+              isError: true,
+            },
+          };
+        }
+
+        return {
+          kind: "result",
+          result: {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  message: `Key ${keyId} has been revoked.`,
+                }),
+              },
+            ],
+          },
+        };
+      }
+
+      if (action === "rename") {
+        const keyId = args.keyId as string | undefined;
+        const name = args.name as string | undefined;
+        if (!keyId || !name) {
+          return {
+            kind: "result",
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    error: "keyId and name are required for rename action.",
+                  }),
+                },
+              ],
+              isError: true,
+            },
+          };
+        }
+
+        const { error } = await supabase
+          .from("user_api_keys")
+          .update({ name })
+          .eq("id", keyId)
+          .eq("user_id", userId);
+
+        if (error) {
+          return {
+            kind: "result",
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({ error: error.message }),
+                },
+              ],
+              isError: true,
+            },
+          };
+        }
+
+        return {
+          kind: "result",
+          result: {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  message: `Key renamed to "${name}".`,
+                }),
+              },
+            ],
+          },
+        };
+      }
+
+      if (action === "delete") {
+        const keyId = args.keyId as string | undefined;
+        if (!keyId) {
+          return {
+            kind: "result",
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    error: "keyId is required for delete action.",
+                  }),
+                },
+              ],
+              isError: true,
+            },
+          };
+        }
+
+        const { error } = await supabase
+          .from("user_api_keys")
+          .delete()
+          .eq("id", keyId)
+          .eq("user_id", userId);
+
+        if (error) {
+          return {
+            kind: "result",
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({ error: error.message }),
+                },
+              ],
+              isError: true,
+            },
+          };
+        }
+
+        return {
+          kind: "result",
+          result: {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  message: `Key ${keyId} has been deleted.`,
+                }),
+              },
+            ],
+          },
+        };
+      }
+
+      return {
+        kind: "result",
+        result: {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                error: `Unknown action: ${action}. Use list, create, or revoke.`,
+              }),
+            },
+          ],
+          isError: true,
         },
       };
     }
