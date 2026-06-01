@@ -5,19 +5,30 @@ import {
   type AiSettings,
 } from "../ai/settings.ts";
 import { htmlToMarkdown } from "../scrapers/htmlToMarkdown.ts";
+import { extractFreshness } from "../scrapers/freshness.ts";
 import {
   decodeEscapedUrl,
-  decodeGoogleNewsToken,
   isGoogleNewsRssWrapper,
   isValidArticleUrl,
   normalizeResolvedUrl,
+  resolveGoogleNewsUrl,
 } from "../scrapers/googleNews.ts";
+import {
+  dedupeSourcesPreservingSeeds,
+  isThinSpaShell,
+  rankAndTruncateSources,
+} from "../tools/agent/content.ts";
+import { getCachedSource, setCachedSource } from "../tools/agent/sourceCache.ts";
+import { isAggregatorUrl } from "../tools/agent/sourceFilters.ts";
+import { seedUrlsForQuery } from "../tools/agent/seedDocs.ts";
+import type { RendererSettings } from "../runtime.ts";
 
 type AcquisitionType =
   | "direct_article"
   | "resolved_article"
   | "unresolved_wrapper"
-  | "failed_fetch";
+  | "failed_fetch"
+  | "spa_shell";
 
 interface NormalizedSource {
   sourceUrl: string;
@@ -34,7 +45,10 @@ interface NormalizedSource {
     | "failed"
     | "unresolved_wrapper"
     | "empty"
-    | "boilerplate";
+    | "boilerplate"
+    | "spa_shell";
+  freshness: Date | null;
+  scrapeMethod?: string;
   error?: string;
 }
 
@@ -47,6 +61,8 @@ interface EvidenceMetrics {
   sourcesFailed: number;
   sourcesEmpty: number;
   sourcesBoilerplate: number;
+  sourcesSpaShell: number;
+  sourcesCacheHit: number;
 }
 
 interface SearchResult {
@@ -59,6 +75,30 @@ interface SearchResult {
   searchSource: string;
 }
 
+interface SearchBatch {
+  results: SearchResult[];
+  usedEngines: string[];
+}
+
+const MIN_USABLE_SEARCH_RESULTS = 3;
+
+function isUsableSearchResult(result: SearchResult): boolean {
+  return result.acquisitionType !== "unresolved_wrapper" && !isAggregatorUrl(result.url);
+}
+
+function dedupeSearchResults(results: SearchResult[], maxResults: number): SearchResult[] {
+  const seen = new Set<string>();
+  const deduped: SearchResult[] = [];
+  for (const result of results) {
+    const key = result.url.replace(/^https?:\/\/(www\.)?/, "").split("?")[0];
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(result);
+    if (deduped.length >= maxResults) break;
+  }
+  return deduped;
+}
+
 function getServiceClient() {
   const url = Deno.env.get("SUPABASE_URL")!;
   const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -67,18 +107,88 @@ function getServiceClient() {
   });
 }
 
-async function scrapeUrl(
+export async function scrapeUrlForAgent(
   url: string,
-): Promise<{ markdown: string; title: string }> {
+  rendererSettings?: RendererSettings,
+): Promise<{ markdown: string; title: string; freshness: Date | null; scrapeMethod: string }> {
   const res = await fetch(url, {
     headers: { "User-Agent": "Mozilla/5.0 (compatible; FirecrawlMCP/1.0)" },
     redirect: "follow",
   });
-  if (!res.ok) throw new Error(`HTTP ${res.status} fetching ${url}`);
   const html = await res.text();
-  const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-  const title = titleMatch ? titleMatch[1].trim() : url;
-  return { markdown: htmlToMarkdown(html), title };
+  if ((res.status === 403 || res.status === 429 || /cloudflare|just a moment|checking your browser/i.test(html)) && rendererSettings?.renderer_provider === "browserless" && rendererSettings.renderer_secret) {
+    const rendered = await scrapeWithBrowserless(url, rendererSettings);
+    const titleMatch = rendered.html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+    return {
+      markdown: htmlToMarkdown(rendered.html),
+      title: titleMatch ? titleMatch[1].trim() : url,
+      freshness: extractFreshness(rendered.html, new Headers()),
+      scrapeMethod: "stealth",
+    };
+  }
+  if (!res.ok) throw new Error(`HTTP ${res.status} fetching ${url}`);
+  let titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  let title = titleMatch ? titleMatch[1].trim() : url;
+  let freshness = extractFreshness(html, res.headers);
+  let markdown = htmlToMarkdown(html);
+  let scrapeMethod = "static";
+
+  if (/__NEXT_DATA__|mintlify/i.test(html) && !freshness && rendererSettings?.renderer_provider === "browserless" && rendererSettings.renderer_secret) {
+    const rendered = await scrapeWithBrowserless(url, rendererSettings);
+    const renderedFreshness = extractFreshness(rendered.html, new Headers());
+    if (renderedFreshness) {
+      titleMatch = rendered.html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+      title = titleMatch ? titleMatch[1].trim() : title;
+      freshness = renderedFreshness;
+      markdown = htmlToMarkdown(rendered.html);
+      scrapeMethod = "stealth";
+    }
+  }
+
+  if (scrapeMethod !== "stealth" && isThinSpaShell(html, url) && rendererSettings?.renderer_provider === "browserless" && rendererSettings.renderer_secret) {
+    const rendered = await scrapeWithBrowserless(url, rendererSettings);
+    if (!isThinSpaShell(rendered.html, url)) {
+      titleMatch = rendered.html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+      title = titleMatch ? titleMatch[1].trim() : title;
+      freshness = extractFreshness(rendered.html, new Headers());
+      markdown = htmlToMarkdown(rendered.html);
+      scrapeMethod = "stealth";
+    } else {
+      scrapeMethod = "spa_shell";
+    }
+  } else if (scrapeMethod !== "stealth" && isThinSpaShell(html, url)) {
+    scrapeMethod = "spa_shell";
+  }
+
+  return { markdown, title, freshness, scrapeMethod };
+}
+
+async function scrapeWithBrowserless(
+  url: string,
+  rendererSettings: RendererSettings,
+): Promise<{ html: string }> {
+  const browserlessUrl = (rendererSettings.renderer_url || "https://production-sfo.browserless.io").replace(/\/+$/, "");
+  const endpoint = `${browserlessUrl}/stealth/bql?token=${encodeURIComponent(rendererSettings.renderer_secret || "")}`;
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      query: `
+        mutation AgentScrape($url: String!) {
+          goto(url: $url, waitUntil: networkIdle) { status }
+          waitForTimeout(time: 2000) { time }
+          html { html }
+        }
+      `,
+      variables: { url },
+    }),
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!res.ok) throw new Error(`Browserless scrape error ${res.status}`);
+  const data = await res.json();
+  const html = data.data?.html?.html;
+  if (typeof html !== "string") throw new Error("Browserless scrape returned no HTML");
+  return { html };
 }
 
 function isRedirectUrl(url: string): boolean {
@@ -154,22 +264,23 @@ async function resolveGoogleNewsRssUrl(
 
     const parsed = new URL(url);
     const token = parsed.pathname.split("/").filter(Boolean).pop() || "";
-    const decodedCandidate = decodeGoogleNewsToken(token);
-    if (decodedCandidate) {
+    try {
+      const decodedCandidate = await resolveGoogleNewsUrl(url);
       console.log(
-        "[gnews-resolve] Decoded publisher URL from token:",
+        "[gnews-resolve] Decoded publisher URL from wrapper:",
         decodedCandidate,
       );
       return {
         finalUrl: decodedCandidate,
         resolveStatus: "resolved",
-        method: "token_decode",
+        method: "wrapper_decode",
       };
+    } catch {
+      console.log(
+        "[gnews-resolve] Wrapper decode failed for:",
+        token.slice(0, 30) + "...",
+      );
     }
-    console.log(
-      "[gnews-resolve] Token decode failed for:",
-      token.slice(0, 30) + "...",
-    );
 
     console.log("[gnews-resolve] Trying HTTP fetch fallback");
     const res = await fetch(url, {
@@ -563,59 +674,128 @@ async function searchBingNewsRss(
   }
 }
 
+async function searchBrave(query: string, maxResults: number): Promise<SearchResult[]> {
+  const apiKey = Deno.env.get("BRAVE_SEARCH_API_KEY");
+  if (!apiKey) return [];
+
+  const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${Math.min(maxResults, 10)}`;
+  try {
+    console.log("[search-brave] Fetching Brave Search API");
+    const res = await fetch(url, {
+      headers: { Accept: "application/json", "X-Subscription-Token": apiKey },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    const rows = Array.isArray(data.web?.results) ? data.web.results : [];
+    return rows.flatMap((row: Record<string, unknown>) => {
+      const resultUrl = typeof row.url === "string" ? row.url : "";
+      if (!resultUrl || !isValidArticleUrl(resultUrl).valid) return [];
+      return [{
+        title: typeof row.title === "string" ? row.title : "",
+        url: resultUrl,
+        sourceUrl: resultUrl,
+        snippet: typeof row.description === "string" ? row.description.slice(0, 200) : "",
+        rawDesc: "",
+        acquisitionType: "direct_article" as const,
+        searchSource: "brave",
+      }];
+    });
+  } catch (e) {
+    console.log("[search-brave] Error:", e instanceof Error ? e.message : "unknown");
+    return [];
+  }
+}
+
+async function searchBingWeb(query: string, maxResults: number): Promise<SearchResult[]> {
+  const apiKey = Deno.env.get("BING_SEARCH_API_KEY");
+  if (!apiKey) return [];
+
+  const url = `https://api.bing.microsoft.com/v7.0/search?q=${encodeURIComponent(query)}&count=${Math.min(maxResults, 10)}`;
+  try {
+    console.log("[search-bing-api] Fetching Bing Web Search API");
+    const res = await fetch(url, {
+      headers: { Accept: "application/json", "Ocp-Apim-Subscription-Key": apiKey },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    const rows = Array.isArray(data.webPages?.value) ? data.webPages.value : [];
+    return rows.flatMap((row: Record<string, unknown>) => {
+      const resultUrl = typeof row.url === "string" ? row.url : "";
+      if (!resultUrl || !isValidArticleUrl(resultUrl).valid) return [];
+      return [{
+        title: typeof row.name === "string" ? row.name : "",
+        url: resultUrl,
+        sourceUrl: resultUrl,
+        snippet: typeof row.snippet === "string" ? row.snippet.slice(0, 200) : "",
+        rawDesc: "",
+        acquisitionType: "direct_article" as const,
+        searchSource: "bing_api",
+      }];
+    });
+  } catch (e) {
+    console.log("[search-bing-api] Error:", e instanceof Error ? e.message : "unknown");
+    return [];
+  }
+}
+
+function seedSearchResults(query: string): SearchResult[] {
+  return seedUrlsForQuery(query).map((url) => ({
+    title: "",
+    url,
+    sourceUrl: url,
+    snippet: "",
+    rawDesc: "",
+    acquisitionType: "direct_article" as const,
+    searchSource: "seed_docs",
+  }));
+}
+
+
 async function searchWeb(
   query: string,
   maxResults: number,
-): Promise<SearchResult[]> {
+): Promise<SearchBatch> {
   console.log(
-    "[search] Starting multi-source search for:",
+    "[search] Starting fallback search for:",
     query,
     "max:",
     maxResults,
   );
-  const [ddgResults, bingResults, gnewsResults] = await Promise.all([
-    searchDuckDuckGo(query, maxResults),
-    searchBingNewsRss(query, maxResults),
-    searchGoogleNewsRss(query, maxResults),
-  ]);
 
-  const allResults: SearchResult[] = [];
-  for (const r of ddgResults) allResults.push(r);
-  for (const r of bingResults) allResults.push(r);
-  for (const r of gnewsResults.filter(
-    (r) => r.acquisitionType === "resolved_article",
-  ))
-    allResults.push(r);
-  for (const r of gnewsResults.filter(
-    (r) => r.acquisitionType === "direct_article",
-  ))
-    allResults.push(r);
-  for (const r of gnewsResults.filter(
-    (r) => r.acquisitionType === "unresolved_wrapper",
-  ))
-    allResults.push(r);
+  const usedEngines: string[] = [];
+  let results = seedSearchResults(query);
+  if (results.length > 0) usedEngines.push("seed_docs");
 
-  const seen = new Set<string>();
-  const deduped: SearchResult[] = [];
-  for (const r of allResults) {
-    const key = r.url.replace(/^https?:\/\/(www\.)?/, "").split("?")[0];
-    if (seen.has(key)) continue;
-    seen.add(key);
-    deduped.push(r);
+  const ddgResults = await searchDuckDuckGo(query, maxResults);
+  usedEngines.push("duckduckgo");
+  results = dedupeSearchResults([...results, ...ddgResults], maxResults);
+  if (results.filter(isUsableSearchResult).length >= MIN_USABLE_SEARCH_RESULTS) {
+    return { results, usedEngines };
   }
 
-  const final = deduped.slice(0, maxResults);
+  const braveResults = await searchBrave(query, maxResults);
+  if (Deno.env.get("BRAVE_SEARCH_API_KEY")) usedEngines.push("brave");
+  results = dedupeSearchResults([...results, ...braveResults], maxResults);
+  if (results.filter(isUsableSearchResult).length >= MIN_USABLE_SEARCH_RESULTS) {
+    return { results, usedEngines };
+  }
+
+  const bingResults = await searchBingWeb(query, maxResults);
+  if (Deno.env.get("BING_SEARCH_API_KEY")) usedEngines.push("bing");
+  results = dedupeSearchResults([...results, ...bingResults], maxResults);
+  if (results.filter(isUsableSearchResult).length >= MIN_USABLE_SEARCH_RESULTS) {
+    return { results, usedEngines };
+  }
+
   console.log(
-    "[search] Combined results:",
-    final.length,
-    "| direct:",
-    final.filter((r) => r.acquisitionType === "direct_article").length,
-    "| resolved:",
-    final.filter((r) => r.acquisitionType === "resolved_article").length,
-    "| unresolved:",
-    final.filter((r) => r.acquisitionType === "unresolved_wrapper").length,
+    "[search] Fallback results:",
+    results.length,
+    "usable:",
+    results.filter(isUsableSearchResult).length,
   );
-  return final;
+  return { results, usedEngines };
 }
 
 function normalizeFocusUrls(rawUrls: unknown): string[] {
@@ -637,7 +817,9 @@ async function collectDiscoveredUrls(
   focusUrls: string[],
   prompt: string,
   maxSteps: number,
-): Promise<SearchResult[]> {
+): Promise<{ urls: SearchResult[]; usedEngines: string[]; seedUrls: string[] }> {
+  const usedEngines: string[] = [];
+  const seedUrls: string[] = [];
   const discoveredUrls: SearchResult[] = [];
 
   for (const u of focusUrls) {
@@ -659,16 +841,6 @@ async function collectDiscoveredUrls(
           acquisitionType: "resolved_article",
           searchSource: "user_provided",
         });
-      } else {
-        discoveredUrls.push({
-          title: "",
-          url: u,
-          sourceUrl: u,
-          snippet: "",
-          rawDesc: "",
-          acquisitionType: "unresolved_wrapper",
-          searchSource: "user_provided",
-        });
       }
       continue;
     }
@@ -683,9 +855,7 @@ async function collectDiscoveredUrls(
           sourceUrl: u,
           snippet: "",
           rawDesc: "",
-          acquisitionType: resolved.resolved
-            ? "resolved_article"
-            : "direct_article",
+          acquisitionType: resolved.resolved ? "resolved_article" : "direct_article",
           searchSource: "user_provided",
         });
       } else {
@@ -722,11 +892,17 @@ async function collectDiscoveredUrls(
       prompt,
       maxSteps - discoveredUrls.length,
     );
-    console.log("[agent] Search returned", searchResults.length, "results");
-    for (const r of searchResults) discoveredUrls.push(r);
+    usedEngines.push(...searchResults.usedEngines);
+    seedUrls.push(
+      ...searchResults.results
+        .filter((r) => r.searchSource === "seed_docs")
+        .map((r) => r.url),
+    );
+    console.log("[agent] Search returned", searchResults.results.length, "results");
+    for (const r of searchResults.results) discoveredUrls.push(r);
   }
 
-  return discoveredUrls;
+  return { urls: discoveredUrls, usedEngines, seedUrls };
 }
 
 function buildEvidenceMetrics(
@@ -748,6 +924,8 @@ function buildEvidenceMetrics(
     ).length,
     sourcesFailed: sources.filter((s) => s.scrapeStatus === "failed").length,
     sourcesEmpty: sources.filter((s) => s.scrapeStatus === "empty").length,
+    sourcesSpaShell: sources.filter((s) => s.scrapeStatus === "spa_shell").length,
+    sourcesCacheHit: sources.filter((s) => s.scrapeMethod === "cache").length,
     sourcesBoilerplate: sources.filter((s) => s.scrapeStatus === "boilerplate")
       .length,
   };
@@ -762,37 +940,25 @@ function buildSourceSummary(sources: NormalizedSource[]) {
     contentLength: s.contentLength,
     acquisitionType: s.acquisitionType,
     resolveStatus: s.resolveStatus,
+    freshness: s.freshness?.toISOString() ?? null,
+    scrapeMethod: s.scrapeMethod,
     scrapeStatus: s.scrapeStatus,
     error: s.error,
   }));
 }
-
 async function collectSources(
   svc: ReturnType<typeof getServiceClient>,
   jobId: string,
   discoveredUrls: SearchResult[],
   collectedCount: number,
+  rendererSettings: RendererSettings,
 ): Promise<NormalizedSource[]> {
   const sources: NormalizedSource[] = [];
 
   for (const item of discoveredUrls) {
-    if (item.acquisitionType === "unresolved_wrapper") {
-      console.log(
-        "[agent] Skipping unresolved wrapper:",
-        item.url.slice(0, 80),
-      );
-      sources.push({
-        sourceUrl: item.sourceUrl,
-        finalUrl: undefined,
-        title: item.title || extractDomain(item.sourceUrl),
-        publisher: extractDomain(item.sourceUrl),
-        excerpt: item.snippet,
-        markdown: "",
-        contentLength: 0,
-        acquisitionType: "unresolved_wrapper",
-        resolveStatus: "unresolved_wrapper",
-        scrapeStatus: "unresolved_wrapper",
-      });
+    if (item.acquisitionType === "unresolved_wrapper") continue;
+    if (isAggregatorUrl(item.url)) {
+      console.log("[agent] Dropping aggregator source:", item.url.slice(0, 80));
       continue;
     }
 
@@ -806,23 +972,48 @@ async function collectSources(
       resolveStatus = resolved.resolved ? "resolved" : "unchanged";
     }
 
+    if (isAggregatorUrl(finalUrl) || !isValidArticleUrl(finalUrl).valid) {
+      console.log("[agent] Dropping resolved aggregator/invalid source:", finalUrl.slice(0, 80));
+      continue;
+    }
+
     let title = item.title;
     let markdown = "";
     let scrapeStatus: NormalizedSource["scrapeStatus"] = "failed";
     let scrapeError: string | undefined;
+    let freshness: Date | null = null;
+    let scrapeMethod = "static";
 
     try {
-      const scraped = await scrapeUrl(finalUrl!);
-      markdown = scraped.markdown.slice(0, 6000);
-      title = title || scraped.title;
-      scrapeStatus = isUsableArticleContent(markdown)
-        ? "success"
-        : markdown.length > 0
-          ? "boilerplate"
-          : "empty";
+      const cached = await getCachedSource(svc, finalUrl);
+      if (cached) {
+        markdown = cached.content;
+        title = title || cached.title;
+        freshness = cached.freshness;
+        scrapeMethod = "cache";
+      } else {
+        const scraped = await scrapeUrlForAgent(finalUrl, rendererSettings);
+        markdown = scraped.markdown;
+        title = title || scraped.title;
+        freshness = scraped.freshness;
+        scrapeMethod = scraped.scrapeMethod;
+        await setCachedSource(svc, finalUrl, {
+          content: markdown,
+          title: title || finalUrl,
+          freshness,
+          scrapeMethod,
+        });
+      }
+      scrapeStatus = scrapeMethod === "spa_shell"
+        ? "spa_shell"
+        : isUsableArticleContent(markdown)
+          ? "success"
+          : markdown.length > 0
+            ? "boilerplate"
+            : "empty";
       console.log(
         "[agent] Scraped:",
-        finalUrl!.slice(0, 80),
+        finalUrl.slice(0, 80),
         "type:",
         item.acquisitionType,
         "len:",
@@ -845,9 +1036,11 @@ async function collectSources(
       excerpt: item.snippet || markdown.slice(0, 200),
       markdown,
       contentLength: markdown.length,
-      acquisitionType: item.acquisitionType,
+      acquisitionType: scrapeStatus === "spa_shell" ? "spa_shell" : item.acquisitionType,
       resolveStatus,
       scrapeStatus,
+      freshness,
+      scrapeMethod,
       error: scrapeError,
     });
 
@@ -857,8 +1050,7 @@ async function collectSources(
         output: {
           step: "scraping",
           sourcesCollected: collectedCount,
-          scrapedCount: sources.filter((s) => s.scrapeStatus === "success")
-            .length,
+          scrapedCount: sources.filter((s) => s.scrapeStatus === "success").length,
           totalSources: collectedCount,
         },
       })
@@ -874,6 +1066,11 @@ async function completeWithNoSources(
   warning: string,
   metrics: EvidenceMetrics,
   sources: Array<Record<string, unknown>>,
+  diagnostics: {
+    attemptedEngines: string[];
+    attemptedSeedUrls: string[];
+    wrapperResolveFailures: number;
+  },
 ) {
   await svc
     .from("mcp_jobs")
@@ -882,8 +1079,13 @@ async function completeWithNoSources(
       output: {
         step: "completed",
         synthesis: null,
+        error: "NO_GROUNDED_SOURCES",
         groundedness: "none",
         warning,
+        diagnostic: {
+          ...diagnostics,
+          suggestion: "Try the `fetch` tool with a specific URL, or rephrase the query.",
+        },
         evidenceMetrics: metrics,
         sources,
         scrapedCount: 0,
@@ -896,6 +1098,7 @@ export async function processAgentJob(
   jobId: string,
   args: Record<string, unknown>,
   aiSettings: AiSettings,
+  rendererSettings: RendererSettings = {},
 ) {
   const svc = getServiceClient();
 
@@ -909,12 +1112,17 @@ export async function processAgentJob(
     const focusUrls = normalizeFocusUrls(args.urls);
     const schema = args.schema as string | undefined;
     const maxSteps = (args.maxSteps as number) || 5;
-
-    let discoveredUrls = await collectDiscoveredUrls(
+    const discovery = await collectDiscoveredUrls(
       focusUrls,
       prompt,
       maxSteps,
     );
+    let discoveredUrls = discovery.urls;
+    const noSourceDiagnostics = {
+      attemptedEngines: discovery.usedEngines,
+      attemptedSeedUrls: discovery.seedUrls,
+      wrapperResolveFailures: 0,
+    };
 
     if (discoveredUrls.length === 0) {
       console.log("[agent] No URLs discovered — returning low-evidence result");
@@ -927,6 +1135,8 @@ export async function processAgentJob(
         sourcesFailed: 0,
         sourcesEmpty: 0,
         sourcesBoilerplate: 0,
+        sourcesSpaShell: 0,
+        sourcesCacheHit: 0,
       };
       await completeWithNoSources(
         svc,
@@ -934,6 +1144,7 @@ export async function processAgentJob(
         "Web search returned no relevant URLs.",
         emptyMetrics,
         [],
+        noSourceDiagnostics,
       );
       return;
     }
@@ -958,6 +1169,8 @@ export async function processAgentJob(
         sourcesFailed: 0,
         sourcesEmpty: 0,
         sourcesBoilerplate: 0,
+        sourcesSpaShell: 0,
+        sourcesCacheHit: 0,
       };
       const wrapperSummary = discoveredUrls.map((r) => ({
         sourceUrl: r.sourceUrl,
@@ -975,6 +1188,7 @@ export async function processAgentJob(
         "All discovered sources were Google News wrappers that could not be resolved to publisher URLs.",
         wrapperMetrics,
         wrapperSummary,
+        noSourceDiagnostics,
       );
       return;
     }
@@ -986,40 +1200,40 @@ export async function processAgentJob(
       })
       .eq("id", jobId);
 
-    const sources = await collectSources(
+    let sources = await collectSources(
       svc,
       jobId,
       discoveredUrls,
       collectedCount,
+      rendererSettings,
     );
-    const metrics = buildEvidenceMetrics(sources, collectedCount);
+    sources = dedupeSourcesPreservingSeeds(sources, discovery.seedUrls);
 
-    console.log("[agent] Evidence metrics:", JSON.stringify(metrics));
+    const budgetTokens = Number(Deno.env.get("AGENT_MAX_CONTEXT_TOKENS") ?? "6000");
+    const promptReserve = 1500;
+    const budgetChars = Math.max(3000, (budgetTokens - promptReserve) * 4);
+    sources = rankAndTruncateSources(sources, budgetChars, prompt).map((source) => ({
+      ...source,
+      contentLength: source.markdown.length,
+    }));
+    const finalMetrics = buildEvidenceMetrics(sources, collectedCount);
 
+    console.log("[agent] Evidence metrics:", JSON.stringify(finalMetrics));
     const sourceSummary = buildSourceSummary(sources);
-
     const usableSources = sources.filter((s) => s.scrapeStatus === "success");
 
     if (usableSources.length === 0) {
       console.log(
         "[agent] No usable article content — returning low-evidence result",
       );
-      await svc
-        .from("mcp_jobs")
-        .update({
-          status: "completed",
-          output: {
-            step: "completed",
-            synthesis: null,
-            groundedness: "none",
-            warning:
-              "No usable article content could be extracted from any source.",
-            evidenceMetrics: metrics,
-            sources: sourceSummary,
-            scrapedCount: 0,
-          },
-        })
-        .eq("id", jobId);
+      await completeWithNoSources(
+        svc,
+        jobId,
+        "No usable article content could be extracted from any source.",
+        finalMetrics,
+        sourceSummary,
+        noSourceDiagnostics,
+      );
       return;
     }
 
@@ -1031,8 +1245,8 @@ export async function processAgentJob(
       .update({
         output: {
           step: "synthesizing",
-          scrapedCount: metrics.sourcesScrapedSuccessfully,
-          evidenceMetrics: metrics,
+          scrapedCount: finalMetrics.sourcesScrapedSuccessfully,
+          evidenceMetrics: finalMetrics,
           sources: sourceSummary,
         },
       })
@@ -1092,11 +1306,24 @@ export async function processAgentJob(
         : usableSources.length >= 2
           ? "medium"
           : "low";
+    const freshnessDates = sources
+      .map((s) => s.freshness)
+      .filter((date): date is Date => date instanceof Date);
+    const evidenceFreshnessMax = freshnessDates.length
+      ? new Date(Math.max(...freshnessDates.map((date) => date.getTime()))).toISOString()
+      : null;
+    const trainingCutoff = new Date("2024-06-01");
+    const knowledgeMetadata = {
+      subAgentModel: Deno.env.get("AGENT_LLM_MODEL") || aiSettings.model,
+      subAgentTrainingCutoff: "2024-06-01",
+      evidenceFreshnessMax,
+      evidenceFresherThanModel: !!evidenceFreshnessMax && new Date(evidenceFreshnessMax) > trainingCutoff,
+    };
 
     await svc
       .from("mcp_jobs")
       .update({
-        status: isWeakEvidence ? "completed" : "completed",
+        status: "completed",
         output: {
           step: "completed",
           synthesis: answer || "No response from AI",
@@ -1106,12 +1333,13 @@ export async function processAgentJob(
                 warning: `Only ${usableSources.length} of ${collectedCount} sources yielded usable article content. Synthesis may have limited grounding.`,
               }
             : {}),
-          evidenceMetrics: metrics,
+          evidenceMetrics: finalMetrics,
           sources: sourceSummary,
           sourcesUsed: usableSources
             .map((s) => s.finalUrl)
             .filter((u): u is string => typeof u === "string"),
-          scrapedCount: metrics.sourcesScrapedSuccessfully,
+          scrapedCount: finalMetrics.sourcesScrapedSuccessfully,
+          knowledgeMetadata,
         },
       })
       .eq("id", jobId);

@@ -310,7 +310,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "agent",
     description:
-      "Autonomous AI research agent — searches, scrapes, and synthesizes information automatically.",
+      "Autonomous AI research agent — searches, scrapes, synthesizes grounded information, and returns knowledge metadata for stale-model warnings.",
     icon: "Bot",
     category: "ai",
     inputs: [

@@ -26,6 +26,24 @@ export interface ToolCallResult {
   isError?: boolean;
 }
 
+export interface AgentKnowledgeMetadata {
+  subAgentModel?: string;
+  subAgentTrainingCutoff: string;
+  evidenceFreshnessMax: string | null;
+  evidenceFresherThanModel: boolean;
+}
+
+export interface AgentToolOutput {
+  synthesis: string | null;
+  error?: "NO_GROUNDED_SOURCES" | string;
+  groundedness?: "none" | "low" | "medium" | "high";
+  knowledgeMetadata?: AgentKnowledgeMetadata;
+  evidenceMetrics?: Record<string, number>;
+  sources?: Array<Record<string, unknown>>;
+  sourcesUsed?: string[];
+  diagnostic?: Record<string, unknown>;
+}
+
 export interface McpLogEntry {
   id: string;
   user_id: string;
