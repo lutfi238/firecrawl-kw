@@ -4,7 +4,7 @@ import { getBackendConfig } from "@/lib/backendConfig";
 import { Copy, ExternalLink, Rocket } from "lucide-react";
 import { toast } from "sonner";
 
-const projectRef = "<your-project-ref>";
+const projectRef = "azegdjbrznxdhyeaztqm";
 
 const commands = [
   `supabase link --project-ref ${projectRef}`,
@@ -54,23 +54,18 @@ function ConfigBlock({
 
 export default function DeploymentGuide() {
   const backend = getBackendConfig();
-  const mcpEndpoint =
-    backend.mcpEndpoint ||
-    "https://<project-ref>.supabase.co/functions/v1/mcp-server";
-  const localProxyPath =
-    "D:/Project_Gabut/firecrawl-kw/scripts/mcp-stdio-proxy.mjs";
+  const hostedMcpEndpoint =
+    "https://azegdjbrznxdhyeaztqm.supabase.co/functions/v1/mcp-server";
+  const mcpEndpoint = backend.mcpEndpoint || hostedMcpEndpoint;
   const stdioEnv = {
-    MCP_ENDPOINT: mcpEndpoint,
     MCP_SECRET: "<per-user-secret-from-MCP-Secrets-page>",
-    SUPABASE_ANON_KEY: "<optional-supabase-anon-key>",
-    GITHUB_TOKEN: "<optional-github-token-for-github-tools>",
   };
   const claudeDesktopConfig = JSON.stringify(
     {
       mcpServers: {
         "firecrawl-kw": {
-          command: "node",
-          args: [localProxyPath],
+          command: "npx",
+          args: ["-y", "firecrawl-kw-mcp"],
           env: stdioEnv,
         },
       },
@@ -83,8 +78,8 @@ export default function DeploymentGuide() {
       servers: {
         "firecrawl-kw": {
           type: "stdio",
-          command: "node",
-          args: [localProxyPath],
+          command: "npx",
+          args: ["-y", "firecrawl-kw-mcp"],
           env: stdioEnv,
         },
       },
@@ -95,8 +90,8 @@ export default function DeploymentGuide() {
   const zedConfig = JSON.stringify(
     {
       "firecrawl-kw": {
-        command: "node",
-        args: [localProxyPath],
+        command: "npx",
+        args: ["-y", "firecrawl-kw-mcp"],
         env: {
           MCP_STDIO_DEBUG: "true",
           ...stdioEnv,
@@ -120,8 +115,8 @@ export default function DeploymentGuide() {
           DEPLOYMENT GUIDE
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Use this checklist to deploy your own Supabase backend and connect
-          this hosted UI to resources you own.
+          Use this checklist to deploy and connect MCP clients to the hosted
+          Firecrawl KW Supabase backend.
         </p>
       </div>
 
@@ -147,45 +142,38 @@ export default function DeploymentGuide() {
 
       <GlassCard>
         <h2 className="mb-3 text-xs font-mono font-semibold uppercase tracking-widest text-muted-foreground">
-          1. Create and link Supabase
+          1. Hosted backend
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          Normal users use the hosted Firecrawl KW Supabase backend. They do not
+          need to create or connect their own Supabase project.
+        </p>
+        <div className="mt-3 rounded-md border border-border bg-background/40 p-3 text-xs font-mono text-muted-foreground">
+          {hostedMcpEndpoint}
+        </div>
+      </GlassCard>
+
+      <GlassCard>
+        <h2 className="mb-3 text-xs font-mono font-semibold uppercase tracking-widest text-muted-foreground">
+          2. Generate a per-user MCP secret
         </h2>
         <ol className="list-decimal space-y-2 pl-5 text-sm text-muted-foreground">
-          <li>Create a Supabase project in your own account.</li>
-          <li>Copy the project ref from the dashboard URL.</li>
-          <li>
-            You already installed/logged into Supabase CLI, so link the repo to
-            the project.
-          </li>
+          <li>Log in to the dashboard with a Supabase Auth account.</li>
+          <li>Open the MCP Secrets page.</li>
+          <li>Generate a new secret and copy the full `fc_kw-...` value.</li>
+          <li>Use that full value as `MCP_SECRET` in local MCP clients.</li>
         </ol>
       </GlassCard>
 
       <GlassCard>
         <h2 className="mb-3 text-xs font-mono font-semibold uppercase tracking-widest text-muted-foreground">
-          2. Deploy database, functions, and secrets
-        </h2>
-        <CommandBlock lines={commands} />
-      </GlassCard>
-
-      <GlassCard>
-        <h2 className="mb-3 text-xs font-mono font-semibold uppercase tracking-widest text-muted-foreground">
-          3. Configure frontend backend connection
+          3. Admin-only backend deployment commands
         </h2>
         <p className="mb-3 text-sm text-muted-foreground">
-          In Settings → Backend Connection → Reconfigure Backend, paste your own
-          values:
+          Only the project owner needs these commands when updating the hosted
+          Supabase backend.
         </p>
-        <div className="space-y-2 rounded-md border border-border bg-background/40 p-3 text-xs font-mono text-muted-foreground">
-          <p>Supabase URL: https://&lt;project-ref&gt;.supabase.co</p>
-          <p>Supabase anon key: from Project Settings → API</p>
-          <p>
-            MCP URL:
-            https://&lt;project-ref&gt;.supabase.co/functions/v1/mcp-server
-          </p>
-        </div>
-        <div className="mt-3 rounded-md border border-primary/30 bg-primary/5 p-3 text-xs text-muted-foreground">
-          Never paste your Supabase service-role key into the frontend. Only use
-          the browser-safe anon/publishable key.
-        </div>
+        <CommandBlock lines={commands} />
       </GlassCard>
 
       <GlassCard>
@@ -195,12 +183,12 @@ export default function DeploymentGuide() {
         <div className="space-y-4 text-sm text-muted-foreground">
           <div className="rounded-md border border-primary/30 bg-primary/5 p-3 text-xs leading-relaxed">
             Use <span className="font-mono text-foreground">remote OAuth</span>{" "}
-            for Claude Web. Use the local{" "}
-            <span className="font-mono text-foreground">stdio proxy</span> for
-            editors that only launch local MCP processes, such as VS Code, Zed,
-            Claude Desktop, Cursor, and many MCP plugins. Keep secrets in local
-            client config or generate them from the MCP Secrets page, never in
-            browser-visible Vite env vars.
+            for Claude Web. Use the{" "}
+            <span className="font-mono text-foreground">firecrawl-kw-mcp</span>{" "}
+            npm stdio proxy for editors that launch local MCP processes, such as
+            VS Code, Zed, Claude Desktop, Cursor, and many MCP plugins. Keep
+            secrets in local client config or generate them from the MCP Secrets
+            page, never in browser-visible Vite env vars.
           </div>
 
           <div className="space-y-2">
@@ -245,8 +233,8 @@ export default function DeploymentGuide() {
             </h3>
             <p>
               Paste this into Zed's MCP server settings where it expects a
-              top-level map of server names. Adjust the script path to wherever
-              you cloned this repository.
+              top-level map of server names. The proxy package defaults to the
+              hosted Firecrawl KW Supabase endpoint.
             </p>
             <ConfigBlock text={zedConfig} />
           </div>
@@ -258,7 +246,8 @@ export default function DeploymentGuide() {
             <ul className="list-disc space-y-1 pl-5 text-xs">
               <li>
                 <span className="font-mono text-foreground">MCP_ENDPOINT</span>:
-                your deployed Supabase MCP function URL.
+                optional override. If omitted, the npm proxy uses the hosted
+                Firecrawl KW Supabase MCP endpoint.
               </li>
               <li>
                 <span className="font-mono text-foreground">MCP_SECRET</span>:

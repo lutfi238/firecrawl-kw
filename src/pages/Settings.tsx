@@ -32,12 +32,7 @@ import {
   KeyRound,
 } from "lucide-react";
 import { toast } from "sonner";
-import {
-  clearBackendConfig,
-  getBackendConfig,
-  requestBackendSetup,
-} from "@/lib/backendConfig";
-import { resetSupabaseClientCache } from "@/lib/supabaseRuntime";
+import { getBackendConfig } from "@/lib/backendConfig";
 
 const GITHUB_MODELS_PROVIDER = "GitHub Models";
 const GITHUB_MODELS_BASE_URL = "https://models.github.ai/inference";
@@ -363,18 +358,15 @@ export default function Settings() {
         SETTINGS
       </h1>
 
-      {/* Backend Connection */}
+      {/* Hosted Backend */}
       <GlassCard>
         <h2 className="text-xs font-mono uppercase tracking-widest text-muted-foreground mb-4 font-semibold">
-          Backend Connection
+          Hosted Backend
         </h2>
         <div className="space-y-2 rounded-md border border-border bg-background/40 p-3">
           <div className="flex items-center justify-between gap-3">
             <span className="text-xs text-muted-foreground">Mode</span>
-            <StatusBadge
-              status={backendConfig.mode === "custom" ? "online" : "pending"}
-              label={backendConfig.mode.toUpperCase()}
-            />
+            <StatusBadge status="online" label="HOSTED" />
           </div>
           <p className="truncate font-mono text-xs text-muted-foreground">
             Supabase: {backendConfig.supabaseUrl}
@@ -383,33 +375,11 @@ export default function Settings() {
             MCP: {backendConfig.mcpEndpoint}
           </p>
         </div>
-        <div className="mt-3 flex flex-wrap gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            className="text-xs font-mono"
-            onClick={() => {
-              clearBackendConfig();
-              resetSupabaseClientCache();
-              toast.success("Backend reset to default. Reloading…");
-              window.location.reload();
-            }}
-          >
-            Reset to Default Backend
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            className="text-xs font-mono"
-            onClick={() => {
-              requestBackendSetup();
-              resetSupabaseClientCache();
-              window.location.reload();
-            }}
-          >
-            Reconfigure Backend
-          </Button>
-        </div>
+        <p className="mt-3 text-xs text-muted-foreground leading-relaxed">
+          All users connect to the hosted Firecrawl KW Supabase backend.
+          Generate per-user MCP secrets from the MCP Secrets page; users do not
+          need to configure their own Supabase project.
+        </p>
       </GlassCard>
 
       {/* GitHub OAuth Status */}

@@ -88,8 +88,8 @@ export function AuthGate({ children }: { children: ReactNode }) {
                 : "Create Supabase account"}
             </p>
             <p className="text-xs text-muted-foreground leading-relaxed">
-              Use your own Supabase Auth account to manage personal MCP secrets,
-              settings, logs, and jobs from this dashboard.
+              Sign in to manage your personal MCP secrets, settings, logs, and
+              jobs on the hosted Firecrawl KW backend.
             </p>
           </div>
 
