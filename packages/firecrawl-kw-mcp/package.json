@@ -1,0 +1,19 @@
+{
+  "name": "firecrawl-kw-mcp",
+  "version": "0.1.0",
+  "description": "Stdio MCP proxy for the Firecrawl KW hosted MCP server.",
+  "type": "module",
+  "bin": {
+    "firecrawl-kw-mcp": "bin/firecrawl-kw-mcp.mjs"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "UNLICENSED",
+  "private": false
+}
