@@ -29,6 +29,7 @@ import {
   Sparkles,
   Zap,
   Clock,
+  KeyRound,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -485,21 +486,20 @@ export default function Settings() {
       {/* MCP API Protection */}
       <GlassCard>
         <h2 className="text-xs font-mono uppercase tracking-widest text-muted-foreground mb-4 font-semibold flex items-center gap-2">
-          🔐 MCP Server Auth
+          <KeyRound className="h-3.5 w-3.5 text-primary" />
+          MCP Server Auth
         </h2>
         <p className="text-xs text-muted-foreground mb-3">
-          MCP endpoint protection is configured with backend-only environment
-          variables. The web dashboard authenticates with your Supabase session;
-          Claude Web uses OAuth; legacy local MCP clients may still send{" "}
-          <code className="text-primary">X-MCP-Secret</code> from their own
-          local config.
+          The web dashboard authenticates with your Supabase session. Each user
+          can generate personal MCP secrets from the MCP Secrets page; those
+          secrets are sent by local MCP clients as{" "}
+          <code className="text-primary">X-MCP-Secret</code>.
         </p>
         <div className="rounded-md border border-primary/30 bg-primary/5 p-3">
           <p className="text-xs text-muted-foreground">
-            Do not store MCP shared secrets in browser settings or URL query
-            params. Rotate <code className="text-primary">MCP_SECRET</code> in
-            Supabase Edge Function secrets if it was ever pasted into chat or
-            exposed.
+            There is no shared backend secret. Use per-user MCP secrets so
+            access can be created, renamed, revoked, and deleted from the
+            website per logged-in Supabase account.
           </p>
         </div>
       </GlassCard>

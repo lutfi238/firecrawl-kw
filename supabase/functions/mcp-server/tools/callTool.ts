@@ -64,8 +64,9 @@ const toolRegistry: Record<string, ToolHandler> = {
 const getJobStatusResult = async (
   authHeader: string | null,
   jobId: string,
+  userId?: string | null,
 ): Promise<ToolResult> => {
-  const status = await checkJobStatus(authHeader, jobId);
+  const status = await checkJobStatus(authHeader, jobId, userId);
   return { content: [{ type: "text", text: JSON.stringify(status, null, 2) }] };
 };
 
@@ -84,13 +85,14 @@ const createPendingJobResult = (
 async function pollJobUntilDone(
   jobId: string,
   authHeader: string | null,
+  userId?: string | null,
   maxWaitMs: number = 50000,
   intervalMs: number = 2000,
 ): Promise<Record<string, unknown> | null> {
   const deadline = Date.now() + maxWaitMs;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, intervalMs));
-    const status = await checkJobStatus(authHeader, jobId);
+    const status = await checkJobStatus(authHeader, jobId, userId);
     if (status.error) return null;
     if (status.status === "completed" || status.status === "failed") {
       return status;
@@ -110,7 +112,7 @@ export async function handleToolCall({
   if (userId) args = { ...args, userId };
 
   if (name === "scrape_js" || name === "screenshot") {
-    const userSettings = await getUserSettings(authHeader);
+    const userSettings = await getUserSettings(authHeader, userId);
     const provider = userSettings.renderer_provider || "none";
     const hasRenderer =
       provider === "browserless"
@@ -143,7 +145,7 @@ export async function handleToolCall({
 
   switch (name) {
     case "scrape_js": {
-      const userSettings = await getUserSettings(authHeader);
+      const userSettings = await getUserSettings(authHeader, userId);
       const provider = userSettings.renderer_provider || "none";
 
       // ---- Browserless provider (BrowserQL) ----
@@ -286,7 +288,11 @@ export async function handleToolCall({
     case "crawl": {
       // If jobId provided, act as status checker
       if (args.jobId) {
-        const status = await checkJobStatus(authHeader, args.jobId as string);
+        const status = await checkJobStatus(
+          authHeader,
+          args.jobId as string,
+          userId,
+        );
         return {
           kind: "result",
           result: {
@@ -295,7 +301,7 @@ export async function handleToolCall({
         };
       }
 
-      const job = await createJob(authHeader, "crawl", args);
+      const job = await createJob(authHeader, "crawl", args, userId);
       if (job.error) {
         return {
           kind: "result",
@@ -310,7 +316,7 @@ export async function handleToolCall({
       EdgeRuntime.waitUntil(processCrawlJob(job.jobId, args));
 
       // Auto-poll until done or timeout
-      const crawlResult = await pollJobUntilDone(job.jobId, authHeader);
+      const crawlResult = await pollJobUntilDone(job.jobId, authHeader, userId);
       if (crawlResult) {
         return {
           kind: "result",
@@ -373,7 +379,7 @@ export async function handleToolCall({
     }
 
     case "extract": {
-      const userSettings = await getUserSettings(authHeader);
+      const userSettings = await getUserSettings(authHeader, userId);
       const aiSettings = getAiSettingsFromMap(userSettings);
       if (!aiSettings) {
         return {
@@ -451,7 +457,7 @@ export async function handleToolCall({
     }
 
     case "screenshot": {
-      const userSettings = await getUserSettings(authHeader);
+      const userSettings = await getUserSettings(authHeader, userId);
       const provider = userSettings.renderer_provider || "none";
 
       // ---- Browserless provider (BrowserQL) ----
@@ -619,7 +625,7 @@ export async function handleToolCall({
     }
 
     case "test_ai_provider": {
-      const userSettings = await getUserSettings(authHeader);
+      const userSettings = await getUserSettings(authHeader, userId);
       const aiSettings = getAiSettingsFromMap(userSettings);
       if (!aiSettings) {
         return {
@@ -680,7 +686,7 @@ export async function handleToolCall({
     }
 
     case "github_models_catalog": {
-      const userSettings = await getUserSettings(authHeader);
+      const userSettings = await getUserSettings(authHeader, userId);
       const aiSettings = getAiSettingsFromMap(userSettings);
       const token =
         (args.token as string) ||
@@ -746,7 +752,11 @@ export async function handleToolCall({
     case "batch_scrape": {
       // If jobId provided, act as status checker
       if (args.jobId) {
-        const status = await checkJobStatus(authHeader, args.jobId as string);
+        const status = await checkJobStatus(
+          authHeader,
+          args.jobId as string,
+          userId,
+        );
         return {
           kind: "result",
           result: {
@@ -755,7 +765,7 @@ export async function handleToolCall({
         };
       }
 
-      const job = await createJob(authHeader, "batch_scrape", args);
+      const job = await createJob(authHeader, "batch_scrape", args, userId);
       if (job.error) {
         return {
           kind: "result",
@@ -770,7 +780,7 @@ export async function handleToolCall({
       EdgeRuntime.waitUntil(processBatchScrapeJob(job.jobId, args));
 
       // Auto-poll until done or timeout
-      const batchResult = await pollJobUntilDone(job.jobId, authHeader);
+      const batchResult = await pollJobUntilDone(job.jobId, authHeader, userId);
       if (batchResult) {
         return {
           kind: "result",
@@ -797,14 +807,22 @@ export async function handleToolCall({
     case "agent_status": {
       return {
         kind: "result",
-        result: await getJobStatusResult(authHeader, args.jobId as string),
+        result: await getJobStatusResult(
+          authHeader,
+          args.jobId as string,
+          userId,
+        ),
       };
     }
 
     case "agent": {
       // If jobId provided, act as status checker
       if (args.jobId) {
-        const status = await checkJobStatus(authHeader, args.jobId as string);
+        const status = await checkJobStatus(
+          authHeader,
+          args.jobId as string,
+          userId,
+        );
         return {
           kind: "result",
           result: {
@@ -813,7 +831,7 @@ export async function handleToolCall({
         };
       }
 
-      const userSettings = await getUserSettings(authHeader);
+      const userSettings = await getUserSettings(authHeader, userId);
       const aiSettings = getAiSettingsFromMap(userSettings);
       if (!aiSettings) {
         return {
@@ -830,7 +848,7 @@ export async function handleToolCall({
         };
       }
 
-      const job = await createJob(authHeader, "agent", args);
+      const job = await createJob(authHeader, "agent", args, userId);
       if (job.error) {
         return {
           kind: "result",
@@ -845,7 +863,7 @@ export async function handleToolCall({
       EdgeRuntime.waitUntil(processAgentJob(job.jobId, args, aiSettings));
 
       // Auto-poll until done or timeout
-      const agentResult = await pollJobUntilDone(job.jobId, authHeader);
+      const agentResult = await pollJobUntilDone(job.jobId, authHeader, userId);
       if (agentResult) {
         return {
           kind: "result",
@@ -868,7 +886,7 @@ export async function handleToolCall({
     }
 
     case "chat": {
-      const userSettings = await getUserSettings(authHeader);
+      const userSettings = await getUserSettings(authHeader, userId);
       const aiSettings = getAiSettingsFromMap(userSettings);
       if (!aiSettings) {
         return {
@@ -946,12 +964,17 @@ export async function handleToolCall({
 
       return {
         kind: "result",
-        result: await handleChatWithOrchestration(args, aiSettings, authHeader),
+        result: await handleChatWithOrchestration(
+          args,
+          aiSettings,
+          authHeader,
+          userId,
+        ),
       };
     }
 
     case "scrape_stealth": {
-      const userSettings = await getUserSettings(authHeader);
+      const userSettings = await getUserSettings(authHeader, userId);
       const provider = userSettings.renderer_provider || "none";
 
       if (provider !== "browserless") {
@@ -1066,7 +1089,7 @@ export async function handleToolCall({
     }
 
     case "login_and_scrape": {
-      const userSettings = await getUserSettings(authHeader);
+      const userSettings = await getUserSettings(authHeader, userId);
       const provider = userSettings.renderer_provider || "none";
 
       if (provider !== "browserless") {
@@ -1206,7 +1229,7 @@ export async function handleToolCall({
     }
 
     case "network_intercept": {
-      const userSettings = await getUserSettings(authHeader);
+      const userSettings = await getUserSettings(authHeader, userId);
       const provider = userSettings.renderer_provider || "none";
 
       if (provider !== "browserless") {
@@ -1354,7 +1377,7 @@ export async function handleToolCall({
               {
                 type: "text",
                 text: JSON.stringify({
-                  error: "Authentication required to manage API keys.",
+                  error: "Authentication required to manage MCP secrets.",
                 }),
               },
             ],
@@ -1424,7 +1447,7 @@ export async function handleToolCall({
       }
 
       if (action === "create") {
-        const keyName = (args.name as string) || "Untitled Key";
+        const keyName = (args.name as string) || "Untitled Secret";
         const { fullKey, hash, prefix } = await generateApiKey();
 
         const { data, error } = await supabase
@@ -1465,7 +1488,7 @@ export async function handleToolCall({
                     fullKey,
                     key_prefix: prefix,
                     name: keyName,
-                    warning: "Save this key now — it will not be shown again.",
+                    warning: "Save this MCP secret now. It will not be shown again.",
                   },
                   null,
                   2,
@@ -1486,7 +1509,7 @@ export async function handleToolCall({
                 {
                   type: "text",
                   text: JSON.stringify({
-                    error: "keyId is required for revoke action.",
+                    error: "secret id is required for revoke action.",
                   }),
                 },
               ],
@@ -1524,7 +1547,7 @@ export async function handleToolCall({
               {
                 type: "text",
                 text: JSON.stringify({
-                  message: `Key ${keyId} has been revoked.`,
+                  message: `Secret ${keyId} has been revoked.`,
                 }),
               },
             ],
@@ -1543,7 +1566,7 @@ export async function handleToolCall({
                 {
                   type: "text",
                   text: JSON.stringify({
-                    error: "keyId and name are required for rename action.",
+                    error: "secret id and name are required for rename action.",
                   }),
                 },
               ],
@@ -1580,7 +1603,7 @@ export async function handleToolCall({
               {
                 type: "text",
                 text: JSON.stringify({
-                  message: `Key renamed to "${name}".`,
+                  message: `Secret renamed to "${name}".`,
                 }),
               },
             ],
@@ -1598,7 +1621,7 @@ export async function handleToolCall({
                 {
                   type: "text",
                   text: JSON.stringify({
-                    error: "keyId is required for delete action.",
+                    error: "secret id is required for delete action.",
                   }),
                 },
               ],
@@ -1635,7 +1658,7 @@ export async function handleToolCall({
               {
                 type: "text",
                 text: JSON.stringify({
-                  message: `Key ${keyId} has been deleted.`,
+                  message: `Secret ${keyId} has been deleted.`,
                 }),
               },
             ],

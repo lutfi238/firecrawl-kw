@@ -7,7 +7,10 @@ declare const Deno: {
 
 async function getUserIdFromAuth(
   authHeader: string | null,
+  resolvedUserId?: string | null,
 ): Promise<string | null> {
+  if (resolvedUserId) return resolvedUserId;
+
   const defaultUserId = Deno.env.get("MCP_DEFAULT_USER_ID") || null;
   if (!authHeader) return defaultUserId;
 
@@ -46,8 +49,9 @@ function getServiceClient() {
 export async function checkJobStatus(
   authHeader: string | null,
   jobId: string,
+  resolvedUserId?: string | null,
 ): Promise<Record<string, unknown>> {
-  const userId = await getUserIdFromAuth(authHeader);
+  const userId = await getUserIdFromAuth(authHeader, resolvedUserId);
   if (!userId) return { error: "Not authenticated" };
 
   const sb = getServiceClient();

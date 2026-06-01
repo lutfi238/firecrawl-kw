@@ -14,7 +14,6 @@ const commands = [
   "supabase functions deploy mcp-logs",
   "supabase functions deploy mcp-jobs",
   "supabase functions deploy uptime-checker",
-  'supabase secrets set MCP_SECRET="<new-random-legacy-mcp-secret>"',
   'supabase secrets set MCP_MASTER_PASSWORD="<new-random-consent-password>"',
   'supabase secrets set CLAUDE_OAUTH_CLIENT_ID="firecrawl-kw-claude"',
   'supabase secrets set CLAUDE_OAUTH_CLIENT_SECRET="<new-random-client-secret>"',
@@ -62,7 +61,7 @@ export default function DeploymentGuide() {
     "D:/Project_Gabut/firecrawl-kw/scripts/mcp-stdio-proxy.mjs";
   const stdioEnv = {
     MCP_ENDPOINT: mcpEndpoint,
-    MCP_SECRET: "<value-of-MCP_SECRET>",
+    MCP_SECRET: "<per-user-secret-from-MCP-Secrets-page>",
     SUPABASE_ANON_KEY: "<optional-supabase-anon-key>",
     GITHUB_TOKEN: "<optional-github-token-for-github-tools>",
   };
@@ -200,8 +199,8 @@ export default function DeploymentGuide() {
             <span className="font-mono text-foreground">stdio proxy</span> for
             editors that only launch local MCP processes, such as VS Code, Zed,
             Claude Desktop, Cursor, and many MCP plugins. Keep secrets in local
-            client config or Supabase secrets, never in browser-visible Vite env
-            vars.
+            client config or generate them from the MCP Secrets page, never in
+            browser-visible Vite env vars.
           </div>
 
           <div className="space-y-2">
@@ -263,8 +262,9 @@ export default function DeploymentGuide() {
               </li>
               <li>
                 <span className="font-mono text-foreground">MCP_SECRET</span>:
-                legacy/local-client secret used by the stdio proxy. Required for
-                stdio configs unless you provide a valid bearer token instead.
+                per-user MCP secret generated from this website. The stdio proxy
+                forwards it as{" "}
+                <span className="font-mono text-foreground">X-MCP-Secret</span>.
               </li>
               <li>
                 <span className="font-mono text-foreground">

@@ -82,7 +82,10 @@ function detectSource(req: Request, authHeader: string | null): string {
 
 async function resolveUserId(
   authHeader: string | null,
+  resolvedUserId?: string | null,
 ): Promise<string | null> {
+  if (resolvedUserId) return resolvedUserId;
+
   const defaultUserId = Deno.env.get("MCP_DEFAULT_USER_ID") || null;
   if (!authHeader) return defaultUserId;
 
@@ -115,12 +118,13 @@ export async function logToolCall(
   req: Request,
   authHeader: string | null,
   payload: LogPayload,
+  resolvedUserId?: string | null,
 ): Promise<void> {
   try {
     const sb = getServiceClient();
     if (!sb) return;
 
-    const userId = await resolveUserId(authHeader);
+    const userId = await resolveUserId(authHeader, resolvedUserId);
     if (!userId) return;
 
     const source = detectSource(req, authHeader);

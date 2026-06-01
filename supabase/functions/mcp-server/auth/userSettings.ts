@@ -29,7 +29,10 @@ async function getSettingsForUserId(
 
 export async function getUserSettings(
   authHeader: string | null,
+  resolvedUserId?: string | null,
 ): Promise<Record<string, string>> {
+  if (resolvedUserId) return getSettingsForUserId(resolvedUserId);
+
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
   const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY");
   if (!authHeader) {

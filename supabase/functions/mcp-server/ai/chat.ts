@@ -263,6 +263,7 @@ export async function handleChatWithOrchestration(
   args: Record<string, unknown>,
   aiSettings: AiSettings,
   authHeader: string | null,
+  userId?: string | null,
 ): Promise<{
   content: Array<{ type: string; text?: string }>;
   isError?: boolean;
@@ -338,7 +339,7 @@ export async function handleChatWithOrchestration(
       );
       if (jobIdMatch) {
         addStep("Intent: job_status — checking job " + jobIdMatch[0]);
-        const status = await checkJobStatus(authHeader, jobIdMatch[0]);
+        const status = await checkJobStatus(authHeader, jobIdMatch[0], userId);
         return {
           content: [{ type: "text", text: JSON.stringify(status, null, 2) }],
         };
@@ -371,9 +372,12 @@ export async function handleChatWithOrchestration(
     if (intent === "multi_url") {
       const urls = message.match(/https?:\/\/[^\s,]+/g) || [];
       addStep("Intent: multi_url — batch scraping " + urls.length + " URLs");
-      const job = await createJob(authHeader, "batch_scrape", {
-        urls: urls.join(", "),
-      });
+      const job = await createJob(
+        authHeader,
+        "batch_scrape",
+        { urls: urls.join(", ") },
+        userId,
+      );
       if (job.error) {
         return {
           content: [
@@ -399,11 +403,16 @@ export async function handleChatWithOrchestration(
       const urlMatch = message.match(/https?:\/\/[^\s,]+/);
       if (urlMatch) {
         addStep("Intent: crawl — starting crawl for " + urlMatch[0]);
-        const job = await createJob(authHeader, "crawl", {
-          url: urlMatch[0],
-          maxPages: 10,
-          extractContent: true,
-        });
+        const job = await createJob(
+          authHeader,
+          "crawl",
+          {
+            url: urlMatch[0],
+            maxPages: 10,
+            extractContent: true,
+          },
+          userId,
+        );
         if (job.error) {
           return {
             content: [
@@ -459,10 +468,15 @@ export async function handleChatWithOrchestration(
 
     if (isHeavyChatIntent(intent)) {
       addStep(`Intent: ${intent} — delegating to async agent job`);
-      const job = await createJob(authHeader, "agent", {
-        prompt: message,
-        maxSteps: 5,
-      });
+      const job = await createJob(
+        authHeader,
+        "agent",
+        {
+          prompt: message,
+          maxSteps: 5,
+        },
+        userId,
+      );
       if (job.error) {
         return {
           content: [

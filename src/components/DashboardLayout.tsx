@@ -25,7 +25,7 @@ const navItems = [
   { to: "/", icon: LayoutDashboard, label: "Overview" },
   { to: "/tester", icon: FlaskConical, label: "Tool Tester" },
   { to: "/api-tester", icon: Terminal, label: "API Tester" },
-  { to: "/api-keys", icon: Key, label: "API Keys" },
+  { to: "/api-keys", icon: Key, label: "MCP Secrets" },
   { to: "/monitor", icon: Activity, label: "Monitor" },
   { to: "/settings", icon: Settings, label: "Settings" },
   { to: "/chat", icon: MessageSquare, label: "AI Chat" },
@@ -50,6 +50,8 @@ export function DashboardLayout({
   const avatarUrl = user?.user_metadata?.avatar_url;
   const username =
     user?.user_metadata?.user_name ?? user?.email?.split("@")[0] ?? "User";
+  const authProvider =
+    user?.app_metadata?.provider === "github" ? "GitHub" : "Supabase";
 
   return (
     <div className="flex min-h-screen bg-background dot-grid">
@@ -116,7 +118,7 @@ export function DashboardLayout({
             <div className="flex-1 min-w-0">
               <p className="text-xs font-medium truncate">{username}</p>
               <p className="text-[10px] text-muted-foreground truncate">
-                GitHub
+                {authProvider}
               </p>
             </div>
             <Button

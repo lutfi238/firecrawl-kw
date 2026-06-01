@@ -1,4 +1,4 @@
--- user_api_keys: per-user API keys for REST API authentication
+-- user_api_keys: per-user MCP secrets for REST/MCP authentication
 create table if not exists public.user_api_keys (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -13,7 +13,7 @@ create table if not exists public.user_api_keys (
 create index if not exists idx_user_api_keys_user_id on public.user_api_keys(user_id);
 create index if not exists idx_user_api_keys_key_hash on public.user_api_keys(key_hash) where revoked_at is null;
 
--- RLS: users can only see/manage their own keys
+-- RLS: users can only see/manage their own secrets
 alter table public.user_api_keys enable row level security;
 
 create policy "Users can view own keys"

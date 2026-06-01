@@ -67,9 +67,10 @@ export function htmlToMarkdown(html: string): string {
   // Turn `](url)[` into `]\n\n[` so each link gets its own line.
   md = md.replace(/\]\(([^)]+)\)\s*\[/g, "]($1)\n\n[");
 
-  // Insert newline before a link when preceded by inline text (e.g. "NewestProject[")
-  // but NOT before images (![) which must stay intact.
-  md = md.replace(/([^\n!])\[/g, "$1\n\n[");
+  // Insert newline before a link only when smashed directly against inline
+  // text (e.g. "NewestProject["), NOT when separated by whitespace (normal
+  // inline links like "Visit [Example]") and NOT before images (![).
+  md = md.replace(/([^\s!])\[/g, "$1\n\n[");
 
   md = md.replace(/[ \t]+\n/g, "\n");
   md = md.replace(/\n{3,}/g, "\n\n").trim();

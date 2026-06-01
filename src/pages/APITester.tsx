@@ -73,43 +73,64 @@ export default function APITester() {
   const [maxResults, setMaxResults] = useState("5");
   const [loading, setLoading] = useState(false);
   const [response, setResponse] = useState<string>("");
-  const [responseStatus, setResponseStatus] = useState<"success" | "error" | null>(null);
+  const [responseStatus, setResponseStatus] = useState<
+    "success" | "error" | null
+  >(null);
   const [responseTime, setResponseTime] = useState<number | null>(null);
 
   const backendConfig = getBackendConfig();
   const baseUrl = backendConfig.mcpEndpoint || "";
 
-  const fetchEndpoint = baseUrl ? `${baseUrl}/v1/web/fetch` : "https://<project>.supabase.co/functions/v1/mcp-server/v1/web/fetch";
-  const searchEndpoint = baseUrl ? `${baseUrl}/v1/search` : "https://<project>.supabase.co/functions/v1/mcp-server/v1/search";
+  const fetchEndpoint = baseUrl
+    ? `${baseUrl}/v1/web/fetch`
+    : "https://<project>.supabase.co/functions/v1/mcp-server/v1/web/fetch";
+  const searchEndpoint = baseUrl
+    ? `${baseUrl}/v1/search`
+    : "https://<project>.supabase.co/functions/v1/mcp-server/v1/search";
   const currentEndpoint = endpoint === "fetch" ? fetchEndpoint : searchEndpoint;
 
-  const maskedKey = apiKey ? `${apiKey.slice(0, 7)}${"•".repeat(Math.max(0, apiKey.length - 7))}` : "";
+  const maskedKey = apiKey
+    ? `${apiKey.slice(0, 7)}${"•".repeat(Math.max(0, apiKey.length - 7))}`
+    : "";
 
-  const isMcpSecret = apiKey.startsWith("firecrawl-") || apiKey.startsWith("sk-") || apiKey.length > 20;
+  const isMcpSecret =
+    apiKey.startsWith("firecrawl-") ||
+    apiKey.startsWith("sk-") ||
+    apiKey.length > 20;
   const authHeaderName = isMcpSecret ? "X-MCP-Secret" : "Authorization: Bearer";
 
   const generateCurl = (): string => {
-    const authHeader = apiKey ? `  -H "${authHeaderName}: ***" \\` : "  # Add your API key";
+    const authHeader = apiKey
+      ? `  -H "${authHeaderName}: ***" \\`
+      : "  # Add your API key";
     const contentType = '  -H "Content-Type: application/json" \\';
 
     if (endpoint === "fetch") {
-      const body = JSON.stringify({
-        url,
-        format: format !== "markdown" ? format : undefined,
-        max_characters: parseInt(maxChars) || 0,
-        js: jsEnabled || undefined,
-        waitFor: jsEnabled ? parseInt(waitFor) || 3000 : undefined,
-      }, null, 2);
+      const body = JSON.stringify(
+        {
+          url,
+          format: format !== "markdown" ? format : undefined,
+          max_characters: parseInt(maxChars) || 0,
+          js: jsEnabled || undefined,
+          waitFor: jsEnabled ? parseInt(waitFor) || 3000 : undefined,
+        },
+        null,
+        2,
+      );
 
       return `curl -X POST ${fetchEndpoint} \\
 ${contentType}
 ${authHeader}
   -d '${body.replace(/'/g, "'\\''")}'`;
     } else {
-      const body = JSON.stringify({
-        query,
-        max_results: parseInt(maxResults) || 5,
-      }, null, 2);
+      const body = JSON.stringify(
+        {
+          query,
+          max_results: parseInt(maxResults) || 5,
+        },
+        null,
+        2,
+      );
 
       return `curl -X POST ${searchEndpoint} \\
 ${contentType}
@@ -125,7 +146,9 @@ ${authHeader}
 
   const execute = async () => {
     if (!apiKey) {
-      toast.error("API key is required. Use your Supabase session token or MCP secret.");
+      toast.error(
+        "API key is required. Use your Supabase session token or a per-user MCP secret.",
+      );
       return;
     }
 
@@ -508,7 +531,9 @@ ${authHeader}
               <div className="flex items-start gap-2">
                 <AlertCircle className="h-4 w-4 text-destructive mt-0.5 shrink-0" />
                 <div>
-                  <p className="text-xs text-destructive font-medium">Request failed</p>
+                  <p className="text-xs text-destructive font-medium">
+                    Request failed
+                  </p>
                   <p className="text-[10px] text-muted-foreground mt-1">
                     {responseStatus === "error" && !response.includes("success")
                       ? "HTTP error — check API key and endpoint URL."
@@ -538,10 +563,24 @@ ${authHeader}
           <div className="space-y-2">
             <p className="text-xs text-cyber-amber font-medium">Info</p>
             <ul className="text-[11px] text-muted-foreground space-y-1 font-mono">
-              <li>• API Key: gunakan Supabase session token atau MCP shared secret</li>
-              <li>• Session token: buka DevTools → Application → LocalStorage → <code className="text-primary">supabase.auth.token</code> → copy <code className="text-primary">access_token</code></li>
-              <li>• Endpoint Supabase: <code className="text-primary">https://pvbkvntrofpmcwgmmacv.supabase.co/functions/v1/mcp-server</code></li>
-              <li>• REST API memerlukan Supabase Edge Function sudah di-deploy</li>
+              <li>
+                • API Key: gunakan Supabase session token atau MCP secret dari
+                halaman MCP Secrets
+              </li>
+              <li>
+                • Session token: buka DevTools → Application → LocalStorage →{" "}
+                <code className="text-primary">supabase.auth.token</code> → copy{" "}
+                <code className="text-primary">access_token</code>
+              </li>
+              <li>
+                • Endpoint Supabase:{" "}
+                <code className="text-primary">
+                  https://azegdjbrznxdhyeaztqm.supabase.co/functions/v1/mcp-server
+                </code>
+              </li>
+              <li>
+                • REST API memerlukan Supabase Edge Function sudah di-deploy
+              </li>
             </ul>
           </div>
         </div>

@@ -97,7 +97,7 @@ export default function ApiKeysPage() {
   const [keys, setKeys] = useState<ApiKeyRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
-  const [newKeyName, setNewKeyName] = useState("Default Key");
+  const [newKeyName, setNewKeyName] = useState("Default Secret");
   const [createdKey, setCreatedKey] = useState<CreatedKeyResponse | null>(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -116,7 +116,7 @@ export default function ApiKeysPage() {
       const result = await callTool("api_key_manage", { action: "list" });
       if (result.isError) {
         const text = result.content.map((c) => c.text ?? "").join("\n");
-        toast.error("Failed to load API keys", { description: text });
+        toast.error("Failed to load MCP secrets", { description: text });
         return;
       }
       const text = result.content.map((c) => c.text ?? "").join("\n");
@@ -137,7 +137,7 @@ export default function ApiKeysPage() {
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
-      toast.error("Failed to load API keys", { description: message });
+      toast.error("Failed to load MCP secrets", { description: message });
     } finally {
       setLoading(false);
     }
@@ -147,7 +147,7 @@ export default function ApiKeysPage() {
     fetchKeys();
   }, [fetchKeys]);
 
-  // ── Create key ───────────────────────────────────────────────────
+  // ── Create secret ────────────────────────────────────────────────
 
   const handleCreateKey = async () => {
     setShowCreateDialog(true);
@@ -156,21 +156,21 @@ export default function ApiKeysPage() {
     try {
       const result = await callTool("api_key_manage", {
         action: "create",
-        name: newKeyName.trim() || "Default Key",
+        name: newKeyName.trim() || "Default Secret",
       });
       if (result.isError) {
         const text = result.content.map((c) => c.text ?? "").join("\n");
-        toast.error("Failed to create API key", { description: text });
+        toast.error("Failed to create MCP secret", { description: text });
         setShowCreateDialog(false);
         return;
       }
       const text = result.content.map((c) => c.text ?? "").join("\n");
       const parsed = parseJsonFromToolResult(text) as CreatedKeyResponse | null;
       if (parsed && parsed.fullKey) {
-        // Auto-copy the full key to clipboard
+        // Auto-copy the full secret to clipboard
         await navigator.clipboard.writeText(parsed.fullKey).catch(() => {});
         setCreatedKey(parsed);
-        toast.success("API key created — copied to clipboard!");
+        toast.success("MCP secret created and copied to clipboard");
         // Refresh the list
         await fetchKeys();
       } else {
@@ -178,13 +178,13 @@ export default function ApiKeysPage() {
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
-      toast.error("Failed to create API key", { description: message });
+      toast.error("Failed to create MCP secret", { description: message });
     } finally {
       setCreating(false);
     }
   };
 
-  // ── Copy key ─────────────────────────────────────────────────────
+  // ── Copy secret ──────────────────────────────────────────────────
 
   const copyToClipboard = async (text: string, id: string) => {
     try {
@@ -197,7 +197,7 @@ export default function ApiKeysPage() {
     }
   };
 
-  // ── Rename key ───────────────────────────────────────────────────
+  // ── Rename secret ────────────────────────────────────────────────
 
   const handleRenameKey = async () => {
     if (!detailKey || !editName.trim()) return;
@@ -210,17 +210,17 @@ export default function ApiKeysPage() {
       });
       if (result.isError) {
         const text = result.content.map((c) => c.text ?? "").join("\n");
-        toast.error("Failed to rename API key", { description: text });
+        toast.error("Failed to rename MCP secret", { description: text });
         return;
       }
-      toast.success("API key renamed successfully");
+      toast.success("MCP secret renamed successfully");
       setDetailKey((prev) =>
         prev ? { ...prev, name: editName.trim() } : null,
       );
       await fetchKeys();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
-      toast.error("Failed to rename API key", { description: message });
+      toast.error("Failed to rename MCP secret", { description: message });
     } finally {
       setRenamingId(null);
     }
@@ -232,7 +232,7 @@ export default function ApiKeysPage() {
     setEditName(key.name);
   };
 
-  // ── Delete key ───────────────────────────────────────────────────
+  // ── Delete secret ────────────────────────────────────────────────
 
   const handleDeleteKey = async (keyId: string) => {
     setDeletingId(keyId);
@@ -243,14 +243,14 @@ export default function ApiKeysPage() {
       });
       if (result.isError) {
         const text = result.content.map((c) => c.text ?? "").join("\n");
-        toast.error("Failed to delete API key", { description: text });
+        toast.error("Failed to delete MCP secret", { description: text });
         return;
       }
-      toast.success("API key deleted successfully");
+      toast.success("MCP secret deleted successfully");
       await fetchKeys();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
-      toast.error("Failed to delete API key", { description: message });
+      toast.error("Failed to delete MCP secret", { description: message });
     } finally {
       setDeletingId(null);
     }
@@ -262,7 +262,7 @@ export default function ApiKeysPage() {
     return (
       <div className="space-y-4 max-w-6xl">
         <h1 className="font-display text-xl font-bold tracking-wider text-gradient-cyber">
-          API KEYS
+          MCP SECRETS
         </h1>
         <GlassCard className="flex items-center justify-center py-16">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -278,7 +278,7 @@ export default function ApiKeysPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <h1 className="font-display text-xl font-bold tracking-wider text-gradient-cyber">
-          API KEYS
+          MCP SECRETS
         </h1>
         <Button
           onClick={handleCreateKey}
@@ -286,7 +286,7 @@ export default function ApiKeysPage() {
           className="gap-2 text-xs font-mono bg-primary/90 hover:bg-primary text-primary-foreground"
         >
           <Plus className="h-3.5 w-3.5" />
-          Generate New Key
+          Generate MCP Secret
         </Button>
 
         {/* Create Key Dialog */}
@@ -301,12 +301,12 @@ export default function ApiKeysPage() {
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 <Key className="h-4 w-4 text-cyan-400" />
-                {createdKey ? "Key Created" : "Generating..."}
+                {createdKey ? "Secret Created" : "Generating..."}
               </DialogTitle>
               <DialogDescription>
                 {createdKey
-                  ? "Copy this key and store it securely. It will not be shown again."
-                  : "Generating a new API key..."}
+                  ? "Copy this MCP secret and store it securely. It will not be shown again."
+                  : "Generating a new per-user MCP secret..."}
               </DialogDescription>
             </DialogHeader>
 
@@ -314,13 +314,13 @@ export default function ApiKeysPage() {
               <div className="space-y-3">
                 <div>
                   <label className="text-xs font-mono text-muted-foreground">
-                    Key Name
+                    Secret Name
                   </label>
                   <p className="text-sm font-medium mt-1">{createdKey.name}</p>
                 </div>
                 <div>
                   <label className="text-xs font-mono text-muted-foreground">
-                    Full API Key
+                    Full MCP Secret
                   </label>
                   <div className="flex items-center gap-2 mt-1">
                     <code className="flex-1 text-xs font-mono bg-background/50 rounded-md px-3 py-2 border border-border/50 break-all select-all">
@@ -363,15 +363,15 @@ export default function ApiKeysPage() {
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 <Key className="h-4 w-4 text-cyan-400" />
-                API Key Details
+                MCP Secret Details
               </DialogTitle>
               <DialogDescription>
-                View and manage this API key. The full key is only shown once
+                View and manage this per-user MCP secret. The full secret is only shown once
                 during creation.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-2">
-              {/* Key Name (editable inline) */}
+              {/* Secret name (editable inline) */}
               <div className="space-y-2">
                 <label className="text-xs font-mono text-muted-foreground">
                   Name
@@ -380,7 +380,8 @@ export default function ApiKeysPage() {
                   <Input
                     value={editName}
                     onChange={(e) => setEditName(e.target.value)}
-                    placeholder="Key name"
+                    placeholder="Secret name"
+                    aria-label="Secret name"
                     className="font-mono text-sm bg-background/50 border-border flex-1"
                     onKeyDown={(e) => {
                       if (e.key === "Enter") handleRenameKey();
@@ -401,10 +402,10 @@ export default function ApiKeysPage() {
                 </div>
               </div>
 
-              {/* Key Prefix with eye toggle */}
+              {/* Secret prefix with eye toggle */}
               <div className="space-y-2">
                 <label className="text-xs font-mono text-muted-foreground">
-                  Key Prefix
+                  Secret Prefix
                 </label>
                 <div className="flex items-center gap-2">
                   <code className="flex-1 text-xs font-mono bg-background/50 rounded-md px-3 py-2 border border-border/50 break-all select-all">
@@ -417,7 +418,7 @@ export default function ApiKeysPage() {
                     size="sm"
                     className="h-8 w-8 p-0 shrink-0 text-muted-foreground hover:text-foreground"
                     onClick={() => setShowPrefix(!showPrefix)}
-                    title={showPrefix ? "Hide key" : "Show key"}
+                    title={showPrefix ? "Hide secret" : "Show secret"}
                   >
                     {showPrefix ? (
                       <EyeOff className="h-4 w-4" />
@@ -483,7 +484,7 @@ export default function ApiKeysPage() {
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
-                    Key ID
+                    Secret ID
                   </label>
                   <p className="text-[10px] font-mono text-muted-foreground break-all">
                     {detailKey?.id.slice(0, 8)}...
@@ -520,14 +521,14 @@ export default function ApiKeysPage() {
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2 text-destructive">
                 <Trash2 className="h-4 w-4" />
-                Delete API Key?
+                Delete MCP Secret?
               </DialogTitle>
               <DialogDescription>
                 Are you sure you want to delete{" "}
                 <span className="font-mono text-foreground">
                   {deleteTarget?.name}
                 </span>
-                ? This will permanently remove the key and any service using it
+                ? This will permanently remove the secret and any service using it
                 will stop working immediately.
               </DialogDescription>
             </DialogHeader>
@@ -563,15 +564,15 @@ export default function ApiKeysPage() {
         </Dialog>
       </div>
 
-      {/* Keys table */}
+      {/* Secrets table */}
       {keys.length === 0 ? (
         <GlassCard className="flex flex-col items-center justify-center py-16 text-center">
           <ShieldAlert className="h-12 w-12 text-muted-foreground/30 mb-4" />
           <p className="text-sm text-muted-foreground mb-1 font-medium">
-            No API keys yet
+            No MCP secrets yet
           </p>
           <p className="text-xs text-muted-foreground/70">
-            Generate your first key to get started.
+            Generate your first per-user secret to connect MCP clients.
           </p>
         </GlassCard>
       ) : (
@@ -583,7 +584,7 @@ export default function ApiKeysPage() {
                   Name
                 </TableHead>
                 <TableHead className="font-mono text-xs uppercase tracking-wider text-muted-foreground">
-                  Key Prefix
+                  Secret Prefix
                 </TableHead>
                 <TableHead className="font-mono text-xs uppercase tracking-wider text-muted-foreground hidden md:table-cell">
                   Created

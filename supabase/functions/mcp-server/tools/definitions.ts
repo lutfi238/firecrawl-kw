@@ -448,7 +448,7 @@ export function getToolDefinitions(
     {
       name: "api_key_manage",
       description:
-        "Manage API keys for the current user. Actions: list, create, revoke, rename, delete",
+        "Manage per-user MCP secrets for the current user. Actions: list, create, revoke, rename, delete",
       inputSchema: {
         type: "object",
         properties: {
@@ -459,11 +459,11 @@ export function getToolDefinitions(
           },
           name: {
             type: "string",
-            description: "Key name (for create or rename action)",
+            description: "Secret name (for create or rename action)",
           },
           keyId: {
             type: "string",
-            description: "Key ID to revoke, rename, or delete",
+            description: "Secret ID to revoke, rename, or delete",
           },
         },
         required: ["action"],

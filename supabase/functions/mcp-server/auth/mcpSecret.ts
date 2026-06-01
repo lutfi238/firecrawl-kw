@@ -10,7 +10,7 @@ type SecretRequest = Pick<Request, "headers">;
 
 /**
  * Validates MCP requests. Accepts EITHER:
- *   - X-MCP-Secret header matching MCP_SECRET env var (legacy clients), OR
+ *   - X-MCP-Secret containing a per-user MCP secret generated in the dashboard, OR
  *   - Authorization: Bearer <token> issued via OAuth flow (Claude Web etc.), OR
  *   - Authorization: Bearer <supabase-session-token> for the authenticated dashboard.
  *
@@ -21,16 +21,10 @@ export async function checkMcpAuth(
   corsHeaders: Record<string, string>,
   resourceMetadataUrl: string,
 ): Promise<Response | null> {
-  const secret = Deno.env.get("MCP_SECRET");
   const provided = request.headers.get("x-mcp-secret");
 
   if (provided) {
-    // 1) Legacy shared secret
-    if (secret && provided === secret) {
-      console.log("[mcp] auth secret ok");
-      return null;
-    }
-    // 2) User API key
+    // Per-user MCP secret
     if (isApiKey(provided)) {
       const result = await verifyApiKey(provided);
       if (result) {
@@ -38,7 +32,7 @@ export async function checkMcpAuth(
         return null;
       }
     }
-    console.warn("[mcp] auth secret/api-key mismatch");
+    console.warn("[mcp] auth api-key mismatch");
     return unauthorized(
       corsHeaders,
       resourceMetadataUrl,
@@ -69,12 +63,8 @@ export async function checkMcpAuth(
     );
   }
 
-  // No credentials supplied at all. If neither MCP_SECRET nor OAuth is needed (no secret env)
-  // and bearer absent, we still require auth — production posture.
-  if (!secret) {
-    // If you intentionally want a fully open server, set MCP_SECRET to empty AND remove this guard.
-    // We require OAuth in that case.
-  }
+  // No credentials supplied at all. Per-user MCP secret, OAuth, or a Supabase
+  // session bearer is required.
   console.warn("[mcp] auth missing");
   return unauthorized(
     corsHeaders,
@@ -128,13 +118,13 @@ export const checkMcpSecret = checkMcpAuth;
 
 /**
  * Resolves the authenticated user ID from available credentials.
- * Checks in order: API key (X-MCP-Secret), OAuth bearer, Supabase session bearer, default user.
+ * Checks in order: per-user MCP secret (X-MCP-Secret), OAuth bearer, Supabase session bearer, default user.
  */
 export async function resolveUserId(
   authHeader: string | null,
   mcpSecretHeader: string | null,
 ): Promise<string | null> {
-  // 1) User API key via X-MCP-Secret
+  // 1) Per-user MCP secret via X-MCP-Secret
   if (mcpSecretHeader && isApiKey(mcpSecretHeader)) {
     const result = await verifyApiKey(mcpSecretHeader);
     if (result) return result.userId;

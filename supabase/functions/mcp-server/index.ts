@@ -213,7 +213,7 @@ Deno.serve(async (req: Request) => {
             },
             status: outcome.result.isError ? "error" : "success",
             durationMs: Date.now() - startedAt,
-          });
+          }, restUserId);
 
           if (outcome.result.isError) {
             return jsonResponse({ success: false, error: truncated }, 422);
@@ -275,7 +275,7 @@ Deno.serve(async (req: Request) => {
             output: { length: text.length },
             status: outcome.result.isError ? "error" : "success",
             durationMs: Date.now() - startedAt,
-          });
+          }, restUserId);
 
           if (outcome.result.isError) {
             return jsonResponse({ success: false, error: text }, 422);
@@ -341,7 +341,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (method === "tools/list") {
-      const userSettings = await getUserSettings(authHeader);
+      const userSettings = await getUserSettings(authHeader, userId);
       const aiSettings = getAiSettingsFromMap(userSettings);
       const toolDefs = getToolDefinitions(userSettings, aiSettings);
       return jsonResponse({ jsonrpc: "2.0", id, result: { tools: toolDefs } });
@@ -366,7 +366,7 @@ Deno.serve(async (req: Request) => {
           output: { type: "raw-response" },
           status: "success",
           durationMs: Date.now() - startedAt,
-        });
+        }, userId);
         return outcome.response;
       }
 
@@ -377,7 +377,7 @@ Deno.serve(async (req: Request) => {
           output: { error: `Unknown tool: ${name}` },
           status: "error",
           durationMs: Date.now() - startedAt,
-        });
+        }, userId);
         return jsonResponse({
           jsonrpc: "2.0",
           id,
@@ -391,7 +391,7 @@ Deno.serve(async (req: Request) => {
         output: outcome.result,
         status: outcome.result?.isError ? "error" : "success",
         durationMs: Date.now() - startedAt,
-      });
+      }, userId);
 
       return jsonResponse({ jsonrpc: "2.0", id, result: outcome.result });
     }

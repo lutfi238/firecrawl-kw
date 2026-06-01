@@ -12,7 +12,10 @@ function getServiceClient() {
 
 async function getUserIdFromAuth(
   authHeader: string | null,
+  resolvedUserId?: string | null,
 ): Promise<string | null> {
+  if (resolvedUserId) return resolvedUserId;
+
   const defaultUserId = Deno.env.get("MCP_DEFAULT_USER_ID") || null;
   const url = Deno.env.get("SUPABASE_URL");
   const key = Deno.env.get("SUPABASE_ANON_KEY");
@@ -106,8 +109,9 @@ export async function createJob(
   authHeader: string | null,
   type: string,
   input: Record<string, unknown>,
+  resolvedUserId?: string | null,
 ): Promise<{ jobId: string; error?: string }> {
-  const userId = await getUserIdFromAuth(authHeader);
+  const userId = await getUserIdFromAuth(authHeader, resolvedUserId);
   if (!userId) return { jobId: "", error: "Not authenticated" };
 
   const svc = getServiceClient();

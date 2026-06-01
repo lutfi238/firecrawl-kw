@@ -7,7 +7,7 @@ This is the living plan for the refactor discussed in chat. Keep this file updat
 - Project: Vite + React + TypeScript frontend, Supabase backend, Remote MCP server in Supabase Edge Functions.
 - Frontend hosting: Lovable syncs from GitHub `main` and hosts the web UI.
 - Backend hosting: Supabase Edge Functions must be deployed separately with Supabase CLI unless an external integration deploys them.
-- Current remote MCP URL: `https://pvbkvntrofpmcwgmmacv.supabase.co/functions/v1/mcp-server`.
+- Current remote MCP URL: `https://azegdjbrznxdhyeaztqm.supabase.co/functions/v1/mcp-server`.
 - Current product direction: personal/self-hostable MCP dashboard first, with a future-friendly “bring your own Supabase/MCP backend” architecture.
 
 ## Main Product Goal
@@ -131,7 +131,7 @@ Claude Web connector values:
 
 ```text
 Connector name: firecrawl-kw
-Remote MCP server URL: https://pvbkvntrofpmcwgmmacv.supabase.co/functions/v1/mcp-server
+Remote MCP server URL: https://azegdjbrznxdhyeaztqm.supabase.co/functions/v1/mcp-server
 OAuth Client ID: value of CLAUDE_OAUTH_CLIENT_ID, e.g. firecrawl-kw-claude
 OAuth Client Secret: value of CLAUDE_OAUTH_CLIENT_SECRET
 ```

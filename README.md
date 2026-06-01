@@ -35,7 +35,6 @@ Supabase Edge Functions membutuhkan:
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `GITHUB_CLIENT_ID`
 - `GITHUB_CLIENT_SECRET`
-- `MCP_SECRET` untuk legacy MCP clients yang bisa mengirim header `X-MCP-Secret`
 - `MCP_MASTER_PASSWORD` untuk consent page OAuth MCP
 - `CLAUDE_OAUTH_CLIENT_ID` untuk Claude Web custom connector
 - `CLAUDE_OAUTH_CLIENT_SECRET` untuk Claude Web custom connector
@@ -66,10 +65,9 @@ Claude Web tidak mendukung custom header seperti `X-MCP-Secret`. Remote MCP endp
 
 ### 1. Rotate backend secrets
 
-Anggap nilai `X-MCP-Secret` lama sudah compromised jika pernah dipaste ke chat/log. Buat nilai baru yang panjang dan acak, lalu simpan hanya sebagai Supabase Edge Function secret:
+Untuk OAuth Claude Web, backend masih membutuhkan password consent dan client secret. Per-user MCP secret untuk client lokal tidak perlu di-upload lewat CLI; login ke dashboard dengan akun Supabase, buka **MCP Secrets**, lalu generate secret per akun.
 
 ```bash
-supabase secrets set MCP_SECRET="<new-random-legacy-mcp-secret>"
 supabase secrets set MCP_MASTER_PASSWORD="<new-random-consent-password>"
 supabase secrets set CLAUDE_OAUTH_CLIENT_ID="firecrawl-kw-claude"
 supabase secrets set CLAUDE_OAUTH_CLIENT_SECRET="<new-random-oauth-client-secret>"
@@ -77,7 +75,7 @@ supabase secrets set CLAUDE_OAUTH_CLIENT_SECRET="<new-random-oauth-client-secret
 supabase secrets set MCP_DEFAULT_USER_ID="<your-supabase-auth-user-id>"
 ```
 
-`MCP_SECRET` hanya untuk MCP clients lain yang memang bisa mengirim header. Claude Web tidak pernah menerima nilai ini.
+Semua client yang bisa mengirim `X-MCP-Secret` memakai per-user secret dari halaman **MCP Secrets**. Shared backend secret (`MCP_SECRET`) sudah dihapus; auth hanya menerima per-user secret, Supabase session, atau OAuth.
 
 ### 2. Apply OAuth storage migration
 
@@ -102,14 +100,14 @@ Pastikan `supabase/config.toml` tetap berisi:
 verify_jwt = false
 ```
 
-Auth dilakukan oleh handler MCP sendiri: legacy `X-MCP-Secret`, OAuth bearer token Claude Web, atau Supabase session bearer token untuk dashboard.
+Auth dilakukan oleh handler MCP sendiri: per-user `X-MCP-Secret`, optional legacy shared `X-MCP-Secret`, OAuth bearer token Claude Web, atau Supabase session bearer token untuk dashboard.
 
 ### 4. Paste this into Claude Web
 
 Di Claude Web → **Settings** → **Connectors** → **Add custom connector**:
 
 - Connector name: `firecrawl-kw`
-- Remote MCP server URL: `https://pvbkvntrofpmcwgmmacv.supabase.co/functions/v1/mcp-server`
+- Remote MCP server URL: `https://azegdjbrznxdhyeaztqm.supabase.co/functions/v1/mcp-server`
 - OAuth Client ID: value dari `CLAUDE_OAUTH_CLIENT_ID`, contoh `firecrawl-kw-claude`
 - OAuth Client Secret: value dari `CLAUDE_OAUTH_CLIENT_SECRET`
 
@@ -117,11 +115,11 @@ Saat Claude membuka authorization page, masukkan `MCP_MASTER_PASSWORD`. Setelah 
 
 ### 5. OAuth endpoints exposed by the MCP function
 
-- Protected resource metadata: `https://pvbkvntrofpmcwgmmacv.supabase.co/functions/v1/mcp-server/.well-known/oauth-protected-resource`
-- Authorization server metadata: `https://pvbkvntrofpmcwgmmacv.supabase.co/functions/v1/mcp-server/.well-known/oauth-authorization-server`
-- Dynamic client registration: `https://pvbkvntrofpmcwgmmacv.supabase.co/functions/v1/mcp-server/register`
-- Authorization endpoint: `https://pvbkvntrofpmcwgmmacv.supabase.co/functions/v1/mcp-server/authorize`
-- Token endpoint: `https://pvbkvntrofpmcwgmmacv.supabase.co/functions/v1/mcp-server/token`
+- Protected resource metadata: `https://azegdjbrznxdhyeaztqm.supabase.co/functions/v1/mcp-server/.well-known/oauth-protected-resource`
+- Authorization server metadata: `https://azegdjbrznxdhyeaztqm.supabase.co/functions/v1/mcp-server/.well-known/oauth-authorization-server`
+- Dynamic client registration: `https://azegdjbrznxdhyeaztqm.supabase.co/functions/v1/mcp-server/register`
+- Authorization endpoint: `https://azegdjbrznxdhyeaztqm.supabase.co/functions/v1/mcp-server/authorize`
+- Token endpoint: `https://azegdjbrznxdhyeaztqm.supabase.co/functions/v1/mcp-server/token`
 
 Unauthenticated MCP JSON-RPC POST requests return `401` with `WWW-Authenticate: Bearer resource_metadata="..."` so Claude can discover OAuth correctly on Supabase Edge Functions.
 
@@ -167,7 +165,7 @@ The hosted frontend can now be used as a UI shell for a Supabase/MCP backend you
 - Supabase anon/publishable key
 - MCP endpoint URL
 
-Only use the browser-safe anon/publishable key in the frontend. Keep `SUPABASE_SERVICE_ROLE_KEY`, `MCP_SECRET`, OAuth client secrets, and GitHub App private keys in Supabase Edge Function secrets only.
+Only use the browser-safe anon/publishable key in the frontend. Keep `SUPABASE_SERVICE_ROLE_KEY`, OAuth client secrets, optional legacy `MCP_SECRET`, and GitHub App private keys in Supabase Edge Function secrets only. Manage normal per-user MCP secrets from the website after logging in.
 
 ## Local MCP stdio bridge
 
@@ -183,7 +181,7 @@ Contoh konfigurasi MCP client:
     "env": {
       "MCP_ENDPOINT": "https://<project-ref>.supabase.co/functions/v1/mcp-server",
       "SUPABASE_ANON_KEY": "<supabase-anon-key>",
-      "MCP_SECRET": "<optional-mcp-secret>",
+      "MCP_SECRET": "<per-user-secret-from-MCP-Secrets-page>",
       "GITHUB_TOKEN": "<optional-github-token>",
       "SUPABASE_ACCESS_TOKEN": "<optional-user-access-token>"
     }
@@ -201,7 +199,7 @@ Alternatif jika ingin endpoint dibuat otomatis dari URL Supabase:
     "env": {
       "SUPABASE_URL": "https://<project-ref>.supabase.co",
       "SUPABASE_ANON_KEY": "<supabase-anon-key>",
-      "MCP_SECRET": "<optional-mcp-secret>"
+      "MCP_SECRET": "<per-user-secret-from-MCP-Secrets-page>"
     }
   }
 }
@@ -212,7 +210,7 @@ Variabel environment yang didukung bridge:
 - `MCP_ENDPOINT`: URL lengkap Edge Function MCP. Jika kosong, bridge memakai `SUPABASE_URL` atau `VITE_SUPABASE_URL` + `/functions/v1/mcp-server`.
 - `SUPABASE_ANON_KEY` atau `VITE_SUPABASE_PUBLISHABLE_KEY`: dikirim sebagai header `apikey`.
 - `SUPABASE_ACCESS_TOKEN` atau `AUTHORIZATION_BEARER_TOKEN`: dikirim sebagai `Authorization: Bearer ...`.
-- `MCP_SECRET` atau `X_MCP_SECRET`: dikirim sebagai `X-MCP-Secret`.
+- `MCP_SECRET` atau `X_MCP_SECRET`: dikirim sebagai `X-MCP-Secret`. Gunakan secret per user dari halaman **MCP Secrets**.
 - `GITHUB_TOKEN` atau `X_GITHUB_TOKEN`: dikirim sebagai `X-GitHub-Token`.
 - `MCP_REQUEST_TIMEOUT_MS`: timeout request remote, default `120000`.
 - `MCP_STDIO_DEBUG`: set `1` atau `true` untuk log debug ke stderr.
