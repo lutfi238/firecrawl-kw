@@ -90,8 +90,8 @@ export default function DeploymentGuide() {
   const zedConfig = JSON.stringify(
     {
       "firecrawl-kw": {
-        command: "npx",
-        args: ["-y", "firecrawl-kw-mcp"],
+        command: "npx.cmd",
+        args: ["-y", "firecrawl-kw-mcp@latest"],
         env: {
           MCP_STDIO_DEBUG: "true",
           ...stdioEnv,
