@@ -76,12 +76,36 @@ export function decodeGoogleNewsToken(token: string): string | null {
     const normalized = token.replace(/-/g, "+").replace(/_/g, "/");
     const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
     const decoded = atob(padded);
-    const match = decoded.match(/https?:\/\/[^\s"'\x00-\x1F<>\\]+/i);
+    const match = decoded.match(/https?:\/\/[^\s"'<>\\]+/i);
     if (!match) return null;
     return normalizeResolvedUrl(match[0]);
   } catch {
     return null;
   }
+}
+
+export async function resolveGoogleNewsUrl(url: string): Promise<string> {
+  if (!url.includes("news.google.com")) return url;
+
+  try {
+    const resp = await fetch(url, {
+      method: "HEAD",
+      redirect: "follow",
+      signal: AbortSignal.timeout(5000),
+    });
+    const resolved = resp.url ? normalizeResolvedUrl(resp.url) : null;
+    if (resolved && !resolved.includes("news.google.com")) return resolved;
+  } catch {
+    // Fall through to payload decoding.
+  }
+
+  const match = url.match(/\/articles\/([^?]+)/);
+  if (match) {
+    const decoded = decodeGoogleNewsToken(match[1]);
+    if (decoded) return decoded;
+  }
+
+  throw new Error(`Cannot resolve Google News wrapper: ${url}`);
 }
 
 export function decodeEscapedUrl(value: string): string {
