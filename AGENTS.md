@@ -85,7 +85,7 @@ Use the smallest relevant check first. Prefer `npm run test` for logic changes, 
 - Bundler/dev server: Vite 6 with React plugin; dev server uses port `8080`.
 - Deployment: frontend is SPA-compatible with Vercel (`vercel.json` rewrites all routes to `/index.html`); backend deploys as Supabase Edge Functions.
 - Frontend env vars: `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `VITE_SUPABASE_PROJECT_ID`.
-- Edge Function secrets include `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `MCP_MASTER_PASSWORD`, `CLAUDE_OAUTH_CLIENT_ID`, `CLAUDE_OAUTH_CLIENT_SECRET`, optional `CLAUDE_OAUTH_REDIRECT_URIS`, and optional `MCP_DEFAULT_USER_ID`.
+- Edge Function secrets include `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `MCP_MASTER_PASSWORD`, `CLAUDE_OAUTH_CLIENT_ID`, `CLAUDE_OAUTH_CLIENT_SECRET`, optional `CLAUDE_OAUTH_REDIRECT_URIS`, optional `MCP_DEFAULT_USER_ID`, optional `BRAVE_SEARCH_API_KEY`, optional `BING_SEARCH_API_KEY`, optional `AGENT_LLM_MODEL`, optional `AGENT_MAX_CONTEXT_TOKENS`, and optional `AGENT_SOURCE_CACHE_TTL_SECONDS`.
 - MCP stdio proxy env may include `MCP_ENDPOINT`, `MCP_REQUEST_TIMEOUT_MS`, `MCP_STDIO_DEBUG`, `MCP_SECRET`, `GITHUB_TOKEN`, `SUPABASE_ACCESS_TOKEN`, and `SUPABASE_ANON_KEY`.
 - Protected/generated paths: `src/integrations/supabase/client.ts`, `src/integrations/supabase/types.ts`, `node_modules/`, `dist/`, `.vercel/`, `.git/`, coverage/build output, and secret-bearing env files.
 

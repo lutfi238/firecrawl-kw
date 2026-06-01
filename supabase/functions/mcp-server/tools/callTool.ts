@@ -860,7 +860,7 @@ export async function handleToolCall({
           },
         };
       }
-      EdgeRuntime.waitUntil(processAgentJob(job.jobId, args, aiSettings));
+      EdgeRuntime.waitUntil(processAgentJob(job.jobId, args, aiSettings, userSettings));
 
       // Auto-poll until done or timeout
       const agentResult = await pollJobUntilDone(job.jobId, authHeader, userId);
