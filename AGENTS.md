@@ -9,7 +9,7 @@ Personal Firecrawl MCP is a Vite + React + TypeScript dashboard for operating a 
 - `src/main.tsx` mounts `src/App.tsx`; `App` wires `QueryClientProvider`, `BrowserRouter`, auth/session sync, backend configuration gating, layout, routes, and toasters.
 - Frontend data flow: route/page component → feature hook (`src/hooks/`) → Supabase client or MCP Edge Function → React Query cache/UI state.
 - Auth flow: `AuthGate` and `AuthListener` use Supabase Auth; `src/stores/authStore.ts` stores only auth/session/GitHub-token state in Zustand. Server data belongs in TanStack Query, not Zustand.
-- Backend selection supports env-based Supabase config or a user-provided backend from localStorage via `src/lib/backendConfig.ts` and `src/lib/supabaseRuntime.ts`.
+- Backend selection is centralized on the hosted Supabase project from Vite env config via `src/lib/backendConfig.ts` and `src/lib/supabaseRuntime.ts`; normal users do not configure their own Supabase backend.
 - MCP calls go through `src/hooks/useMCPServer.ts`, which sends JSON-RPC `tools/call` requests to the configured Edge Function and preserves custom headers such as `Authorization`, `X-GitHub-Token`, and `X-MCP-Secret`.
 - Supabase Edge Function flow: `supabase/functions/mcp-server/index.ts` handles HTTP/MCP/OAuth routing → auth modules resolve the user → tool definitions/dispatch in `tools/definitions.ts` and `tools/callTool.ts` → logs/jobs/settings persisted in Supabase.
 - Auth modes are per-user MCP secrets (`X-MCP-Secret`), Supabase session bearer tokens, and OAuth 2.1 bearer tokens for Claude Web connectors. `supabase/config.toml` sets `verify_jwt = false`, so handler-level auth is security-critical.
@@ -27,7 +27,8 @@ Personal Firecrawl MCP is a Vite + React + TypeScript dashboard for operating a 
 - `src/test/` — Vitest unit/regression/component tests, including Edge Function helper tests under `src/test/mcp/`.
 - `supabase/functions/` — Deno Edge Functions: `mcp-server`, `github-auth`, `mcp-logs`, `mcp-jobs`, `uptime-checker`.
 - `supabase/migrations/` — SQL migrations for logs, jobs, OAuth, uptime, and per-user MCP API keys.
-- `scripts/` — local helpers, especially `scripts/mcp-stdio-proxy.mjs` for MCP stdio clients.
+- `packages/firecrawl-kw-mcp/` — npm-style stdio MCP proxy package for `npx -y firecrawl-kw-mcp`, defaulting to the hosted Supabase MCP endpoint.
+- `scripts/` — local development helpers, including `scripts/mcp-stdio-proxy.mjs` for repo-local MCP stdio testing.
 
 ## Development Commands
 
@@ -65,7 +66,7 @@ Use the smallest relevant check first. Prefer `npm run test` for logic changes, 
 - `src/App.tsx` — app providers, routing, auth listener, backend config gate, MCP health polling.
 - `src/hooks/useMCPServer.ts` — MCP JSON-RPC and streaming client.
 - `src/hooks/useToolExecutor.ts` and `src/hooks/useToolExecutorWithActivity.ts` — tool execution wrappers and activity/timeout behavior.
-- `src/lib/backendConfig.ts` — env/custom backend mode and localStorage persistence.
+- `src/lib/backendConfig.ts` — hosted Supabase backend config derived from Vite env values.
 - `src/lib/supabaseRuntime.ts` — runtime Supabase client factory and MCP endpoint helpers.
 - `src/stores/authStore.ts` — auth/session Zustand store.
 - `src/types/mcp.ts` and `src/types/tools.ts` — shared frontend MCP contracts and tool definitions.
@@ -76,7 +77,7 @@ Use the smallest relevant check first. Prefer `npm run test` for logic changes, 
 - `supabase/functions/mcp-server/tools/definitions.ts` — dynamic MCP tool schemas.
 - `supabase/config.toml` — Edge Function JWT verification settings and Supabase project ref.
 - `vite.config.ts`, `vitest.config.ts`, `eslint.config.js`, `tailwind.config.ts`, `playwright.config.ts` — build/test/lint/style/e2e tooling.
-- `README.md` — setup, OAuth connector, BYO Supabase, and stdio bridge guidance.
+- `README.md` — setup, hosted backend model, OAuth connector, and npm stdio package guidance.
 
 ## Runtime/Tooling Preferences
 
@@ -86,7 +87,7 @@ Use the smallest relevant check first. Prefer `npm run test` for logic changes, 
 - Deployment: frontend is SPA-compatible with Vercel (`vercel.json` rewrites all routes to `/index.html`); backend deploys as Supabase Edge Functions.
 - Frontend env vars: `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `VITE_SUPABASE_PROJECT_ID`.
 - Edge Function secrets include `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `MCP_MASTER_PASSWORD`, `CLAUDE_OAUTH_CLIENT_ID`, `CLAUDE_OAUTH_CLIENT_SECRET`, optional `CLAUDE_OAUTH_REDIRECT_URIS`, optional `MCP_DEFAULT_USER_ID`, optional `BRAVE_SEARCH_API_KEY`, optional `BING_SEARCH_API_KEY`, optional `AGENT_LLM_MODEL`, optional `AGENT_MAX_CONTEXT_TOKENS`, and optional `AGENT_SOURCE_CACHE_TTL_SECONDS`.
-- MCP stdio proxy env may include `MCP_ENDPOINT`, `MCP_REQUEST_TIMEOUT_MS`, `MCP_STDIO_DEBUG`, `MCP_SECRET`, `GITHUB_TOKEN`, `SUPABASE_ACCESS_TOKEN`, and `SUPABASE_ANON_KEY`.
+- MCP stdio proxy env may include `MCP_ENDPOINT` (optional override), `MCP_REQUEST_TIMEOUT_MS`, `MCP_STDIO_DEBUG`, `MCP_SECRET` / `X_MCP_SECRET` (per-user key), `GITHUB_TOKEN`, and `SUPABASE_ACCESS_TOKEN`.
 - Protected/generated paths: `src/integrations/supabase/client.ts`, `src/integrations/supabase/types.ts`, `node_modules/`, `dist/`, `.vercel/`, `.git/`, coverage/build output, and secret-bearing env files.
 
 ## Testing & QA

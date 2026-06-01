@@ -100,7 +100,7 @@ Pastikan `supabase/config.toml` tetap berisi:
 verify_jwt = false
 ```
 
-Auth dilakukan oleh handler MCP sendiri: per-user `X-MCP-Secret`, optional legacy shared `X-MCP-Secret`, OAuth bearer token Claude Web, atau Supabase session bearer token untuk dashboard.
+Auth dilakukan oleh handler MCP sendiri: per-user `X-MCP-Secret`, OAuth bearer token Claude Web, atau Supabase session bearer token untuk dashboard.
 
 ### 4. Paste this into Claude Web
 
@@ -157,69 +157,53 @@ Before implementing the full connect/install flow, validate that a GitHub App in
 
 Do not put the GitHub App private key in frontend config or localStorage.
 
-## Bring your own Supabase backend
+## Hosted backend model
 
-The hosted frontend can now be used as a UI shell for a Supabase/MCP backend you own. Open **Settings → Backend Connection → Reconfigure Backend** or the **Deploy** page in the app, then paste:
+This project uses the hosted Firecrawl KW Supabase backend by default:
 
-- Supabase URL
-- Supabase anon/publishable key
-- MCP endpoint URL
+```txt
+https://azegdjbrznxdhyeaztqm.supabase.co/functions/v1/mcp-server
+```
 
-Only use the browser-safe anon/publishable key in the frontend. Keep `SUPABASE_SERVICE_ROLE_KEY`, OAuth client secrets, optional legacy `MCP_SECRET`, and GitHub App private keys in Supabase Edge Function secrets only. Manage normal per-user MCP secrets from the website after logging in.
+Users do not need their own Supabase project to use the MCP server. They log in to the dashboard, generate a per-user MCP secret from **MCP Secrets**, then use that full secret in their MCP client config. RLS and per-user key ownership keep user data separated inside the hosted Supabase project.
 
-## Local MCP stdio bridge
+## MCP stdio package
 
-Selain HTTP Edge Function, repo ini menyediakan bridge stdio lokal di `scripts/mcp-stdio-proxy.mjs`. Bridge ini membuat project bisa dipakai oleh MCP client yang memakai format `command` / `args` / `env`. Proses lokal membaca JSON-RPC dari stdin/stdout, lalu meneruskan request MCP ke Supabase Edge Function `mcp-server`.
-
-Contoh konfigurasi MCP client:
+For MCP clients that use `command` / `args` / `env`, use the npm-style stdio proxy package `firecrawl-kw-mcp`. It defaults to the hosted endpoint above, so normal users only need their per-user secret:
 
 ```jsonc
 {
-  "personal-firecrawl": {
-    "command": "node",
-    "args": ["D:\\Project_Gabut\\firecrawl-kw\\scripts\\mcp-stdio-proxy.mjs"],
-    "env": {
-      "MCP_ENDPOINT": "https://<project-ref>.supabase.co/functions/v1/mcp-server",
-      "SUPABASE_ANON_KEY": "<supabase-anon-key>",
-      "MCP_SECRET": "<per-user-secret-from-MCP-Secrets-page>",
-      "GITHUB_TOKEN": "<optional-github-token>",
-      "SUPABASE_ACCESS_TOKEN": "<optional-user-access-token>"
+  "mcpServers": {
+    "firecrawl-kw": {
+      "command": "npx",
+      "args": ["-y", "firecrawl-kw-mcp"],
+      "env": {
+        "MCP_SECRET": "fc_kw-FULL_KEY_KAMU"
+      }
     }
   }
 }
 ```
 
-Alternatif jika ingin endpoint dibuat otomatis dari URL Supabase:
+`MCP_SECRET` here is a client-side env var consumed by the stdio proxy and forwarded as `X-MCP-Secret`. It must be the full per-user key from the **MCP Secrets** page, not the displayed prefix.
 
-```jsonc
-{
-  "personal-firecrawl": {
-    "command": "node",
-    "args": ["D:\\Project_Gabut\\firecrawl-kw\\scripts\\mcp-stdio-proxy.mjs"],
-    "env": {
-      "SUPABASE_URL": "https://<project-ref>.supabase.co",
-      "SUPABASE_ANON_KEY": "<supabase-anon-key>",
-      "MCP_SECRET": "<per-user-secret-from-MCP-Secrets-page>"
-    }
-  }
-}
-```
+Optional env vars supported by the proxy:
 
-Variabel environment yang didukung bridge:
+- `MCP_ENDPOINT`: override the hosted endpoint, normally not needed.
+- `MCP_SECRET` or `X_MCP_SECRET`: per-user secret forwarded as `X-MCP-Secret`.
+- `GITHUB_TOKEN` or `X_GITHUB_TOKEN`: forwarded as `X-GitHub-Token`.
+- `SUPABASE_ACCESS_TOKEN` or `AUTHORIZATION_BEARER_TOKEN`: forwarded as `Authorization: Bearer ...`.
+- `MCP_REQUEST_TIMEOUT_MS`: remote request timeout, default `120000`.
+- `MCP_STDIO_DEBUG`: set `1` or `true` for debug logs to stderr.
 
-- `MCP_ENDPOINT`: URL lengkap Edge Function MCP. Jika kosong, bridge memakai `SUPABASE_URL` atau `VITE_SUPABASE_URL` + `/functions/v1/mcp-server`.
-- `SUPABASE_ANON_KEY` atau `VITE_SUPABASE_PUBLISHABLE_KEY`: dikirim sebagai header `apikey`.
-- `SUPABASE_ACCESS_TOKEN` atau `AUTHORIZATION_BEARER_TOKEN`: dikirim sebagai `Authorization: Bearer ...`.
-- `MCP_SECRET` atau `X_MCP_SECRET`: dikirim sebagai `X-MCP-Secret`. Gunakan secret per user dari halaman **MCP Secrets**.
-- `GITHUB_TOKEN` atau `X_GITHUB_TOKEN`: dikirim sebagai `X-GitHub-Token`.
-- `MCP_REQUEST_TIMEOUT_MS`: timeout request remote, default `120000`.
-- `MCP_STDIO_DEBUG`: set `1` atau `true` untuk log debug ke stderr.
-
-Untuk smoke test lokal:
+The package source lives in `packages/firecrawl-kw-mcp/`. Publish it with:
 
 ```bash
-printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke-test","version":"1.0.0"}}}\n' | node scripts/mcp-stdio-proxy.mjs
+cd packages/firecrawl-kw-mcp
+npm publish --access public
 ```
+
+Until it is published to npm, you can still run the repo-local proxy with `node scripts/mcp-stdio-proxy.mjs` for development.
 
 ## Docs
 
