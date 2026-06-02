@@ -29,8 +29,6 @@ import {
   Loader2,
   ShieldAlert,
   MoreVertical,
-  Eye,
-  EyeOff,
 } from "lucide-react";
 
 import { toast } from "sonner";
@@ -103,7 +101,6 @@ export default function ApiKeysPage() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [detailKey, setDetailKey] = useState<ApiKeyRecord | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ApiKeyRecord | null>(null);
-  const [showPrefix, setShowPrefix] = useState(false);
   const [editName, setEditName] = useState("");
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -186,11 +183,15 @@ export default function ApiKeysPage() {
 
   // ── Copy secret ──────────────────────────────────────────────────
 
-  const copyToClipboard = async (text: string, id: string) => {
+  const copyToClipboard = async (
+    text: string,
+    id: string,
+    successMessage = "Copied to clipboard",
+  ) => {
     try {
       await navigator.clipboard.writeText(text);
       setCopiedId(id);
-      toast.success("Copied to clipboard");
+      toast.success(successMessage);
       setTimeout(() => setCopiedId(null), 2000);
     } catch {
       toast.error("Failed to copy to clipboard");
@@ -228,7 +229,6 @@ export default function ApiKeysPage() {
 
   const openDetailDialog = (key: ApiKeyRecord) => {
     setDetailKey(key);
-    setShowPrefix(false);
     setEditName(key.name);
   };
 
@@ -366,8 +366,8 @@ export default function ApiKeysPage() {
                 MCP Secret Details
               </DialogTitle>
               <DialogDescription>
-                View and manage this per-user MCP secret. The full secret is only shown once
-                during creation.
+                View and manage this per-user MCP secret. The full secret is
+                only shown once during creation.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-2">
@@ -402,30 +402,20 @@ export default function ApiKeysPage() {
                 </div>
               </div>
 
-              {/* Secret prefix with eye toggle */}
+              {/* Secret prefix identifier */}
               <div className="space-y-2">
                 <label className="text-xs font-mono text-muted-foreground">
-                  Secret Prefix
+                  Secret Prefix (not the full key)
                 </label>
+                <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-300">
+                  Only the saved prefix is available after creation. Full MCP
+                  secrets are shown once and are not stored in plaintext. If you
+                  need a full secret again, generate a new one.
+                </div>
                 <div className="flex items-center gap-2">
                   <code className="flex-1 text-xs font-mono bg-background/50 rounded-md px-3 py-2 border border-border/50 break-all select-all">
-                    {showPrefix
-                      ? detailKey?.key_prefix
-                      : detailKey?.key_prefix.slice(0, 12) + "..."}
+                    {detailKey?.key_prefix}
                   </code>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 w-8 p-0 shrink-0 text-muted-foreground hover:text-foreground"
-                    onClick={() => setShowPrefix(!showPrefix)}
-                    title={showPrefix ? "Hide secret" : "Show secret"}
-                  >
-                    {showPrefix ? (
-                      <EyeOff className="h-4 w-4" />
-                    ) : (
-                      <Eye className="h-4 w-4" />
-                    )}
-                  </Button>
                   <Button
                     variant="ghost"
                     size="sm"
@@ -434,9 +424,10 @@ export default function ApiKeysPage() {
                       copyToClipboard(
                         detailKey!.key_prefix,
                         detailKey!.id + "-prefix",
+                        "Prefix copied (not the full secret)",
                       )
                     }
-                    title="Copy prefix"
+                    title="Copy prefix identifier"
                   >
                     {copiedId === detailKey?.id + "-prefix" ? (
                       <Check className="h-4 w-4 text-emerald-400" />
@@ -528,8 +519,8 @@ export default function ApiKeysPage() {
                 <span className="font-mono text-foreground">
                   {deleteTarget?.name}
                 </span>
-                ? This will permanently remove the secret and any service using it
-                will stop working immediately.
+                ? This will permanently remove the secret and any service using
+                it will stop working immediately.
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>
