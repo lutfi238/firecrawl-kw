@@ -34,7 +34,7 @@ describe("AuthGate", () => {
     });
   });
 
-  it("signs in with a Supabase email and password account", async () => {
+  it("signs in with an email and password account", async () => {
     render(
       <AuthGate>
         <div>Dashboard</div>
@@ -47,9 +47,7 @@ describe("AuthGate", () => {
     fireEvent.change(screen.getByLabelText(/password/i), {
       target: { value: "password123" },
     });
-    fireEvent.click(
-      screen.getByRole("button", { name: /sign in with supabase/i }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: /^sign in$/i }));
 
     await waitFor(() => {
       expect(authMocks.signInWithPassword).toHaveBeenCalledWith({
@@ -59,7 +57,7 @@ describe("AuthGate", () => {
     });
   });
 
-  it("creates a Supabase auth account from the login gate", async () => {
+  it("creates an email account from the login gate", async () => {
     render(
       <AuthGate>
         <div>Dashboard</div>
@@ -73,9 +71,7 @@ describe("AuthGate", () => {
     fireEvent.change(screen.getByLabelText(/password/i), {
       target: { value: "strongpassword" },
     });
-    fireEvent.click(
-      screen.getByRole("button", { name: /create supabase account/i }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: /^create account$/i }));
 
     await waitFor(() => {
       expect(authMocks.signUp).toHaveBeenCalledWith({

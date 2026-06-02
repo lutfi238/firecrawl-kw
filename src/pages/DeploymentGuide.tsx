@@ -145,8 +145,8 @@ export default function DeploymentGuide() {
           1. Hosted backend
         </h2>
         <p className="text-sm text-muted-foreground">
-          Normal users use the hosted Firecrawl KW Supabase backend. They do not
-          need to create or connect their own Supabase project.
+          Normal users use the hosted Firecrawl KW backend. They do not need to
+          configure infrastructure.
         </p>
         <div className="mt-3 rounded-md border border-border bg-background/40 p-3 text-xs font-mono text-muted-foreground">
           {hostedMcpEndpoint}
@@ -158,7 +158,7 @@ export default function DeploymentGuide() {
           2. Generate a per-user MCP secret
         </h2>
         <ol className="list-decimal space-y-2 pl-5 text-sm text-muted-foreground">
-          <li>Log in to the dashboard with a Supabase Auth account.</li>
+          <li>Log in to the dashboard with your Firecrawl KW account.</li>
           <li>Open the MCP Secrets page.</li>
           <li>Generate a new secret and copy the full `fc_kw-...` value.</li>
           <li>Use that full value as `MCP_SECRET` in local MCP clients.</li>

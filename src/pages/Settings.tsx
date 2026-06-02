@@ -469,7 +469,7 @@ export default function Settings() {
           <p className="text-xs text-muted-foreground">
             There is no shared backend secret. Use per-user MCP secrets so
             access can be created, renamed, revoked, and deleted from the
-            website per logged-in Supabase account.
+            website per logged-in account.
           </p>
         </div>
       </GlassCard>

@@ -51,7 +51,7 @@ export function DashboardLayout({
   const username =
     user?.user_metadata?.user_name ?? user?.email?.split("@")[0] ?? "User";
   const authProvider =
-    user?.app_metadata?.provider === "github" ? "GitHub" : "Supabase";
+    user?.app_metadata?.provider === "github" ? "GitHub" : "Email";
 
   return (
     <div className="flex min-h-screen bg-background dot-grid">

@@ -147,7 +147,7 @@ ${authHeader}
   const execute = async () => {
     if (!apiKey) {
       toast.error(
-        "API key is required. Use your Supabase session token or a per-user MCP secret.",
+        "API key is required. Use a session token or a per-user MCP secret.",
       );
       return;
     }
@@ -241,7 +241,7 @@ ${authHeader}
         JSON.stringify(
           {
             error: err instanceof Error ? err.message : "Unknown error",
-            hint: "Make sure the Supabase Edge Function is deployed and the API key is correct.",
+            hint: "Make sure the hosted API endpoint is available and the API key is correct.",
           },
           null,
           2,
@@ -322,7 +322,7 @@ ${authHeader}
               type="password"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              placeholder="Supabase session token or MCP secret"
+              placeholder="Session token or MCP secret"
               className="font-mono text-sm bg-background/50 border-border"
             />
             {maskedKey && (
@@ -564,8 +564,8 @@ ${authHeader}
             <p className="text-xs text-cyber-amber font-medium">Info</p>
             <ul className="text-[11px] text-muted-foreground space-y-1 font-mono">
               <li>
-                • API Key: gunakan Supabase session token atau MCP secret dari
-                halaman MCP Secrets
+                • API Key: gunakan session token atau MCP secret dari halaman
+                MCP Secrets
               </li>
               <li>
                 • Session token: buka DevTools → Application → LocalStorage →{" "}
@@ -573,13 +573,13 @@ ${authHeader}
                 <code className="text-primary">access_token</code>
               </li>
               <li>
-                • Endpoint Supabase:{" "}
+                • Hosted API endpoint:{" "}
                 <code className="text-primary">
                   https://azegdjbrznxdhyeaztqm.supabase.co/functions/v1/mcp-server
                 </code>
               </li>
               <li>
-                • REST API memerlukan Supabase Edge Function sudah di-deploy
+                • REST API memerlukan hosted Edge Function sudah di-deploy
               </li>
             </ul>
           </div>

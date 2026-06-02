@@ -24,7 +24,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   }
 
   if (!isAuthenticated) {
-    const handleSupabaseAuth = async (event: FormEvent<HTMLFormElement>) => {
+    const handleEmailAuth = async (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
       const credentials = { email: email.trim(), password };
       if (!credentials.email || !credentials.password) return;
@@ -45,13 +45,13 @@ export function AuthGate({ children }: { children: ReactNode }) {
         }
 
         if (mode === "sign-up") {
-          toast.success("Supabase account created");
+          toast.success("Account created");
         } else {
           toast.success("Signed in");
         }
       } catch (error) {
         const message =
-          error instanceof Error ? error.message : "Supabase login failed";
+          error instanceof Error ? error.message : "Sign in failed";
         setAuthError(message);
         toast.error(message);
       } finally {
@@ -84,8 +84,8 @@ export function AuthGate({ children }: { children: ReactNode }) {
           <div className="space-y-1">
             <p className="text-sm font-semibold">
               {mode === "sign-in"
-                ? "Sign in with Supabase"
-                : "Create Supabase account"}
+                ? "Sign in to Firecrawl KW"
+                : "Create Firecrawl KW account"}
             </p>
             <p className="text-xs text-muted-foreground leading-relaxed">
               Sign in to manage your personal MCP secrets, settings, logs, and
@@ -93,7 +93,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
             </p>
           </div>
 
-          <form className="space-y-3" onSubmit={handleSupabaseAuth}>
+          <form className="space-y-3" onSubmit={handleEmailAuth}>
             <div className="space-y-1.5">
               <label
                 htmlFor="auth-email"
@@ -132,7 +132,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
                   }
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
-                  placeholder="Your Supabase password"
+                  placeholder="Your password"
                   className="pl-9 bg-background/50 border-border"
                 />
               </div>
@@ -156,9 +156,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
               ) : (
                 <UserPlus className="h-4 w-4" />
               )}
-              {mode === "sign-in"
-                ? "Sign in with Supabase"
-                : "Create Supabase account"}
+              {mode === "sign-in" ? "Sign in" : "Create account"}
             </Button>
           </form>
 
