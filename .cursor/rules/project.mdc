@@ -1,0 +1,33 @@
+---
+description: Project-wide coding instructions and architecture context
+alwaysApply: true
+---
+
+`AGENTS.md` is the source of truth for this project. Read it for full architecture, commands, env vars, protected files, and known pitfalls.
+
+## Project summary
+
+Firecrawl KW is a hosted MCP dashboard built with Vite + React + TypeScript. The hosted backend uses Supabase Auth/Postgres and Deno Edge Functions; `supabase/functions/mcp-server/index.ts` is the main MCP JSON-RPC, REST, and OAuth handler. `packages/firecrawl-kw-mcp/` is the npm stdio proxy package for local MCP clients.
+
+## Core rules
+
+- Prefer minimal, targeted edits and inspect relevant files before changing code.
+- Use `@/` imports for `src/` files and typed functional React components.
+- Use TanStack Query for server state and Zustand only for lightweight auth/session state.
+- Keep pages orchestration-focused; move reusable logic into hooks/components.
+- Preserve custom MCP headers such as `X-GitHub-Token` and `X-MCP-Secret` in transport/proxy code.
+- Edge Functions run on Deno/web-standard APIs; do not add Node-only APIs under `supabase/functions/`.
+- Do not edit generated Supabase files, build outputs, lockfiles, or secrets.
+- Full MCP/API keys are shown only once at creation. `key_prefix` is display-only and cannot authenticate.
+
+## Verification
+
+Use existing npm scripts:
+
+```bash
+npm run test
+npm run lint
+npm run build
+```
+
+Run the smallest relevant check first and report actual results. Update `AGENTS.md` and `README.md` when architecture, commands, schema, env vars, hosted backend behavior, or MCP setup changes.

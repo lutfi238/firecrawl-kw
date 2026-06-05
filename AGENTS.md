@@ -2,38 +2,53 @@
 
 ## Project Overview
 
-Personal Firecrawl MCP is a Vite + React + TypeScript dashboard for running a personal MCP server backed by Supabase. It provides web-intelligence tools for search, scrape, crawl, extraction, screenshots, batch jobs, AI chat, request monitoring, uptime checks, and MCP/API-key management. The backend is Supabase Edge Functions on Deno, centered on `mcp-server`, which exposes MCP JSON-RPC plus supporting REST/OAuth endpoints.
+Firecrawl KW is a hosted MCP/SaaS-style dashboard for web-intelligence workflows: scraping, search, crawl, extraction, screenshots, AI chat, request monitoring, uptime checks, and per-user MCP/API secret management. The web app is a Vite + React + TypeScript frontend that talks to a centralized Supabase backend owned by the project. Normal users should not need to bring or configure their own Supabase project; they sign in, generate an MCP secret, and connect MCP clients through the published stdio proxy package. The backend is a set of Supabase Edge Functions on Deno, with `mcp-server` as the main HTTP JSON-RPC/MCP, REST, and OAuth handler.
+
+## Tech Stack
+
+- Frontend: React 18, TypeScript, Vite 6, React Router, TanStack Query, Zustand.
+- UI: Tailwind CSS, Radix/shadcn-style primitives, Lucide icons, cyber/glass theme.
+- Backend: Supabase Auth/Postgres/Storage client APIs plus Deno Edge Functions.
+- MCP: HTTP JSON-RPC MCP endpoint plus npm stdio proxy package `firecrawl-kw-mcp`.
+- Testing/tooling: Vitest + jsdom + Testing Library, ESLint 9, Playwright config present but not wired to an npm script.
+- Package manager: npm (`package-lock.json` lockfile v3). `bun.lock` exists, but project scripts are npm-based.
 
 ## Architecture & Data Flow
 
-- `src/main.tsx` mounts `src/App.tsx`; `App` wires React Query, routing, auth/session sync, backend health/config checks, layout, and toasters.
-- Frontend flow: page in `src/pages/` → feature hook in `src/hooks/` → Supabase client or MCP Edge Function → React Query cache/UI state.
-- Auth flow: Supabase Auth feeds `src/stores/authStore.ts`; Zustand is only for small auth/session/GitHub-token state. Server data belongs in TanStack Query.
-- MCP transport goes through `src/hooks/useMCPServer.ts`, sending JSON-RPC `tools/call` requests to the Edge Function while preserving headers such as `Authorization`, `X-GitHub-Token`, and `X-MCP-Secret`.
-- Backend flow: `supabase/functions/mcp-server/index.ts` handles HTTP/MCP/OAuth routing → auth modules resolve the user → tool schemas/dispatch in `tools/definitions.ts` and `tools/callTool.ts` → logs/jobs/settings are persisted in Supabase.
-- Supported auth modes are per-user MCP secrets (`X-MCP-Secret`), Supabase session bearer tokens, and OAuth 2.1 bearer tokens for Claude Web/custom connectors. `supabase/config.toml` sets `verify_jwt = false`, so handler-level auth checks are security-critical.
-- Database changes live in `supabase/migrations/`; user data should remain RLS-protected. OAuth tables are intended for service-role access only.
+- `src/main.tsx` mounts `src/App.tsx`; `App` wires React Query, routing, auth/session sync, hosted backend config gate, dashboard layout, MCP health polling, and toasters.
+- Frontend flow: route in `src/pages/` → feature hook in `src/hooks/` → Supabase client or MCP Edge Function → React Query cache/UI state.
+- Auth flow: Supabase Auth feeds `src/stores/authStore.ts`; Zustand is only for lightweight auth/session/GitHub-token state. Server/remote state belongs in TanStack Query.
+- MCP client flow: `src/hooks/useMCPServer.ts` sends JSON-RPC `tools/call` requests to `getMcpEndpoint()` and preserves custom headers such as `Authorization`, `X-GitHub-Token`, and `X-MCP-Secret`.
+- Hosted backend config: `src/lib/backendConfig.ts` derives the MCP endpoint from `VITE_SUPABASE_URL`; `src/lib/supabaseRuntime.ts` returns the generated hosted Supabase client and no longer supports user-supplied backend overrides.
+- Backend flow: `supabase/functions/mcp-server/index.ts` handles HTTP/MCP/OAuth routing → auth modules resolve the user → `tools/definitions.ts` and `tools/callTool.ts` define/dispatch tools → logs/jobs/settings/API keys persist in Supabase.
+- Supported MCP auth modes are per-user MCP secrets via `X-MCP-Secret`, Supabase session bearer tokens, and OAuth 2.1 bearer tokens for supported remote MCP clients. Legacy shared backend `MCP_SECRET` auth was removed.
+- `supabase/config.toml` disables JWT verification for Edge Functions, so handler-level auth and request validation are security-critical.
 
-## Key Directories
+## Monorepo Structure
 
-- `src/pages/` — route-level orchestration (`Overview`, `ToolTester`, `APITester`, `ApiKeysPage`, `RequestMonitor`, `Settings`, `AIChat`, `DeploymentGuide`, `BackendSetup`, `McpAuthorize`).
+This is not a formal workspace monorepo: there is no `pnpm-workspace.yaml`, `turbo.json`, `nx.json`, or `lerna.json`. The root app owns the frontend and Supabase functions. `packages/firecrawl-kw-mcp/` is a standalone npm-published package nested in the repo; keep its package metadata, README, and proxy code aligned with hosted backend behavior.
+
+## Important Directories
+
+- `src/pages/` — route-level orchestration (`Overview`, `ToolTester`, `APITester`, `ApiKeysPage`, `RequestMonitor`, `Settings`, `AIChat`, `DeploymentGuide`, `McpAuthorize`).
 - `src/components/` — feature UI components; keep `src/components/ui/` generic shadcn/Radix primitives.
-- `src/hooks/` — reusable app logic for MCP transport, tool execution, settings, logs, uptime, and Supabase-backed flows.
-- `src/lib/` — shared utilities and runtime config such as `utils.ts`, `backendConfig.ts`, `supabaseRuntime.ts`, intent/recency helpers, and capability registries.
-- `src/stores/` — Zustand store for auth/session state only.
-- `src/types/` — shared MCP/tool contracts; keep aligned with Edge Function request/response shapes.
+- `src/hooks/` — reusable app logic for MCP transport, tool execution, settings, request logs, uptime logs, and async flows.
+- `src/lib/` — shared utilities and runtime config (`backendConfig.ts`, `supabaseRuntime.ts`, `utils.ts`, intent/recency/vision helpers).
+- `src/stores/` — Zustand auth/session store only.
+- `src/types/` — shared MCP/tool contracts; keep these aligned with Edge Function request/response shapes.
 - `src/integrations/supabase/` — generated Supabase client/types; do not hand-edit.
-- `src/test/` — Vitest unit, regression, component, and MCP helper tests.
+- `src/test/` — Vitest unit/regression/component tests and MCP helper tests.
 - `supabase/functions/` — Deno Edge Functions: `mcp-server`, `github-auth`, `mcp-logs`, `mcp-jobs`, `uptime-checker`.
-- `supabase/migrations/` — SQL migrations for logs, jobs, OAuth, uptime, API keys, and source cache.
-- `packages/firecrawl-kw-mcp/` — npm-style stdio MCP proxy package for MCP clients using `command`/`args`/`env`.
-- `scripts/` — local helpers, especially `scripts/mcp-stdio-proxy.mjs` for repo-local MCP stdio testing.
+- `supabase/migrations/` — SQL migrations for settings/logs/jobs/OAuth/uptime/API keys/source cache.
+- `packages/firecrawl-kw-mcp/` — npm stdio MCP proxy package for clients that use `command`/`args`/`env`.
+- `scripts/` — repo-local helpers, especially `scripts/mcp-stdio-proxy.mjs`.
+- `docs/` — project documentation when present; prefer updating existing docs over duplicating setup notes.
 
 ## Development Commands
 
 ```bash
 npm install        # install dependencies
-npm run dev        # Vite dev server on port 8080
+npm run dev        # Vite dev server on host ::, port 8080
 npm run build      # production Vite build
 npm run build:dev  # development-mode Vite build
 npm run preview    # preview built frontend
@@ -43,57 +58,92 @@ npm run test:watch # vitest watch mode
 npm run mcp:stdio  # local MCP stdio proxy
 ```
 
-Use the smallest relevant check first: `npm run test` for logic changes, `npm run lint` after TypeScript/React edits, and `npm run build` for route, bundling, or integration changes.
+Verification order: run the smallest relevant check first, use `npm run test` for logic changes, `npm run lint` after TypeScript/React edits, and `npm run build` for route, bundling, hosted-backend, or integration changes.
 
-## Code Conventions & Common Patterns
+## Environment Variables
 
-- Use functional React components with typed props. Keep pages orchestration-focused; move reusable behavior into hooks or narrow components.
-- Prefer `@/` imports for files under `src/`.
-- Styling is Tailwind-first. Match the cyber/glass theme in `tailwind.config.ts` and `src/index.css`; reuse Lucide, shadcn, and Radix patterns before adding new UI patterns.
-- Use `cn()` from `src/lib/utils.ts` for conditional classes.
-- Use TanStack Query for remote/server state and cache invalidation. Do not expand Zustand beyond small cross-app client state.
-- Access Supabase through `getSupabaseClient()` from `src/lib/supabaseRuntime.ts`; avoid direct imports from generated client files in new code.
-- Keep MCP/tool payload contracts synchronized across `src/types/mcp.ts`, `src/types/tools.ts`, frontend callers, and `supabase/functions/mcp-server/tools/`.
+Document names only; never commit or echo secret values.
+
+### Frontend Vite env
+
+- `VITE_SUPABASE_URL` — hosted Supabase project URL; also used to derive `/functions/v1/mcp-server`.
+- `VITE_SUPABASE_PUBLISHABLE_KEY` — hosted Supabase publishable/anon key used by the generated client.
+- `VITE_SUPABASE_PROJECT_ID` — hosted Supabase project identifier expected by app/deployment docs.
+
+### Supabase Edge Function secrets
+
+- `SUPABASE_URL` — Supabase project URL for Edge Functions.
+- `SUPABASE_ANON_KEY` — anon key for validating Supabase session bearer tokens.
+- `SUPABASE_SERVICE_ROLE_KEY` — service-role key for server-side DB reads/writes such as API-key verification and logs.
+- `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` — GitHub OAuth integration.
+- `MCP_MASTER_PASSWORD` — OAuth consent/admin gate used by the MCP OAuth flow.
+- `CLAUDE_OAUTH_CLIENT_ID`, `CLAUDE_OAUTH_CLIENT_SECRET` — Claude/custom connector OAuth client credentials when configured.
+- `CLAUDE_OAUTH_REDIRECT_URIS` — optional allowlist for Claude OAuth redirects.
+- `MCP_DEFAULT_USER_ID` — optional fallback user id used only when no credential resolves a user.
+- `BRAVE_SEARCH_API_KEY`, `BING_SEARCH_API_KEY` — optional search provider secrets.
+
+### MCP stdio proxy env
+
+- `MCP_SECRET` or `X_MCP_SECRET` — per-user full `fc_kw-...` MCP secret generated from the dashboard; the proxy forwards it as `X-MCP-Secret`.
+- `MCP_ENDPOINT` — optional override for the hosted MCP endpoint.
+- `MCP_REQUEST_TIMEOUT_MS` — optional request timeout override.
+- `MCP_STDIO_DEBUG` — optional debug logging for MCP client setup.
+- `GITHUB_TOKEN` — optional token forwarded to GitHub-related tools.
+- `SUPABASE_ACCESS_TOKEN` — optional Supabase bearer token for authenticated dashboard-style calls.
+
+## Database & API Notes
+
+- Migrations live under `supabase/migrations/`; keep schema changes in SQL migrations and update generated Supabase types through the project’s normal regeneration flow when needed.
+- `public.user_api_keys` stores `key_hash` and `key_prefix` for per-user MCP secrets. Current code returns the full key only once on create; existing full keys cannot be recovered from `key_hash`.
+- API key format is `fc_kw-` plus a random component. `auth/apiKey.ts` also accepts legacy `fc_sk-` prefixes for verification.
+- Prefix-only values are display identifiers and cannot authenticate. UI copy flows must not imply a prefix is the usable full key.
+- If persistent full-key visibility is required, add encrypted storage (for example an `encrypted_key` column plus an `API_KEY_ENCRYPTION_SECRET`-style server secret) rather than plaintext. Old hash-only keys would still be unrecoverable.
+- Main MCP endpoint: `supabase/functions/mcp-server/index.ts` supports health GET, OAuth discovery/register/authorize/token endpoints, JSON-RPC `initialize`, `tools/list`, `tools/call`, and REST endpoints such as `/v1/web/fetch` and `/v1/search`.
+- Tool definitions and dispatch must stay synchronized between frontend contracts (`src/types/mcp.ts`, `src/types/tools.ts`) and backend tool definitions/handlers (`supabase/functions/mcp-server/tools/`).
 - Edge Functions run on Deno/web-standard APIs. Do not introduce Node-only APIs under `supabase/functions/`.
-- TypeScript app config is not fully strict; manually review nullability, payload shapes, auth branches, and cross-boundary types.
-- Preserve non-blocking GitHub token loading in `src/App.tsx` and custom MCP headers in transport code.
-- Prefer existing hooks/components/utilities over new abstractions. Delete obsolete code rather than leaving aliases or TODO placeholders.
-- Never commit secrets. Document env var names only, not values.
 
-## Important Files
+## Coding & Naming Conventions
 
-- `src/App.tsx` — provider tree, routing, auth listener, backend gate, MCP health polling.
-- `src/hooks/useMCPServer.ts` — MCP JSON-RPC and streaming client.
-- `src/hooks/useToolExecutor.ts` and `src/hooks/useToolExecutorWithActivity.ts` — tool execution, timeout, abort, and activity behavior.
-- `src/lib/backendConfig.ts` — Vite env-derived hosted Supabase backend config.
-- `src/lib/supabaseRuntime.ts` — runtime Supabase client factory and MCP endpoint helpers.
-- `src/lib/intentClassifier.ts`, `src/lib/recency.ts`, `src/lib/visionCapability.ts` — AI chat/tool-routing support logic.
-- `src/stores/authStore.ts` — auth/session Zustand store.
-- `src/types/mcp.ts` and `src/types/tools.ts` — shared frontend MCP contracts and tool definitions.
-- `supabase/functions/mcp-server/index.ts` — main MCP/REST/OAuth HTTP handler.
-- `supabase/functions/mcp-server/auth/mcpSecret.ts` and `auth/oauth.ts` — MCP secret, Supabase bearer, and OAuth 2.1 auth resolution.
-- `supabase/functions/mcp-server/tools/callTool.ts` and `tools/definitions.ts` — central tool dispatch and dynamic MCP schemas.
-- `scripts/mcp-stdio-proxy.mjs` and `packages/firecrawl-kw-mcp/lib/proxy.mjs` — stdio-to-HTTP MCP bridges.
-- `vite.config.ts`, `vitest.config.ts`, `eslint.config.js`, `tailwind.config.ts`, `playwright.config.ts` — build/test/lint/style/e2e tooling.
-- `README.md` — setup, hosted backend model, OAuth connector, and MCP stdio package guidance.
+- Use functional React components with typed props.
+- Keep page components orchestration-focused; move reusable behavior into hooks or narrowly-scoped components.
+- Prefer `@/` imports for files under `src/`.
+- Use TanStack Query for remote/server state; avoid expanding Zustand beyond small cross-app client state.
+- Use `cn()` from `src/lib/utils.ts` for conditional class composition.
+- Styling is Tailwind-first; match the existing cyber/glass visual language from `tailwind.config.ts` and `src/index.css`.
+- Reuse Lucide, shadcn, Radix, existing hooks, and existing utilities before adding new abstractions or dependencies.
+- TypeScript is not fully strict in `tsconfig.app.json`; manually review nullability, payload shapes, auth branches, and cross-boundary types.
+- Preserve non-blocking GitHub token loading in `src/App.tsx` and preserve custom MCP headers in transport/proxy code.
+- Delete obsolete code rather than leaving stale aliases, dead branches, or TODO placeholders.
 
-## Runtime/Tooling Preferences
+## Agent Workflow Rules
 
-- Package manager: npm (`package-lock.json` is lockfile v3; do not hand-edit).
-- Runtime: Node.js for local scripts/dev/build; Deno for Supabase Edge Functions. The stdio package declares Node `>=18`.
-- Bundler/dev server: Vite 6 with React plugin; dev server uses host `::` and port `8080`.
-- Deployment: frontend is SPA-compatible with Vercel (`vercel.json` rewrites all routes to `/index.html`); backend deploys separately with Supabase CLI.
-- Frontend env vars: `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `VITE_SUPABASE_PROJECT_ID`.
-- Edge Function secrets include `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `MCP_MASTER_PASSWORD`, `CLAUDE_OAUTH_CLIENT_ID`, `CLAUDE_OAUTH_CLIENT_SECRET`, optional `CLAUDE_OAUTH_REDIRECT_URIS`, optional `MCP_DEFAULT_USER_ID`, optional `BRAVE_SEARCH_API_KEY`, optional `BING_SEARCH_API_KEY`, optional agent/cache tuning vars.
-- MCP stdio proxy env may include `MCP_ENDPOINT`, `MCP_REQUEST_TIMEOUT_MS`, `MCP_STDIO_DEBUG`, `MCP_SECRET`/`X_MCP_SECRET`, `GITHUB_TOKEN`, and `SUPABASE_ACCESS_TOKEN`.
-- Protected/generated paths: `src/integrations/supabase/client.ts`, `src/integrations/supabase/types.ts`, `node_modules/`, `dist/`, `.vercel/`, `.git/`, coverage/build output, and secret-bearing env files.
+- Inspect relevant files before editing; do not guess paths, schemas, or request/response contracts.
+- Make minimal, targeted patches consistent with the existing architecture.
+- Do not hand-edit generated Supabase files, lockfiles, build outputs, or secret-bearing env files.
+- Never fabricate test/build/lint results. Run the command and report the real output, or state that validation was not run.
+- When touching both frontend and Edge Functions, verify both sides of the contract.
+- Update `AGENTS.md` and `README.md` when architecture, commands, routes, env vars, schema, hosted backend behavior, or MCP client setup changes.
+- For docs/user-facing UI, hide Supabase implementation details from normal-user flows unless the context is admin/developer/deploy guidance.
+- Prefer behavior-focused tests for auth, API-key handling, MCP payloads, tool dispatch, and bug fixes.
 
-## Testing & QA
+## Protected Files & Paths
 
-- Tests use Vitest with jsdom, globals, and setup in `src/test/setup.ts`; files match `src/**/*.{test,spec}.{ts,tsx}`.
-- Component tests use Testing Library and jest-dom. Common patterns include `vi.mock`, `vi.hoisted`, `vi.stubGlobal("Deno", ...)`, `beforeEach`, `vi.resetModules()`, and `mockReset()`.
-- Current coverage includes auth gate UI, API key UI basics, recency detection, MCP JSON-RPC helpers, tool registry, user settings, tool logging, Google News URL handling, HTML-to-Markdown conversion, URL utilities, agent fallback/cache/scrape behavior, and source deduplication.
-- Playwright is configured through `playwright.config.ts`, but no npm script or e2e suite is currently wired.
-- Add or update tests when changing logic, fixing bugs, auth behavior, MCP payloads, database access, or tool dispatch. Test behavior and edge cases, not implementation plumbing.
-- For frontend/backend contract changes, verify both sides: TypeScript types, frontend caller behavior, Edge Function handler/helper tests, and relevant build/lint checks.
-- Known QA caveats: no coverage thresholds, no visible CI workflow, Playwright not wired to scripts, and non-strict TypeScript means successful compilation is not enough evidence for payload correctness.
+Never edit these unless explicitly requested and you understand the generation/deployment implications:
+
+- `src/integrations/supabase/client.ts`
+- `src/integrations/supabase/types.ts`
+- `node_modules/`
+- `dist/`, `build/`, `coverage/`, `.vercel/`, `.git/`, cache directories
+- Lockfiles (`package-lock.json`, `bun.lock`) unless dependency installation intentionally updates them
+- Secret-bearing env files such as `.env`, `.env.local`, `.env.*.local`
+
+## Known Pitfalls
+
+- Normal users should use the hosted backend; do not reintroduce the old custom Supabase backend setup UI unless explicitly asked.
+- The shared backend `MCP_SECRET` auth path has been removed. MCP clients should use per-user full `fc_kw-...` secrets from the dashboard.
+- Full MCP/API secrets are currently shown only once during creation. Hash-only stored keys cannot be displayed later; users must regenerate if they lost the full value.
+- `user_api_keys.key_prefix` is for display only. Do not make copy buttons copy only the prefix as if it were usable.
+- `useUptimeLogs(90)` fetches raw logs with a finite limit, so older days may show `unknown`/no data even when monitoring works. A daily aggregate would be a better long-term 90-day history source.
+- Playwright is configured but not exposed through `package.json` scripts.
+- There is no visible CI workflow in the inspected files.
+- `README.md` may lag behind code after major behavior changes; update it instead of scattering duplicate setup notes.
