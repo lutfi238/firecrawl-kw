@@ -28,9 +28,7 @@ import {
   Trash2,
   Loader2,
   ShieldAlert,
-  MoreVertical,
 } from "lucide-react";
-
 import { toast } from "sonner";
 
 interface ApiKeyRecord {
@@ -99,7 +97,6 @@ export default function ApiKeysPage() {
   const [createdKey, setCreatedKey] = useState<CreatedKeyResponse | null>(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [detailKey, setDetailKey] = useState<ApiKeyRecord | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ApiKeyRecord | null>(null);
   const [editName, setEditName] = useState("");
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -167,6 +164,7 @@ export default function ApiKeysPage() {
         // Auto-copy the full secret to clipboard
         await navigator.clipboard.writeText(parsed.fullKey).catch(() => {});
         setCreatedKey(parsed);
+        setEditName(parsed.name);
         toast.success("MCP secret created and copied to clipboard");
         // Refresh the list
         await fetchKeys();
@@ -200,14 +198,15 @@ export default function ApiKeysPage() {
 
   // ── Rename secret ────────────────────────────────────────────────
 
-  const handleRenameKey = async () => {
-    if (!detailKey || !editName.trim()) return;
-    setRenamingId(detailKey.id);
+  const handleRenameCreatedKey = async () => {
+    if (!createdKey || !editName.trim()) return;
+    setRenamingId(createdKey.id);
     try {
+      const name = editName.trim();
       const result = await callTool("api_key_manage", {
         action: "rename",
-        keyId: detailKey.id,
-        name: editName.trim(),
+        keyId: createdKey.id,
+        name,
       });
       if (result.isError) {
         const text = result.content.map((c) => c.text ?? "").join("\n");
@@ -215,9 +214,7 @@ export default function ApiKeysPage() {
         return;
       }
       toast.success("MCP secret renamed successfully");
-      setDetailKey((prev) =>
-        prev ? { ...prev, name: editName.trim() } : null,
-      );
+      setCreatedKey((prev) => (prev ? { ...prev, name } : null));
       await fetchKeys();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
@@ -227,10 +224,6 @@ export default function ApiKeysPage() {
     }
   };
 
-  const openDetailDialog = (key: ApiKeyRecord) => {
-    setDetailKey(key);
-    setEditName(key.name);
-  };
 
   // ── Delete secret ────────────────────────────────────────────────
 
@@ -312,11 +305,37 @@ export default function ApiKeysPage() {
 
             {createdKey && (
               <div className="space-y-3">
-                <div>
-                  <label className="text-xs font-mono text-muted-foreground">
+                <div className="space-y-2">
+                  <label
+                    htmlFor="created-secret-name"
+                    className="text-xs font-mono text-muted-foreground"
+                  >
                     Secret Name
                   </label>
-                  <p className="text-sm font-medium mt-1">{createdKey.name}</p>
+                  <div className="flex gap-2">
+                    <Input
+                      id="created-secret-name"
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                      placeholder="Secret name"
+                      className="font-mono text-sm bg-background/50 border-border flex-1"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") handleRenameCreatedKey();
+                      }}
+                    />
+                    <Button
+                      onClick={handleRenameCreatedKey}
+                      disabled={renamingId === createdKey.id || !editName.trim()}
+                      size="sm"
+                      className="shrink-0 text-xs"
+                    >
+                      {renamingId === createdKey.id ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        "Save Name"
+                      )}
+                    </Button>
+                  </div>
                 </div>
                 <div>
                   <label className="text-xs font-mono text-muted-foreground">
@@ -357,151 +376,7 @@ export default function ApiKeysPage() {
           </DialogContent>
         </Dialog>
 
-        {/* Key Detail Dialog */}
-        <Dialog open={!!detailKey} onOpenChange={() => setDetailKey(null)}>
-          <DialogContent className="bg-card border-border max-w-md">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
-                <Key className="h-4 w-4 text-cyan-400" />
-                MCP Secret Details
-              </DialogTitle>
-              <DialogDescription>
-                View and manage this per-user MCP secret. The full secret is
-                only shown once during creation.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4 py-2">
-              {/* Secret name (editable inline) */}
-              <div className="space-y-2">
-                <label className="text-xs font-mono text-muted-foreground">
-                  Name
-                </label>
-                <div className="flex gap-2">
-                  <Input
-                    value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
-                    placeholder="Secret name"
-                    aria-label="Secret name"
-                    className="font-mono text-sm bg-background/50 border-border flex-1"
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") handleRenameKey();
-                    }}
-                  />
-                  <Button
-                    onClick={handleRenameKey}
-                    disabled={renamingId === detailKey?.id || !editName.trim()}
-                    size="sm"
-                    className="shrink-0 text-xs"
-                  >
-                    {renamingId === detailKey?.id ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      "Save"
-                    )}
-                  </Button>
-                </div>
-              </div>
 
-              {/* Secret prefix identifier */}
-              <div className="space-y-2">
-                <label className="text-xs font-mono text-muted-foreground">
-                  Secret Prefix (not the full key)
-                </label>
-                <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-300">
-                  Only the saved prefix is available after creation. Full MCP
-                  secrets are shown once and are not stored in plaintext. If you
-                  need a full secret again, generate a new one.
-                </div>
-                <div className="flex items-center gap-2">
-                  <code className="flex-1 text-xs font-mono bg-background/50 rounded-md px-3 py-2 border border-border/50 break-all select-all">
-                    {detailKey?.key_prefix}
-                  </code>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 w-8 p-0 shrink-0 text-muted-foreground hover:text-foreground"
-                    onClick={() =>
-                      copyToClipboard(
-                        detailKey!.key_prefix,
-                        detailKey!.id + "-prefix",
-                        "Prefix copied (not the full secret)",
-                      )
-                    }
-                    title="Copy prefix identifier"
-                  >
-                    {copiedId === detailKey?.id + "-prefix" ? (
-                      <Check className="h-4 w-4 text-emerald-400" />
-                    ) : (
-                      <Copy className="h-4 w-4" />
-                    )}
-                  </Button>
-                </div>
-              </div>
-
-              {/* Detail grid */}
-              <div className="grid grid-cols-2 gap-3 pt-2 border-t border-border/50">
-                <div className="space-y-1">
-                  <label className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
-                    Status
-                  </label>
-                  <Badge
-                    variant={
-                      detailKey?.status === "active" ? "default" : "destructive"
-                    }
-                    className={`text-[10px] font-mono uppercase ${
-                      detailKey?.status === "active"
-                        ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
-                        : "bg-destructive/20 text-destructive border-destructive/30"
-                    }`}
-                  >
-                    {detailKey?.status}
-                  </Badge>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
-                    Created
-                  </label>
-                  <p className="text-xs font-mono text-foreground">
-                    {formatDate(detailKey?.created_at ?? "")}
-                  </p>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
-                    Last Used
-                  </label>
-                  <p className="text-xs font-mono text-foreground">
-                    {formatDate(detailKey?.last_used_at)}
-                  </p>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
-                    Secret ID
-                  </label>
-                  <p className="text-[10px] font-mono text-muted-foreground break-all">
-                    {detailKey?.id.slice(0, 8)}...
-                  </p>
-                </div>
-              </div>
-            </div>
-            <DialogFooter className="gap-2 sm:gap-0">
-              <Button
-                variant="outline"
-                onClick={() => detailKey && setDeleteTarget(detailKey)}
-                className="text-xs text-destructive border-destructive/30 hover:bg-destructive/10 hover:text-destructive"
-              >
-                <Trash2 className="h-3.5 w-3.5 mr-1" />
-                Delete
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => setDetailKey(null)}
-                className="text-xs"
-              >
-                Close
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
 
         {/* Delete Confirmation Dialog */}
         <Dialog
@@ -536,7 +411,6 @@ export default function ApiKeysPage() {
                   if (!deleteTarget) return;
                   await handleDeleteKey(deleteTarget.id);
                   setDeleteTarget(null);
-                  setDetailKey(null);
                 }}
                 disabled={!!deleteTarget && deletingId === deleteTarget.id}
                 className="text-xs bg-destructive text-destructive-foreground hover:bg-destructive/90"
@@ -631,11 +505,12 @@ export default function ApiKeysPage() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
-                      onClick={() => openDetailDialog(key)}
-                      title="View details"
+                      className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                      onClick={() => setDeleteTarget(key)}
+                      aria-label={`Delete ${key.name}`}
+                      title={`Delete ${key.name}`}
                     >
-                      <MoreVertical className="h-3.5 w-3.5" />
+                      <Trash2 className="h-3.5 w-3.5" />
                     </Button>
                   </TableCell>
                 </TableRow>
