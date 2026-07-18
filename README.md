@@ -211,3 +211,7 @@ Until it is published to npm, you can still run the repo-local proxy with `node 
 - Reference PRD format: [contoh_prd.md](./contoh_prd.md)
 - Prior PRD conversation export: [Membuat PRD Firecrawl MCP.md](./Membuat%20PRD%20Firecrawl%20MCP.md)
 - Refactor and recency plans: [docs/superpowers](./docs/superpowers)
+
+## License
+
+Proyek ini dilisensikan di bawah [MIT License](./LICENSE). Copyright (c) 2026 Muhammad Lutfi Firdaus.

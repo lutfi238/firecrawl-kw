@@ -41,3 +41,7 @@ https://azegdjbrznxdhyeaztqm.supabase.co/functions/v1/mcp-server
 cd packages/firecrawl-kw-mcp
 npm publish --access public
 ```
+
+## License
+
+Paket ini dilisensikan di bawah [MIT License](./LICENSE). Copyright (c) 2026 Muhammad Lutfi Firdaus.
