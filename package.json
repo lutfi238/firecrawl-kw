@@ -1,7 +1,8 @@
 {
-  "name": "vite_react_shadcn_ts",
+  "name": "firecrawl-kw",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "description": "A hosted web intelligence dashboard and MCP server for search, scraping, crawling, extraction, screenshots, and AI-assisted workflows.",
   "license": "MIT",
   "type": "module",
   "scripts": {
