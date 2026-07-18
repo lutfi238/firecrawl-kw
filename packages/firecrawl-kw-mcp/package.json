@@ -1,7 +1,17 @@
 {
   "name": "firecrawl-kw-mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Stdio MCP proxy for the Firecrawl KW hosted MCP server.",
+  "author": "Muhammad Lutfi Firdaus",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lutfi238/firecrawl-kw.git",
+    "directory": "packages/firecrawl-kw-mcp"
+  },
+  "homepage": "https://github.com/lutfi238/firecrawl-kw/tree/main/packages/firecrawl-kw-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/lutfi238/firecrawl-kw/issues"
+  },
   "type": "module",
   "bin": {
     "firecrawl-kw-mcp": "bin/firecrawl-kw-mcp.mjs"

@@ -23,7 +23,7 @@ export function ToolForm({ tool, onExecute, loading, disabled }: ToolFormProps) 
       if (input.default !== undefined) defaults[input.name] = input.default;
     }
     setValues(defaults);
-  }, [tool.name]);
+  }, [tool.inputs]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

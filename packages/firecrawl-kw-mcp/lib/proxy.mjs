@@ -5,7 +5,7 @@ export const DEFAULT_MCP_ENDPOINT =
   "https://azegdjbrznxdhyeaztqm.supabase.co/functions/v1/mcp-server";
 
 const PROXY_NAME = "firecrawl-kw-mcp";
-const PROXY_VERSION = "0.1.0";
+export const PROXY_VERSION = "0.1.1";
 const DEFAULT_PROTOCOL_VERSION = "2024-11-05";
 
 export function resolveEndpoint(values, defaultEndpoint = DEFAULT_MCP_ENDPOINT) {

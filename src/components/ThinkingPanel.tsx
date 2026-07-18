@@ -35,7 +35,7 @@ export function ThinkingPanel({ content, durationMs, isStreaming = false }: Thin
       const timer = setTimeout(() => setExpanded(false), 600);
       return () => clearTimeout(timer);
     }
-  }, [isStreaming]);
+  }, [content, isStreaming]);
 
   // Auto-scroll during streaming
   useEffect(() => {

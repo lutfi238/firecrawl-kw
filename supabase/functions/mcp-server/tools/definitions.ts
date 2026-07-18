@@ -472,3 +472,7 @@ export function getToolDefinitions(
     },
   ];
 }
+
+export function getToolDefinitionCount(): number {
+  return getToolDefinitions({}, null).length;
+}

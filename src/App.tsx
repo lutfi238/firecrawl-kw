@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
@@ -10,18 +10,31 @@ import { AuthGate } from "@/components/AuthGate";
 import { BackendConfigGate } from "@/components/BackendConfigGate";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { useMCPServer } from "@/hooks/useMCPServer";
-import Overview from "@/pages/Overview";
-import ToolTester from "@/pages/ToolTester";
-import RequestMonitor from "@/pages/RequestMonitor";
-import Settings from "@/pages/Settings";
-import AIChat from "@/pages/AIChat";
-import DeploymentGuide from "@/pages/DeploymentGuide";
-import McpAuthorize from "@/pages/McpAuthorize";
-import APITester from "@/pages/APITester";
-import ApiKeysPage from "@/pages/ApiKeysPage";
-import NotFound from "@/pages/NotFound";
+
+const Overview = lazy(() => import("@/pages/Overview"));
+const ToolTester = lazy(() => import("@/pages/ToolTester"));
+const RequestMonitor = lazy(() => import("@/pages/RequestMonitor"));
+const Settings = lazy(() => import("@/pages/Settings"));
+const AIChat = lazy(() => import("@/pages/AIChat"));
+const DeploymentGuide = lazy(() => import("@/pages/DeploymentGuide"));
+const McpAuthorize = lazy(() => import("@/pages/McpAuthorize"));
+const APITester = lazy(() => import("@/pages/APITester"));
+const ApiKeysPage = lazy(() => import("@/pages/ApiKeysPage"));
+const NotFound = lazy(() => import("@/pages/NotFound"));
 
 const queryClient = new QueryClient();
+
+function RouteFallback() {
+  return (
+    <div
+      className="flex min-h-screen items-center justify-center bg-background font-mono text-sm text-muted-foreground"
+      role="status"
+      aria-live="polite"
+    >
+      Loading Firecrawl KW…
+    </div>
+  );
+}
 
 /** Handle custom GitHub OAuth callback: verifyOtp then load GitHub token from DB */
 async function handleOAuthCallback() {
@@ -143,20 +156,22 @@ const App = () => (
       <Toaster />
       <Sonner />
       <BrowserRouter>
-        <Routes>
-          <Route path="/mcp-authorize" element={<McpAuthorize />} />
-          <Route
-            path="*"
-            element={
-              <BackendConfigGate>
-                <AuthListener />
-                <AuthGate>
-                  <AppContent />
-                </AuthGate>
-              </BackendConfigGate>
-            }
-          />
-        </Routes>
+        <Suspense fallback={<RouteFallback />}>
+          <Routes>
+            <Route path="/mcp-authorize" element={<McpAuthorize />} />
+            <Route
+              path="*"
+              element={
+                <BackendConfigGate>
+                  <AuthListener />
+                  <AuthGate>
+                    <AppContent />
+                  </AuthGate>
+                </BackendConfigGate>
+              }
+            />
+          </Routes>
+        </Suspense>
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>

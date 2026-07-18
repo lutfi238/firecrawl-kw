@@ -69,7 +69,7 @@ interface ReaderProxy {
   name: string;
   buildUrl: (url: string) => string;
   headers?: Record<string, string>;
-  parseResponse?: (text: string) => { markdown: string; title: string };
+  parseResponse?: (text: string, url: string) => { markdown: string; title: string };
   timeoutMs?: number;
 }
 

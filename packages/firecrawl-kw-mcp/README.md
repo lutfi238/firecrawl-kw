@@ -42,6 +42,8 @@ cd packages/firecrawl-kw-mcp
 npm publish --access public
 ```
 
+Versi `0.1.1` adalah rilis pertama yang membawa metadata dan file MIT License ke paket npm.
+
 ## License
 
 Paket ini dilisensikan di bawah [MIT License](./LICENSE). Copyright (c) 2026 Muhammad Lutfi Firdaus.

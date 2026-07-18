@@ -1,6 +1,6 @@
 # Personal Firecrawl MCP
 
-Personal Firecrawl MCP adalah dashboard web untuk menjalankan MCP server pribadi berbasis Supabase Edge Functions. Aplikasi ini menyediakan 15 tool web intelligence untuk search, scrape, crawl, extraction, screenshot, batch job, AI chat, monitoring request, dan uptime.
+Personal Firecrawl MCP adalah dashboard web untuk menjalankan MCP server pribadi berbasis Supabase Edge Functions. Backend menyediakan 21 tool MCP untuk search, scrape, crawl, extraction, screenshot, batch job, AI chat, monitoring request, uptime, dan pengelolaan MCP secret. Tool Tester menampilkan 20 tool operasional; `api_key_manage` memakai halaman **MCP Secrets** khusus.
 
 ## Stack
 
@@ -17,6 +17,7 @@ npm run dev
 npm run build
 npm run lint
 npm run test
+npm run test:e2e
 ```
 
 Dev server Vite dikonfigurasi di `vite.config.ts` untuk host `::` dan port `8080`.
@@ -40,6 +41,8 @@ Supabase Edge Functions membutuhkan:
 - `CLAUDE_OAUTH_CLIENT_SECRET` untuk Claude Web custom connector
 - `CLAUDE_OAUTH_REDIRECT_URIS` optional, default `https://claude.ai/api/mcp/auth_callback`
 - `MCP_DEFAULT_USER_ID` optional, binds password-approved MCP OAuth tokens to one Supabase user so Claude Web can use that user’s saved settings/jobs
+- `MCP_RATE_LIMIT_REQUESTS_PER_MINUTE` optional, default `120` untuk setiap pengguna MCP/REST per menit
+- `MCP_OAUTH_RATE_LIMIT_REQUESTS_PER_MINUTE` optional, default `30` untuk setiap alamat IP pada endpoint OAuth yang mengubah state
 
 ## GitHub Models AI provider
 
@@ -203,6 +206,8 @@ cd packages/firecrawl-kw-mcp
 npm publish --access public
 ```
 
+Rilis MIT pertama setelah perubahan lisensi adalah `firecrawl-kw-mcp@0.1.1`. Karena versi npm immutable, jangan mencoba menerbitkan ulang `0.1.0`.
+
 Until it is published to npm, you can still run the repo-local proxy with `node scripts/mcp-stdio-proxy.mjs` for development.
 
 ## Docs
@@ -211,6 +216,10 @@ Until it is published to npm, you can still run the repo-local proxy with `node 
 - Reference PRD format: [contoh_prd.md](./contoh_prd.md)
 - Prior PRD conversation export: [Membuat PRD Firecrawl MCP.md](./Membuat%20PRD%20Firecrawl%20MCP.md)
 - Refactor and recency plans: [docs/superpowers](./docs/superpowers)
+
+## Continuous integration
+
+Workflow GitHub Actions menjalankan clean install, dependency audit, lint tanpa warning, unit tests, production build, dan Playwright smoke tests pada setiap push ke `main` dan pull request.
 
 ## License
 

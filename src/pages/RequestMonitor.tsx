@@ -14,7 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TOOL_DEFINITIONS } from "@/types/tools";
 import { Download, Trash2, RefreshCw } from "lucide-react";
 import { UptimeMonitor } from "@/components/UptimeMonitor";
-import { KNOWN_SOURCES, getSourceMeta } from "@/components/SourceBadge";
+import { KNOWN_SOURCES, getSourceMeta } from "@/lib/sourceMeta";
 
 export default function RequestMonitor() {
   const [toolFilter, setToolFilter] = useState<string>("all");

@@ -10,7 +10,7 @@ Firecrawl KW is a hosted MCP/SaaS-style dashboard for web-intelligence workflows
 - UI: Tailwind CSS, Radix/shadcn-style primitives, Lucide icons, cyber/glass theme.
 - Backend: Supabase Auth/Postgres/Storage client APIs plus Deno Edge Functions.
 - MCP: HTTP JSON-RPC MCP endpoint plus npm stdio proxy package `firecrawl-kw-mcp`.
-- Testing/tooling: Vitest + jsdom + Testing Library, ESLint 9, Playwright config present but not wired to an npm script.
+- Testing/tooling: Vitest + jsdom + Testing Library, ESLint 9, Playwright smoke tests, and GitHub Actions CI.
 - Package manager: npm (`package-lock.json` lockfile v3). `bun.lock` exists, but project scripts are npm-based.
 
 ## Architecture & Data Flow
@@ -23,6 +23,7 @@ Firecrawl KW is a hosted MCP/SaaS-style dashboard for web-intelligence workflows
 - Backend flow: `supabase/functions/mcp-server/index.ts` handles HTTP/MCP/OAuth routing → auth modules resolve the user → `tools/definitions.ts` and `tools/callTool.ts` define/dispatch tools → logs/jobs/settings/API keys persist in Supabase.
 - Supported MCP auth modes are per-user MCP secrets via `X-MCP-Secret`, Supabase session bearer tokens, and OAuth 2.1 bearer tokens for supported remote MCP clients. Legacy shared backend `MCP_SECRET` auth was removed.
 - `supabase/config.toml` disables JWT verification for Edge Functions, so handler-level auth and request validation are security-critical.
+- Authenticated MCP/REST calls and mutable OAuth endpoints use the database-backed `consume_mcp_rate_limit` RPC. The limiter intentionally fails open on backing-service outages and emits no credential values.
 
 ## Monorepo Structure
 
@@ -55,6 +56,7 @@ npm run preview    # preview built frontend
 npm run lint       # eslint .
 npm run test       # vitest run
 npm run test:watch # vitest watch mode
+npm run test:e2e   # Playwright Chromium smoke tests
 npm run mcp:stdio  # local MCP stdio proxy
 ```
 
@@ -80,6 +82,8 @@ Document names only; never commit or echo secret values.
 - `CLAUDE_OAUTH_CLIENT_ID`, `CLAUDE_OAUTH_CLIENT_SECRET` — Claude/custom connector OAuth client credentials when configured.
 - `CLAUDE_OAUTH_REDIRECT_URIS` — optional allowlist for Claude OAuth redirects.
 - `MCP_DEFAULT_USER_ID` — optional fallback user id used only when no credential resolves a user.
+- `MCP_RATE_LIMIT_REQUESTS_PER_MINUTE` — optional authenticated MCP/REST requests per user per minute; defaults to `120`.
+- `MCP_OAUTH_RATE_LIMIT_REQUESTS_PER_MINUTE` — optional mutable OAuth requests per client IP per minute; defaults to `30`.
 - `BRAVE_SEARCH_API_KEY`, `BING_SEARCH_API_KEY` — optional search provider secrets.
 
 ### MCP stdio proxy env
@@ -144,6 +148,6 @@ Never edit these unless explicitly requested and you understand the generation/d
 - Full MCP/API secrets are currently shown only once during creation. Hash-only stored keys cannot be displayed later; users must regenerate if they lost the full value.
 - `user_api_keys.key_prefix` is for display only. Do not make copy buttons copy only the prefix as if it were usable.
 - `useUptimeLogs(90)` fetches raw logs with a finite limit, so older days may show `unknown`/no data even when monitoring works. A daily aggregate would be a better long-term 90-day history source.
-- Playwright is configured but not exposed through `package.json` scripts.
+- Playwright smoke coverage intentionally accepts either the hosted-backend configuration gate or the unauthenticated sign-in screen so CI does not require frontend secrets.
 - There is no visible CI workflow in the inspected files.
 - `README.md` may lag behind code after major behavior changes; update it instead of scattering duplicate setup notes.

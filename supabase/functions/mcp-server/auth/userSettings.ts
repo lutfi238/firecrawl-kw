@@ -27,6 +27,12 @@ async function getSettingsForUserId(
   return map;
 }
 
+function getDefaultUserSettings(): Promise<Record<string, string>> {
+  const defaultUserId = Deno.env.get("MCP_DEFAULT_USER_ID");
+  if (!defaultUserId) return Promise.resolve({});
+  return getSettingsForUserId(defaultUserId);
+}
+
 export async function getUserSettings(
   authHeader: string | null,
   resolvedUserId?: string | null,
@@ -36,8 +42,7 @@ export async function getUserSettings(
   const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
   const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY");
   if (!authHeader) {
-    const defaultUserId = Deno.env.get("MCP_DEFAULT_USER_ID");
-    return defaultUserId ? getSettingsForUserId(defaultUserId) : {};
+    return getDefaultUserSettings();
   }
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return {};
 
@@ -73,10 +78,8 @@ export async function getUserSettings(
     for (const row of data) map[row.key] = row.value ?? "";
     return map;
   } catch {
-    const defaultUserId = Deno.env.get("MCP_DEFAULT_USER_ID");
-    return defaultUserId ? getSettingsForUserId(defaultUserId) : {};
+    return getDefaultUserSettings();
   }
 
-  const defaultUserId = Deno.env.get("MCP_DEFAULT_USER_ID");
-  return defaultUserId ? getSettingsForUserId(defaultUserId) : {};
+  return getDefaultUserSettings();
 }

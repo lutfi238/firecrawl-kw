@@ -34,8 +34,6 @@ type OAuthClient = {
   source: "env" | "db";
 };
 
-type SupabaseServiceClient = ReturnType<typeof createClient>;
-
 type ClientRegistrationRequest = {
   redirect_uris?: unknown;
   client_name?: unknown;
@@ -48,6 +46,8 @@ function getServiceClient() {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 }
+
+type SupabaseServiceClient = ReturnType<typeof getServiceClient>;
 
 function randomToken(bytes = 32): string {
   const buf = new Uint8Array(bytes);

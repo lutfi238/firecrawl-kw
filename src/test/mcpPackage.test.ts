@@ -18,13 +18,22 @@ describe("firecrawl-kw-mcp package", () => {
     );
 
     expect(pkg.name).toBe("firecrawl-kw-mcp");
+    expect(pkg.version).toBe("0.1.1");
     expect(pkg.type).toBe("module");
+    expect(pkg.license).toBe("MIT");
+    expect(pkg.author).toBe("Muhammad Lutfi Firdaus");
+    expect(pkg.repository).toEqual({
+      type: "git",
+      url: "git+https://github.com/lutfi238/firecrawl-kw.git",
+      directory: "packages/firecrawl-kw-mcp",
+    });
     expect(pkg.bin).toEqual({ "firecrawl-kw-mcp": "bin/firecrawl-kw-mcp.mjs" });
   });
 
   it("uses the centralized Supabase MCP endpoint by default", async () => {
     const proxy = await import("../../packages/firecrawl-kw-mcp/lib/proxy.mjs");
 
+    expect(proxy.PROXY_VERSION).toBe("0.1.1");
     expect(proxy.DEFAULT_MCP_ENDPOINT).toBe(defaultEndpoint);
     expect(proxy.resolveEndpoint({}, proxy.DEFAULT_MCP_ENDPOINT)).toBe(
       defaultEndpoint,

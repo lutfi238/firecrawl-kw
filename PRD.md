@@ -10,7 +10,7 @@ Masalah utama yang ingin diselesaikan adalah kebutuhan pengguna teknis untuk mem
 - Menyimpan konfigurasi provider AI, GitHub token, MCP secret, dan renderer.
 - Melihat log request, durasi, status error/success, serta uptime server.
 
-Tujuan utama aplikasi adalah menyediakan dashboard personal yang aman, modern, dan mudah dioperasikan bagi **pengguna tunggal / developer / power user** untuk menjalankan MCP server berbasis Supabase Edge Functions dengan 15 tool web intelligence.
+Tujuan utama aplikasi adalah menyediakan dashboard personal yang aman, modern, dan mudah dioperasikan bagi **pengguna tunggal / developer / power user** untuk menjalankan MCP server berbasis Supabase Edge Functions dengan 21 tool MCP. Sebanyak 20 tool operasional tampil di Tool Tester, sedangkan `api_key_manage` memakai halaman MCP Secrets khusus.
 
 ## 2. Requirements
 Berikut persyaratan tingkat tinggi untuk sistem:
@@ -45,7 +45,7 @@ Fitur-fitur utama yang harus ada pada versi MVP dan pengembangan lanjutan:
    - Menampilkan endpoint MCP yang dapat dicopy.
    - Menampilkan konfigurasi Claude Code CLI dalam format JSON.
    - Menampilkan ringkasan statistik request hari ini: total request, success request, dan jumlah tool.
-   - Menampilkan grid 15 tool yang tersedia, lengkap dengan kategori dan usage count.
+   - Menampilkan grid 20 tool operasional yang tersedia, lengkap dengan kategori dan usage count.
 
 3. **MCP Server Endpoint**
    - Mendukung method JSON-RPC:
@@ -58,7 +58,7 @@ Fitur-fitur utama yang harus ada pada versi MVP dan pengembangan lanjutan:
    - Mengembalikan daftar tool berdasarkan konfigurasi user, misalnya status renderer dan AI provider.
 
 4. **Tool Tester**
-   - Pengguna dapat memilih salah satu dari 15 tool.
+   - Pengguna dapat memilih salah satu dari 20 tool operasional.
    - Form input tool dibuat berdasarkan definisi input setiap tool.
    - Menampilkan response tool dalam panel result viewer.
    - Menampilkan activity step seperti preparing request, executing, dan saving log.
@@ -706,7 +706,7 @@ Snapshot ini ditambahkan setelah PRD dicek ulang terhadap repository saat ini. B
 | UI system | Tailwind CSS + Radix/shadcn-style components + Lucide icons, tema dark cyber dashboard | `src/index.css`, `tailwind.config.ts`, `src/components/ui/` |
 | Auth | GitHub OAuth custom Edge Function, membuat/menemukan Supabase user, menyimpan `github_token`, lalu login via magic link | `supabase/functions/github-auth/index.ts`, `src/App.tsx`, `src/components/AuthGate.tsx` |
 | MCP endpoint | HTTP JSON-RPC via Supabase Edge Function, health check GET, `initialize`, `tools/list`, `tools/call` | `supabase/functions/mcp-server/index.ts` |
-| Tool registry | 15 tool didefinisikan di frontend dan backend; sebagian handler masih berada dalam switch `handleToolCall` | `src/types/tools.ts`, `supabase/functions/mcp-server/tools/definitions.ts`, `supabase/functions/mcp-server/tools/callTool.ts` |
+| Tool registry | Backend mendefinisikan 21 tool MCP; frontend Tool Tester menampilkan 20 tool operasional dan pengelolaan secret berada di halaman khusus | `src/types/tools.ts`, `supabase/functions/mcp-server/tools/definitions.ts`, `supabase/functions/mcp-server/tools/callTool.ts` |
 | AI chat | Tools-first routing, slash command, streaming, synthesis berbasis evidence, recency-aware search, image guard | `src/pages/AIChat.tsx`, `src/lib/intentClassifier.ts`, `src/lib/recency.ts`, `src/lib/visionCapability.ts` |
 | Async jobs | `crawl`, `batch_scrape`, dan `agent` membuat record job dan diproses via `EdgeRuntime.waitUntil` | `supabase/functions/mcp-server/jobs/`, `supabase/functions/mcp-server/tools/callTool.ts` |
 | Monitoring | Request log via Supabase table, filter, export, clear, dan statistik harian | `src/hooks/useRequestLogs.ts`, `src/pages/RequestMonitor.tsx`, `src/components/RequestLogTable.tsx` |

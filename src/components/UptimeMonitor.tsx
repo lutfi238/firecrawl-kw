@@ -190,9 +190,11 @@ export function UptimeMonitor() {
   const focusedTargetId = activeTargetId ?? targets[0]?.id ?? null;
   const focusedTarget: UptimeTarget | null =
     targets.find((t) => t.id === focusedTargetId) ?? null;
-  const focusedLogs: UptimeLog[] = focusedTargetId
-    ? (logsByTarget.get(focusedTargetId) ?? [])
-    : logs;
+  const focusedLogs = useMemo<UptimeLog[]>(
+    () =>
+      focusedTargetId ? (logsByTarget.get(focusedTargetId) ?? []) : logs,
+    [focusedTargetId, logs, logsByTarget],
+  );
 
   const stats = useMemo(() => {
     const now = Date.now();

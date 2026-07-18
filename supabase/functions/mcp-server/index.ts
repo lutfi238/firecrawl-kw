@@ -2,7 +2,10 @@ import { getAiSettingsFromMap } from "./ai/settings.ts";
 import { checkMcpAuth, resolveUserId } from "./auth/mcpSecret.ts";
 import { getUserSettings } from "./auth/userSettings.ts";
 import { logToolCall } from "./logging/toolLog.ts";
-import { getToolDefinitions } from "./tools/definitions.ts";
+import {
+  getToolDefinitionCount,
+  getToolDefinitions,
+} from "./tools/definitions.ts";
 import { handleToolCall } from "./tools/callTool.ts";
 import {
   getBaseUrl,
@@ -13,6 +16,12 @@ import {
   oauthAuthorizationServer,
   oauthProtectedResource,
 } from "./auth/oauth.ts";
+import {
+  consumeRateLimit,
+  getClientIp,
+  getRateLimitMaximum,
+  rateLimitResponse,
+} from "./security/rateLimit.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -96,6 +105,22 @@ Deno.serve(async (req: Request) => {
   if (req.method === "GET" && authorizationServerPaths.has(path)) {
     return oauthAuthorizationServer(req, corsHeaders);
   }
+  const isMutableOAuthRequest =
+    req.method === "POST" &&
+    (path === "/register" || path === "/authorize" || path === "/token");
+  if (isMutableOAuthRequest) {
+    const decision = await consumeRateLimit({
+      scope: "oauth",
+      identity: `ip:${getClientIp(req.headers)}`,
+      maxRequests: getRateLimitMaximum(
+        "MCP_OAUTH_RATE_LIMIT_REQUESTS_PER_MINUTE",
+        30,
+      ),
+      windowSeconds: 60,
+    });
+    const limited = rateLimitResponse(decision, corsHeaders);
+    if (limited) return limited;
+  }
   if (req.method === "POST" && path === "/register") {
     return handleRegister(req, corsHeaders);
   }
@@ -113,7 +138,7 @@ Deno.serve(async (req: Request) => {
       status: "ok",
       server: "personal-firecrawl",
       version: "2.1.0",
-      tools: 20,
+      tools: getToolDefinitionCount(),
       oauth: true,
       rest_api: ["/v1/web/fetch", "/v1/search"],
     });
@@ -134,6 +159,19 @@ Deno.serve(async (req: Request) => {
     const restAuthHeader = req.headers.get("authorization") || null;
     const restMcpSecret = req.headers.get("x-mcp-secret") || null;
     const restUserId = await resolveUserId(restAuthHeader, restMcpSecret);
+    const restRateLimit = await consumeRateLimit({
+      scope: "rest",
+      identity: restUserId
+        ? `user:${restUserId}`
+        : `ip:${getClientIp(req.headers)}`,
+      maxRequests: getRateLimitMaximum(
+        "MCP_RATE_LIMIT_REQUESTS_PER_MINUTE",
+        120,
+      ),
+      windowSeconds: 60,
+    });
+    const restLimited = rateLimitResponse(restRateLimit, corsHeaders);
+    if (restLimited) return restLimited;
 
     try {
       const body = await req.json();
@@ -322,6 +360,19 @@ Deno.serve(async (req: Request) => {
   const authHeader = req.headers.get("authorization") || null;
   const mcpSecretHeader = req.headers.get("x-mcp-secret") || null;
   const userId = await resolveUserId(authHeader, mcpSecretHeader);
+  const mcpRateLimit = await consumeRateLimit({
+    scope: "mcp",
+    identity: userId
+      ? `user:${userId}`
+      : `ip:${getClientIp(req.headers)}`,
+    maxRequests: getRateLimitMaximum(
+      "MCP_RATE_LIMIT_REQUESTS_PER_MINUTE",
+      120,
+    ),
+    windowSeconds: 60,
+  });
+  const mcpLimited = rateLimitResponse(mcpRateLimit, corsHeaders);
+  if (mcpLimited) return mcpLimited;
 
   try {
     const body = await req.json();

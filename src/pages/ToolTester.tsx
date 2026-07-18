@@ -27,7 +27,7 @@ export default function ToolTester() {
     if (searchParams.has("tool")) {
       setSearchParams({}, { replace: true });
     }
-  }, []);
+  }, [searchParams, setSearchParams]);
   const { execute, cancel, result, durationMs, loading, error, steps } = useToolExecutorWithActivity();
   const { settings } = useSettings();
   const [lastArgs, setLastArgs] = useState<Record<string, unknown> | null>(null);
